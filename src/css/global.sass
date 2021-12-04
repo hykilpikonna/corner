@@ -1,7 +1,24 @@
 @import colors
 
-// Constants
+// Google Fonts
+// TODO: Localize
+@import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@300&family=Shadows+Into+Light&display=swap')
+@import url('https://fonts.googleapis.com/css2?family=Caveat&display=swap')
+@import url('/fonts/hua/font-hua.css')
+
 $font: "Microsoft YaHei UI", Avenir, Helvetica, Arial, sans-serif
+
+.font-code
+  font-family: Inconsolata, Monaco, Monospaced, serif
+
+.font-script-en
+  font-family: 'Caveat', 'Shadows Into Light', cursive
+
+.font-script-cn
+  font-family: Hua, $font
+
+.bold
+  font-weight: bold
 
 // Container width (This is normally 50vw,
 //   but when it's smaller than 900px, use 100vw - 50px, because 50px is the margin)
