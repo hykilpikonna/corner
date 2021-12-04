@@ -5,6 +5,8 @@
         <router-link to="/about">About</router-link>
     </div>
     <router-view/>
+
+    <MeruIcon/>
 </template>
 
 <style lang="scss">
@@ -33,3 +35,15 @@
     }
 }
 </style>
+
+<script>
+import MeruIcon from "@/components/MeruIcon";
+import {Options, Vue} from "vue-class-component";
+
+@Options({
+    components: {MeruIcon}
+})
+export default class App extends Vue
+{
+}
+</script>
