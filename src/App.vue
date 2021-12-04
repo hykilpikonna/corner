@@ -1,17 +1,12 @@
 <template>
     <div id="nav">
-        <router-link to="/">Home</router-link>
-        |
-        <router-link to="/about">About</router-link>
+        <router-link class="router-link" to="/">Home</router-link>
+        <router-link class="router-link" to="/about">About</router-link>
     </div>
     <router-view/>
 
     <MeruIcon/>
 </template>
-
-<style lang="sass">
-@import "css/global"
-</style>
 
 <script>
 import MeruIcon from "@/components/MeruIcon";
@@ -24,3 +19,10 @@ export default class App extends Vue
 {
 }
 </script>
+
+<style lang="sass">
+@import "css/global"
+
+.router-link
+    color: red
+</style>
