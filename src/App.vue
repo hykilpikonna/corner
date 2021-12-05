@@ -1,16 +1,24 @@
 <template>
     <div id="nav" class="fbox-v">
-        <router-link class="router-link" to="/"><span>{{ $t('nav.home') }}</span></router-link>
-        <router-link class="router-link" to="/about"><span>{{ $t('nav.about') }}</span></router-link>
-        <router-link class="router-link" to="/blog"><span>{{ $t('nav.blog') }}</span></router-link>
-        <router-link class="router-link" to="/projects"><span>{{ $t('nav.projects') }}</span></router-link>
+        <div id="hamburger"></div>
+        <div class="spacer f-grow1"/>
+
+        <router-link class="router-link" to="/projects">{{ $t('nav.projects') }}</router-link>
+        <div class="dot">·</div>
+        <router-link class="router-link" to="/blog">{{ $t('nav.blog') }}</router-link>
+        <div class="dot">·</div>
+        <router-link class="router-link" to="/about">{{ $t('nav.about') }}</router-link>
+        <div class="dot">·</div>
+        <router-link class="router-link" to="/">{{ $t('nav.home') }}</router-link>
+        <div class="dot">·</div>
 
         <div id="nav-bookmark" ref="bookmark" :style="bookmarkCss"></div>
+        <div id="nav-background"></div>
+
+        <img id="meru" src="/meru_256px.png" alt="">
     </div>
 
     <router-view/>
-
-    <MeruIcon/>
 </template>
 
 <script lang="ts">
@@ -40,12 +48,14 @@ export default class App extends Vue
 {
     currentLink!: Element
     bookmarkCss: {[id: string]: string} = {}
+    bookmarkUpdateIntervalId!: number
+    lastTop = 0
 
     updateBookmark(): void
     {
-        runAfter(() => document.querySelector('.router-link-active span') != this.currentLink, () =>
+        runAfter(() => document.querySelector('.router-link-active') != this.currentLink, () =>
         {
-            let el = document.querySelector('.router-link-active span')
+            let el = document.querySelector('.router-link-active')
             if (el != null) this.currentLink = el
             this.calculateBookmarkCss()
         })
@@ -58,18 +68,23 @@ export default class App extends Vue
 
         // Resize listener
         window.addEventListener('resize', () => this.calculateBookmarkCss(), true);
+
+        // Update every second
+        this.bookmarkUpdateIntervalId = setInterval(this.calculateBookmarkCss, 1000)
     }
 
     calculateBookmarkCss(): void
     {
         // https://developer.mozilla.org/zh-CN/docs/Web/API/Element/getBoundingClientRect
         let box = this.currentLink.getBoundingClientRect()
+        if (box.top == this.lastTop) return
+
         let h = box.bottom - box.top
         this.bookmarkCss = {
             top: `${box.top - 8}px`,
-            border: `${Math.round(h / 2) + 8}px solid rgba(255, 216, 224, 0.49)`,
+            border: `${Math.round(h / 2) + 8}px solid var(--bookmark-color)`,
             'border-right': '20px solid transparent',
-            'border-left': '50px solid rgba(255, 216, 224, 0.49)'
+            'border-left': '50px solid var(--bookmark-color)'
         }
         console.log(this.bookmarkCss)
     }
@@ -81,38 +96,46 @@ export default class App extends Vue
 
 #nav
     position: fixed
-    left: 20px
+    left: 0
     height: 100vh
     font-size: 1.4em
-    flex-direction: column-reverse
+    align-items: flex-start
 
     #nav-bookmark
         position: absolute
-        left: -40px
-        width: 30px
+        left: 0
+        width: 20px
         height: 0
-        z-index: 0
+        z-index: 5
+        --bookmark-color: rgb(255, 225, 230)
 
     .router-link
         color: rgba(128, 112, 92, 0.71)
+        position: relative
+        z-index: 100
+
+    .dot
+        content: '·'
+        margin: 20px 0
+
+    .router-link, .dot
         text-decoration: none
         writing-mode: vertical-rl
         text-orientation: sideways
         transform: scale(-1)
+        padding-right: 20px
 
-    .router-link:before
-        content: '·'
-        margin: 20px 0
-
-    .router-link
-        position: relative
+    #nav-background
+        position: absolute
+        height: 100%
+        width: 100px
+        left: -40px
+        background: linear-gradient(to right, rgba(247, 169, 121, 0.42), transparent)
         z-index: 10
 
-#nav::after
-    content: " "
-    flex-grow: 1
+    #meru
+        height: 160px
 
-#nav::before
-    content: " "
-    height: 180px
+// Phone layout
+@media screen and (max-width: 570px)
 </style>
