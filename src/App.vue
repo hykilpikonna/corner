@@ -183,11 +183,8 @@ export default class App extends Vue
         opacity: 1
 
     #nav.home
-        #nav-background
+        #menu, #nav-background
             opacity: 0
-
-    #nav.home #menu
-        opacity: 0
 
     #nav:not(.home).open
         #items, #nav-bookmark, #nav-background, #meru
@@ -212,11 +209,23 @@ export default class App extends Vue
             height: 120px
 
 // Smaller phone layout
-@media screen and (max-width: 400px)
+@media screen and (max-width: 370px)
+    #nav #menu
+        opacity: unset
+
+    #nav.home
+        #menu, #nav-background
+            opacity: unset
+
+    #nav.open
+        #items, #nav-bookmark, #nav-background, #meru
+            opacity: 1
+            animation: fade-in-left .5s cubic-bezier(0.250, 0.460, 0.450, 0.940) both
+
     #nav
-        .items
+        #items, #nav-bookmark, #nav-background, #meru
             opacity: 0
-            animation: fade-out-left .5s cubic-bezier(0.250, 0.460, 0.450, 0.940) both
+            animation: fade-out-left 1s 0.5s cubic-bezier(0.250, 0.460, 0.450, 0.940) both
 
 // Phone Height
 @media screen and (max-height: 600px)
