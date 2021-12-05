@@ -55,6 +55,9 @@ export default class App extends Vue
     {
         router.afterEach(() => this.updateBookmark())
         this.updateBookmark()
+
+        // Resize listener
+        window.addEventListener('resize', () => this.calculateBookmarkCss(), true);
     }
 
     calculateBookmarkCss(): void
