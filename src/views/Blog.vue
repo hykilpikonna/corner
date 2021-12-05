@@ -60,6 +60,7 @@ export default class Blog extends Vue
             this.posts = it
             this.posts.forEach(it => it.date = moment(it.date).format('YYYY-MM-DD h:mm'))
             this.posts.reverse()
+            this.posts = this.posts.filter(it => it.type !== 'service')
             console.log(it)
         })
     }
@@ -123,6 +124,23 @@ export default class Blog extends Vue
         content: " "
         border: 2px solid lighten($color-text-main, 20)
         border-radius: 2px
+
+    .reply + .images
+        margin: 0 -20px 10px
+
+    .images
+        margin: -20px -20px 10px
+        display: flex
+
+        .img
+            flex: 1
+            height: 200px
+            width: 200px
+            background-size: cover
+
+            margin-right: 10px
+        .img:last-child
+            margin-right: 0
 
     .text
         white-space: pre-line
