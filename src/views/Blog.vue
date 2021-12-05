@@ -164,6 +164,8 @@ export default class Blog extends Vue
         border-radius: 0
         padding: 0
         background: unset
+        margin: 20px 20px 0
+        width: unset
 
     .post
         background-color: #fdf9f1
