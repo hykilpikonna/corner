@@ -80,7 +80,7 @@ export default class App extends Vue
 @import "css/global"
 
 #nav
-    position: absolute
+    position: fixed
     left: 20px
     height: 100vh
     font-size: 1.4em

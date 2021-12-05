@@ -17,7 +17,7 @@ export default class MeruIcon extends Vue
 <style lang="sass" scoped>
 img
     width: 160px
-    position: absolute
+    position: fixed
     left: 0
     bottom: 0
 </style>
