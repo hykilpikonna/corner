@@ -1,9 +1,9 @@
 <template>
     <div id="nav" class="fbox-v">
-        <router-link class="router-link" to="/"><span>Home</span></router-link>
-        <router-link class="router-link" to="/about"><span>About</span></router-link>
-        <router-link class="router-link" to="/blog"><span>Blog</span></router-link>
-        <router-link class="router-link" to="/projects"><span>Projects</span></router-link>
+        <router-link class="router-link" to="/"><span>{{ $t('nav.home') }}</span></router-link>
+        <router-link class="router-link" to="/about"><span>{{ $t('nav.about') }}</span></router-link>
+        <router-link class="router-link" to="/blog"><span>{{ $t('nav.blog') }}</span></router-link>
+        <router-link class="router-link" to="/projects"><span>{{ $t('nav.projects') }}</span></router-link>
 
         <div id="nav-bookmark" ref="bookmark" :style="bookmarkCss"></div>
     </div>
