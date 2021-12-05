@@ -19,6 +19,7 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {backendUrl} from "@/constants";
+import moment from "moment";
 
 export interface Post {
     id: string
@@ -53,6 +54,8 @@ export default class Blog extends Vue
     {
         fetch(`${backendUrl}/posts.json`).then(it => it.json()).then(it => {
             this.posts = it
+            this.posts.forEach(it => it.date = moment(it.date).format('YYYY-MM-DD h:mm'))
+            this.posts.reverse()
             console.log(it)
         })
     }
