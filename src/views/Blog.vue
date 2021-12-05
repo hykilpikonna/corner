@@ -3,7 +3,7 @@
         <div class="post" v-for="p in posts" :key="p.id" :class="{'service': p.type === 'service'}">
             <div class="reply" v-if="p.reply">
                 <img class="thumb" v-if="p.reply.thumb" :src="p.reply.thumb" alt="">
-                <div class="mtext fbox-vcenter">{{p.reply.text}}</div>
+                <div class="mtext"><span>{{p.reply.text}}</span></div>
             </div>
             <div class="images" v-if="p.images">
                 <div class="img" v-for="i in p.images" :key="i"
@@ -76,7 +76,7 @@ export default class Blog extends Vue
     border-radius: 50px 50px 0 0
     padding: 20px
     font-size: 0.9em
-    max-width: 600px
+    width: min(600px, 80vw)
 
 .post.service
     .id
@@ -113,7 +113,7 @@ export default class Blog extends Vue
             max-height: 40px
             margin-left: 10px
             color: lighten($color-text-main, 20)
-            //display: -webkit-box
+            display: -webkit-box
             -webkit-line-clamp: 2 /* number of lines to show */
             line-clamp: 2
             -webkit-box-orient: vertical
@@ -157,4 +157,14 @@ export default class Blog extends Vue
         i
             font-size: 0.8em
             margin-left: 4px
+
+// Phone layout
+@media screen and (max-width: 570px)
+    #Blog
+        border-radius: 0
+        padding: 0
+        background: unset
+
+    .post
+        background-color: #fdf9f1
 </style>
