@@ -3,7 +3,7 @@
         <div class="post" v-for="p in posts" :key="p.id" :class="{'service': p.type === 'service'}">
             <div class="reply" v-if="p.reply">
                 <img class="thumb" v-if="p.reply.thumb" :src="p.reply.thumb" alt="">
-                <div class="mtext">{{p.reply.text}}</div>
+                <div class="mtext fbox-vcenter">{{p.reply.text}}</div>
             </div>
             <div class="images" v-if="p.images">
                 <div class="img" v-for="i in p.images" :key="i"
@@ -86,7 +86,43 @@ export default class Blog extends Vue
     background: #f9f2e0
     border-radius: 20px
     margin-bottom: 20px
-    padding-bottom: 8px
+    padding: 12px 20px 8px
+    overflow: auto
+    box-sizing: border-box
+
+    text-align: left
+
+    > *
+        margin-bottom: 10px
+    > *:last-child
+        margin-bottom: 0
+
+    .reply
+        display: flex
+        font-size: 0.8em
+
+        .thumb
+            margin-left: 10px
+            height: 40px
+            width: 40px
+            object-fit: cover
+
+        .mtext
+            flex: 1
+            max-height: 40px
+            margin-left: 10px
+            color: lighten($color-text-main, 20)
+            //display: -webkit-box
+            -webkit-line-clamp: 2 /* number of lines to show */
+            line-clamp: 2
+            -webkit-box-orient: vertical
+            overflow: hidden
+
+
+    .reply:before
+        content: " "
+        border: 2px solid lighten($color-text-main, 20)
+        border-radius: 2px
 
     .text
         white-space: pre-line
@@ -97,11 +133,8 @@ export default class Blog extends Vue
         div
             margin: 0 10px
 
-        .id
-            margin-left: 20px
-
-        .views
-            margin-right: 20px
+        div:first-child, div:last-child
+            margin: 0
 
         i
             font-size: 0.8em
