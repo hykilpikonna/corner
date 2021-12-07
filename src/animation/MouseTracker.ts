@@ -1,7 +1,7 @@
 // import * as THREE from 'three'
 
 export let mouse: MouseEvent
-export let moused: {x: number, y: number}
+export const moused: {x: number, y: number} = {x: 0, y: 0}
 
 /**
  * Initialize mouse tracker
