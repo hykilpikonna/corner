@@ -1,9 +1,10 @@
 import * as THREE from 'three'
 import * as helper from "@/animation/Helpers";
-import {initMouseTracker, moused, timed, updateTimeTracker} from "@/animation/Trackers";
+import {initMouseTracker, moused} from "@/animation/Trackers";
 import {circle} from "@/animation/Helpers";
 
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
+const clock = new THREE.Clock()
 const objects = []
 
 const config = {
@@ -13,8 +14,10 @@ const config = {
     cam: {fov: 50, near: 1, far: 2000},
 
     // Mouse movement factor
-    mouseFactor: 10,
-    smooth: {},
+    mouseFactor: 20,
+
+    // Smooth movements (speeds are in terms of pixels per ms)
+    smooth: {mouseSpeed: 10 * window.devicePixelRatio},
 }
 
 // ////////////////////
@@ -41,18 +44,47 @@ function init(): void
     scene.add(circle(0xff0000, 4, 1))
 }
 
-function update(): void
+// Buffer for smooth update
+const smoothBuffer = {cam: {x: 0, y: 0}}
+
+function pn(b: boolean): number
 {
-    const time = Date.now() * 0.001;
+    return b ? 1 : -1
+}
 
-    camera.position.x = moused.x * config.mouseFactor
-    camera.position.y = moused.y * config.mouseFactor
+/**
+ * Update frame
+ *
+ * @param dt delta time in ms
+ */
+function update(dt: number): void
+{
+    smoothBuffer.cam.x = moused.x * config.mouseFactor
+    smoothBuffer.cam.y = moused.y * config.mouseFactor
+    smoothUpdate()
 
+    // const time = Date.now() * 0.001
     // scene.traverse((object) =>
     // {
     //     object.rotation.x = 0.25 * time;
     //     object.rotation.y = 0.25 * time;
     // });
+
+    function smoothUpdate(): void
+    {
+        // Pixels moved = speed * time
+        const delta = config.smooth.mouseSpeed * dt
+        // Current position
+        const cp = camera.position
+        // Target position
+        const tp = smoothBuffer.cam
+
+        if (Math.abs(cp.x - tp.x) > delta) { cp.x = cp.x + delta * pn(cp.x < tp.x) }
+        else { cp.x = tp.x }
+
+        if (Math.abs(cp.y - tp.y) > delta) { cp.y = cp.y + delta * pn(cp.y < tp.y) }
+        else { cp.y = tp.y }
+    }
 }
 
 // ///////////////////
@@ -96,7 +128,6 @@ function onWindowResize()
 function animate(): void
 {
     requestAnimationFrame(animate)
-    updateTimeTracker()
-    update()
+    update(clock.getDelta())
     renderer.render(scene, camera)
 }
