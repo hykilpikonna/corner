@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import * as helper from "@/animation/Helpers";
+import {initMouseTracker, moused} from "@/animation/MouseTracker";
+import {circle} from "@/animation/Helpers";
 
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 const objects = []
@@ -9,6 +11,10 @@ const config = {
 
     // Field of vision and cutoff frustum for near and far
     cam: {fov: 50, near: 1, far: 2000},
+
+    // Mouse movement factor
+    mouseFactor: 10,
+    smooth: {},
 }
 
 // ////////////////////
@@ -16,7 +22,23 @@ const config = {
 
 function init(): void
 {
+    const geometryBox = helper.box(50, 50, 50);
 
+    const lineSegments = new THREE.LineSegments(geometryBox, new THREE.LineDashedMaterial({
+        color: 0xffaa00,
+        dashSize: 3,
+        gapSize: 1
+    }));
+    lineSegments.computeLineDistances()
+
+    objects.push(lineSegments)
+    scene.add(lineSegments)
+
+    scene.add(circle(0xffff00, 0, 5))
+    scene.add(circle(0xff00ff, 1, 4))
+    scene.add(circle(0x0000ff, 2, 3))
+    scene.add(circle(0x00ffff, 3, 2))
+    scene.add(circle(0xff0000, 4, 1))
 }
 
 function update(): void
