@@ -31,3 +31,18 @@ export function box(width: number, height: number, depth: number): THREE.BufferG
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3))
     return geometry
 }
+
+/**
+ * Create a 2D circle
+ * @param color
+ * @param z
+ * @param r
+ */
+export function circle(color: number, z: number, r: number): THREE.Mesh
+{
+    const geometry = new THREE.CircleGeometry(r, 32)
+    const material = new THREE.MeshBasicMaterial({color})
+    const circle = new THREE.Mesh(geometry, material)
+    circle.position.z = z
+    return circle
+}
