@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import * as helper from "@/animation/Helpers";
-import {initMouseTracker, moused} from "@/animation/Trackers";
+import {initMouseTracker, moused, timed, updateTimeTracker} from "@/animation/Trackers";
 import {circle} from "@/animation/Helpers";
 
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
@@ -96,6 +96,7 @@ function onWindowResize()
 function animate(): void
 {
     requestAnimationFrame(animate)
+    updateTimeTracker()
     update()
     renderer.render(scene, camera)
 }
