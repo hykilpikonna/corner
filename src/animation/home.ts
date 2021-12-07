@@ -11,6 +11,10 @@ const config = {
 
     // Field of vision and cutoff frustum for near and far
     cam: {fov: 50, near: 1, far: 2000},
+
+    // Mouse movement factor
+    mouseFactor: 10,
+    smooth: {},
 }
 
 // ////////////////////
@@ -37,28 +41,18 @@ function init(): void
     scene.add(circle(0xff0000, 4, 1))
 }
 
-function circle(color: number, z: number, r: number)
-{
-    const geometry = new THREE.CircleGeometry(r, 32)
-    const material = new THREE.MeshBasicMaterial({color})
-    const circle = new THREE.Mesh(geometry, material)
-    circle.position.z = z
-    return circle
-}
-
 function update(): void
 {
     const time = Date.now() * 0.001;
-    const obj = camera
-    obj.rotation.y = THREE.MathUtils.lerp(obj.rotation.y, (mouse.x * Math.PI) / 10, 0.1)
-    obj.rotation.x = THREE.MathUtils.lerp(obj.rotation.x, (mouse.y * Math.PI) / 10, 0.1)
+
+    camera.position.x = moused.x * config.mouseFactor
+    camera.position.y = moused.y * config.mouseFactor
 
     // scene.traverse((object) =>
     // {
     //     object.rotation.x = 0.25 * time;
     //     object.rotation.y = 0.25 * time;
     // });
-    return
 }
 
 // ///////////////////
@@ -86,6 +80,7 @@ export function start(id: string): void
     window.addEventListener('resize', onWindowResize)
 
     init()
+    initMouseTracker()
     animate()
 }
 
