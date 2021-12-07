@@ -6,7 +6,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {start} from "@/animation/home";
+import {start} from "@/animation/Home";
 
 @Options({components: {}})
 export default class NewHome extends Vue

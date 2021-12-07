@@ -16,47 +16,12 @@ const config = {
 
 function init(): void
 {
-    const geometryBox = helper.box(50, 50, 50);
 
-    const lineSegments = new THREE.LineSegments(geometryBox, new THREE.LineDashedMaterial({
-        color: 0xffaa00,
-        dashSize: 3,
-        gapSize: 1
-    }));
-    lineSegments.computeLineDistances()
-
-    objects.push(lineSegments)
-    scene.add(lineSegments)
-
-    scene.add(circle(0xffff00, 0, 5))
-    scene.add(circle(0xff00ff, 1, 4))
-    scene.add(circle(0x0000ff, 2, 3))
-    scene.add(circle(0x00ffff, 3, 2))
-    scene.add(circle(0xff0000, 4, 1))
-}
-
-function circle(color: number, z: number, r: number)
-{
-    const geometry = new THREE.CircleGeometry(r, 32)
-    const material = new THREE.MeshBasicMaterial({color})
-    const circle = new THREE.Mesh(geometry, material)
-    circle.position.z = z
-    return circle
 }
 
 function update(): void
 {
-    const time = Date.now() * 0.001;
-    const obj = camera
-    obj.rotation.y = THREE.MathUtils.lerp(obj.rotation.y, (mouse.x * Math.PI) / 10, 0.1)
-    obj.rotation.x = THREE.MathUtils.lerp(obj.rotation.x, (mouse.y * Math.PI) / 10, 0.1)
 
-    // scene.traverse((object) =>
-    // {
-    //     object.rotation.x = 0.25 * time;
-    //     object.rotation.y = 0.25 * time;
-    // });
-    return
 }
 
 // ///////////////////
