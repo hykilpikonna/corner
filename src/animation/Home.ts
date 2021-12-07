@@ -21,7 +21,16 @@ function init(): void
 
 function update(): void
 {
+    const time = Date.now() * 0.001;
 
+    camera.position.x = moused.x * config.mouseFactor
+    camera.position.y = moused.y * config.mouseFactor
+
+    // scene.traverse((object) =>
+    // {
+    //     object.rotation.x = 0.25 * time;
+    //     object.rotation.y = 0.25 * time;
+    // });
 }
 
 // ///////////////////
@@ -49,6 +58,7 @@ export function start(id: string): void
     window.addEventListener('resize', onWindowResize)
 
     init()
+    initMouseTracker()
     animate()
 }
 
