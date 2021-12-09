@@ -4,10 +4,13 @@ import {circle} from "@/animation/Helpers"
 import {initMouseTracker, moused} from "@/animation/Trackers"
 import {addDirLight, addGround, addHemiLight, addSky} from "@/animation/Shaders"
 import {colors, config} from "@/animation/Config"
+import Cursor from "@/animation/components/Cursor";
+import IUpdatable from "@/animation/components/IUpdatable";
 
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 const clock = new THREE.Clock()
 const objects: { [id: string]: THREE.Object3D } = {}
+const updatable: IUpdatable[] = []
 
 // ////////////////////
 // Three.js scene code
@@ -23,9 +26,9 @@ function init(): void
     }))
     lineSegments.computeLineDistances()
 
-    const cursor = circle(0xffaa00, 100, 1)
-    objects.cursor = cursor
+    const cursor = objects.cursor = new Cursor(config.cursor, camera)
     scene.add(cursor)
+    updatable.push(cursor)
 
     objects.box = lineSegments
     scene.add(lineSegments)
@@ -53,13 +56,6 @@ function pn(b: boolean): number
 function update(dt: number): void
 {
     // objects['cursor'].position.set(moused.x, moused.y, 150)
-
-    const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
-    vector.unproject(camera)
-    const dir = vector.sub(camera.position).normalize()
-    const distance = -camera.position.z / dir.z
-    const pos = camera.position.clone().add(dir.multiplyScalar(distance))
-    objects.cursor.position.copy(pos)
 
     // smoothBuffer.cam.x = moused.x * config.mouseFactor
     // smoothBuffer.cam.y = moused.y * config.mouseFactor
@@ -152,6 +148,8 @@ function onWindowResize()
 function animate(): void
 {
     requestAnimationFrame(animate)
-    update(clock.getDelta())
+    const dt = clock.getDelta()
+    update(dt)
+    for (const o of updatable) o.update(dt)
     renderer.render(scene, camera)
 }
