@@ -1,40 +1,33 @@
 import * as THREE from 'three'
-import * as helper from "@/animation/Helpers";
-import {initMouseTracker, moused} from "@/animation/Trackers";
-import {circle} from "@/animation/Helpers";
+import * as helper from "@/animation/Helpers"
+import {circle} from "@/animation/Helpers"
+import {initMouseTracker, moused} from "@/animation/Trackers"
+import {addDirLight, addGround, addHemiLight, addSky} from "@/animation/Shaders"
+import {colors, config} from "@/animation/Config"
 
 let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 const clock = new THREE.Clock()
-const objects = []
-
-const config = {
-    background: '#333',
-
-    // Field of vision and cutoff frustum for near and far
-    cam: {fov: 50, near: 1, far: 2000},
-
-    // Mouse movement factor
-    mouseFactor: 20,
-
-    // Smooth movements (speeds are in terms of pixels per ms)
-    smooth: {mouseSpeed: 10 * window.devicePixelRatio},
-}
+const objects: { [id: string]: THREE.Object3D } = {}
 
 // ////////////////////
 // Three.js scene code
 
 function init(): void
 {
-    const geometryBox = helper.box(50, 50, 50);
+    const geometryBox = helper.box(50, 50, 50)
 
     const lineSegments = new THREE.LineSegments(geometryBox, new THREE.LineDashedMaterial({
         color: 0xffaa00,
         dashSize: 3,
         gapSize: 1
-    }));
+    }))
     lineSegments.computeLineDistances()
 
-    objects.push(lineSegments)
+    const cursor = circle(0xffaa00, 100, 1)
+    objects.cursor = cursor
+    scene.add(cursor)
+
+    objects.box = lineSegments
     scene.add(lineSegments)
 
     scene.add(circle(0xffff00, 0, 5))
@@ -59,16 +52,25 @@ function pn(b: boolean): number
  */
 function update(dt: number): void
 {
-    smoothBuffer.cam.x = moused.x * config.mouseFactor
-    smoothBuffer.cam.y = moused.y * config.mouseFactor
+    // objects['cursor'].position.set(moused.x, moused.y, 150)
+
+    const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
+    vector.unproject(camera)
+    const dir = vector.sub(camera.position).normalize()
+    const distance = -camera.position.z / dir.z
+    const pos = camera.position.clone().add(dir.multiplyScalar(distance))
+    objects.cursor.position.copy(pos)
+
+    // smoothBuffer.cam.x = moused.x * config.mouseFactor
+    // smoothBuffer.cam.y = moused.y * config.mouseFactor
     smoothUpdate()
 
     // const time = Date.now() * 0.001
     // scene.traverse((object) =>
     // {
-    //     object.rotation.x = 0.25 * time;
-    //     object.rotation.y = 0.25 * time;
-    // });
+    //     object.rotation.x = 0.25 * time
+    //     object.rotation.y = 0.25 * time
+    // })
 
     function smoothUpdate(): void
     {
@@ -79,11 +81,21 @@ function update(dt: number): void
         // Target position
         const tp = smoothBuffer.cam
 
-        if (Math.abs(cp.x - tp.x) > delta) { cp.x = cp.x + delta * pn(cp.x < tp.x) }
-        else { cp.x = tp.x }
+        if (Math.abs(cp.x - tp.x) > delta)
+        {
+            cp.x = cp.x + delta * pn(cp.x < tp.x)
+        } else
+        {
+            cp.x = tp.x
+        }
 
-        if (Math.abs(cp.y - tp.y) > delta) { cp.y = cp.y + delta * pn(cp.y < tp.y) }
-        else { cp.y = tp.y }
+        if (Math.abs(cp.y - tp.y) > delta)
+        {
+            cp.y = cp.y + delta * pn(cp.y < tp.y)
+        } else
+        {
+            cp.y = tp.y
+        }
     }
 }
 
@@ -99,7 +111,6 @@ export function start(id: string): void
 {
     scene = new THREE.Scene()
     scene.background = new THREE.Color(config.background)
-
     // Create camera
     camera = new THREE.PerspectiveCamera(config.cam.fov, window.innerWidth / window.innerHeight,
         config.cam.near, config.cam.far)
@@ -111,9 +122,22 @@ export function start(id: string): void
     onWindowResize()
     window.addEventListener('resize', onWindowResize)
 
+    addLights()
+
     init()
     initMouseTracker()
     animate()
+}
+
+function addLights(): void
+{
+    objects.hemiLight = addHemiLight(scene)
+    objects.dirLight = addDirLight(scene)
+    objects.ground = addGround(scene)
+    objects.sky = addSky(scene)
+
+    renderer.outputEncoding = THREE.sRGBEncoding
+    renderer.shadowMap.enabled = true
 }
 
 function onWindowResize()
