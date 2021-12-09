@@ -37,12 +37,13 @@ export function box(width: number, height: number, depth: number): THREE.BufferG
  * @param color
  * @param z
  * @param r
+ * @param hollow
  */
-export function circle(color: number, z: number, r: number): THREE.Mesh
+export function circle(color: number, z: number, r: number, hollow = false): THREE.Object3D
 {
     const geometry = new THREE.CircleGeometry(r, 32)
     const material = new THREE.MeshBasicMaterial({color})
-    const circle = new THREE.Mesh(geometry, material)
+    const circle = hollow ? new THREE.Line(geometry, material) : new THREE.Mesh(geometry, material)
     circle.position.z = z
     return circle
 }
