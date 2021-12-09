@@ -21,10 +21,18 @@ export default class Cursor extends THREE.Mesh implements IUpdatable
         super(geometry, material)
 
         this.camera = camera
+
+        // Ignore depth https://stackoverflow.com/a/62818553/7346633
+        this.renderOrder = 999
+        material.depthTest = false
+        material.depthWrite = false
+        this.onBeforeRender = (r) => r.clearDepth()
     }
 
     update(dt: number): void
     {
+        // Move cursor https://www.reddit.com/r/threejs/comments/eba9l3/3d_cursor_using_threejs_html_css/
+        // https://jsfiddle.net/atwfxdpd/10/
         const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
         vector.unproject(this.camera)
         const dir = vector.sub(this.camera.position).normalize()
