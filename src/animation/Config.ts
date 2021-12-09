@@ -16,6 +16,9 @@ export const config = {
     // Smooth movements (speeds are in terms of pixels per ms)
     smooth: {mouseSpeed: 10 * window.devicePixelRatio},
 
+    // Cursor
+    cursor: {radius: 2, width: 0.3, color: new Color('#333')},
+
     // Debug mode
     debug: true
 }
