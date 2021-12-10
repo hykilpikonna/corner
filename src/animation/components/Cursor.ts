@@ -29,16 +29,8 @@ export default class Cursor implements IUpdatable
     update(dt: number): void
     {
         this.circle.update(dt)
-        // Move cursor https://www.reddit.com/r/threejs/comments/eba9l3/3d_cursor_using_threejs_html_css/
-        // https://jsfiddle.net/atwfxdpd/10/
-
-        const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
-        vector.unproject(this.camera)
-        const dir = vector.sub(this.camera.position).normalize()
-        const distance = -this.camera.position.z / dir.z
-        const pos = this.camera.position.clone().add(dir.multiplyScalar(distance))
-        this.dot.position.copy(pos)
-        this.circle.position.copy(pos)
+        this.dot.position.copy(moused.pos)
+        this.circle.position.copy(moused.pos)
     }
 }
 
