@@ -26,9 +26,7 @@ function init(): void
     }))
     lineSegments.computeLineDistances()
 
-    const cursor = objects.cursor = new Cursor(config.cursor, camera)
-    scene.add(cursor)
-    updatable.push(cursor)
+    updatable.push(new Cursor(scene, config.cursor, camera))
 
     objects.box = lineSegments
     scene.add(lineSegments)
