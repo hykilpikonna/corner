@@ -1,9 +1,9 @@
 import * as THREE from "three";
-import {BufferGeometry, Color} from "three";
+import {BufferGeometry, Color, Material} from "three";
 import {MeshLine, MeshLineMaterial} from 'meshline';
 import IUpdatable from "@/animation/components/IUpdatable";
 import {moused} from "@/animation/Trackers";
-import {circle} from "@/animation/Helpers";
+import {alwaysOnTop, circle} from "@/animation/Helpers";
 
 type CursorConfig = {radius: number, color: Color, width: number}
 
@@ -11,7 +11,7 @@ export default class Cursor implements IUpdatable
 {
     camera: THREE.Camera
     circle: CursorCircle
-    dot: THREE.Object3D
+    dot: THREE.Mesh
 
     constructor(scene: THREE.Scene, conf: CursorConfig, camera: THREE.Camera)
     {
@@ -20,6 +20,7 @@ export default class Cursor implements IUpdatable
         scene.add(this.circle)
 
         this.dot = circle('#000', 0, 0.3)
+        alwaysOnTop(this.dot, this.dot.material as Material)
         scene.add(this.dot)
 
         this.circle.visible = false
@@ -59,11 +60,7 @@ export class CursorCircle extends THREE.Mesh implements IUpdatable
 
         this.camera = camera
 
-        // Ignore depth https://stackoverflow.com/a/62818553/7346633
-        this.renderOrder = 999
-        material.depthTest = false
-        material.depthWrite = false
-        this.onBeforeRender = (r) => r.clearDepth()
+        alwaysOnTop(this, material)
     }
 
     update(dt: number): void
