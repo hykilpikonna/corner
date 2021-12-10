@@ -27,7 +27,6 @@
 </template>
 
 <script lang="ts">
-import MeruIcon from "@/components/MeruIcon.vue";
 import {Options, Vue} from "vue-class-component";
 import router from "@/router";
 
@@ -46,9 +45,7 @@ function runAfter(condition: () => boolean, callback: () => void, timeout=10): v
     }, 1)
 }
 
-@Options({
-    components: {MeruIcon}
-})
+@Options({components: {}})
 export default class App extends Vue
 {
     currentLink: Element = null as never as Element
