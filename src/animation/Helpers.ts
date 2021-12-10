@@ -39,11 +39,24 @@ export function box(width: number, height: number, depth: number): THREE.BufferG
  * @param r
  * @param hollow
  */
-export function circle(color: THREE.Color | number | string, z: number, r: number, hollow = false): THREE.Object3D
+export function circle(color: THREE.Color | number | string, z: number, r: number): THREE.Mesh
 {
     const geometry = new THREE.CircleGeometry(r, 32)
     const material = new THREE.MeshBasicMaterial({color})
-    const circle = hollow ? new THREE.Line(geometry, material) : new THREE.Mesh(geometry, material)
+    const circle = new THREE.Mesh(geometry, material)
     circle.position.z = z
     return circle
+}
+
+/**
+ * Ignore depth https://stackoverflow.com/a/62818553/7346633
+ * @param obj
+ * @param material
+ */
+export function alwaysOnTop(obj: THREE.Object3D, material: THREE.Material): void
+{
+    obj.renderOrder = 999
+    material.depthTest = false
+    material.depthWrite = false
+    obj.onBeforeRender = (r) => r.clearDepth()
 }
