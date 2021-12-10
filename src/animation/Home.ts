@@ -34,11 +34,11 @@ function init(): void
     objects.box = lineSegments
     scene.add(lineSegments)
 
-    scene.add(circle(0xffff00, 0, 5))
-    scene.add(circle(0xff00ff, 1, 4))
-    scene.add(circle(0x0000ff, 2, 3))
-    scene.add(circle(0x00ffff, 3, 2))
-    scene.add(circle(0xff0000, 4, 1))
+    // scene.add(circle(0xffff00, 0, 5))
+    // scene.add(circle(0xff00ff, 1, 4))
+    // scene.add(circle(0x0000ff, 2, 3))
+    // scene.add(circle(0x00ffff, 3, 2))
+    // scene.add(circle(0xff0000, 4, 1))
 }
 
 // Buffer for smooth update

@@ -20,7 +20,10 @@ export const config = {
     cursor: {radius: 2, width: 0.3, color: new Color('#333')},
 
     // Debug mode
-    debug: true
+    debug: false,
+
+    // Edit mode
+    editMode: true
 }
 
 export const colors = {
