@@ -3,22 +3,41 @@ import {BufferGeometry, Color} from "three";
 import {MeshLine, MeshLineMaterial} from 'meshline';
 import IUpdatable from "@/animation/components/IUpdatable";
 import {moused} from "@/animation/Trackers";
+import {circle} from "@/animation/Helpers";
 
 type CursorConfig = {radius: number, color: Color, width: number}
 
 export default class Cursor implements IUpdatable
 {
+    camera: THREE.Camera
     circle: CursorCircle
+    dot: THREE.Object3D
 
     constructor(scene: THREE.Scene, conf: CursorConfig, camera: THREE.Camera)
     {
+        this.camera = camera
         this.circle = new CursorCircle(conf, camera)
         scene.add(this.circle)
+
+        this.dot = circle('#000', 0, 0.3)
+        scene.add(this.dot)
+
+        this.circle.visible = false
     }
 
     update(dt: number): void
     {
         this.circle.update(dt)
+        // Move cursor https://www.reddit.com/r/threejs/comments/eba9l3/3d_cursor_using_threejs_html_css/
+        // https://jsfiddle.net/atwfxdpd/10/
+
+        const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
+        vector.unproject(this.camera)
+        const dir = vector.sub(this.camera.position).normalize()
+        const distance = -this.camera.position.z / dir.z
+        const pos = this.camera.position.clone().add(dir.multiplyScalar(distance))
+        this.dot.position.copy(pos)
+        this.circle.position.copy(pos)
     }
 }
 
@@ -49,13 +68,6 @@ export class CursorCircle extends THREE.Mesh implements IUpdatable
 
     update(dt: number): void
     {
-        // Move cursor https://www.reddit.com/r/threejs/comments/eba9l3/3d_cursor_using_threejs_html_css/
-        // https://jsfiddle.net/atwfxdpd/10/
-        const vector = new THREE.Vector3(moused.x, moused.y, 0.5)
-        vector.unproject(this.camera)
-        const dir = vector.sub(this.camera.position).normalize()
-        const distance = -this.camera.position.z / dir.z
-        const pos = this.camera.position.clone().add(dir.multiplyScalar(distance))
-        this.position.copy(pos)
+        return
     }
 }
