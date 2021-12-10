@@ -121,6 +121,7 @@ export default class App extends Vue
     height: 100vh
     font-size: 1.4em
     align-items: flex-start
+    z-index: 2
 
     #menu
         padding: 5px 10px
