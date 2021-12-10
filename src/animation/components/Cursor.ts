@@ -4,11 +4,29 @@ import {MeshLine, MeshLineMaterial} from 'meshline';
 import IUpdatable from "@/animation/components/IUpdatable";
 import {moused} from "@/animation/Trackers";
 
-export default class Cursor extends THREE.Mesh implements IUpdatable
+type CursorConfig = {radius: number, color: Color, width: number}
+
+export default class Cursor implements IUpdatable
+{
+    circle: CursorCircle
+
+    constructor(scene: THREE.Scene, conf: CursorConfig, camera: THREE.Camera)
+    {
+        this.circle = new CursorCircle(conf, camera)
+        scene.add(this.circle)
+    }
+
+    update(dt: number): void
+    {
+        this.circle.update(dt)
+    }
+}
+
+export class CursorCircle extends THREE.Mesh implements IUpdatable
 {
     camera: THREE.Camera
 
-    constructor(conf: {radius: number, color: Color, width: number}, camera: THREE.Camera)
+    constructor(conf: CursorConfig, camera: THREE.Camera)
     {
         // https://discourse.threejs.org/t/shift-vertices-of-circle-geometry-not-working/26664
         const pts = new THREE.Path().absarc(0, 0, conf.radius, 0, Math.PI * 2, true).getPoints(90)
