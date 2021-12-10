@@ -6,8 +6,9 @@ import {addDirLight, addGround, addHemiLight, addSky} from "@/animation/Shaders"
 import {colors, config} from "@/animation/Config"
 import Cursor from "@/animation/components/Cursor";
 import IUpdatable from "@/animation/components/IUpdatable";
+import Grid from "@/animation/components/Grid";
 
-let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
+export let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 const clock = new THREE.Clock()
 const objects: { [id: string]: THREE.Object3D } = {}
 const updatable: IUpdatable[] = []
@@ -17,16 +18,17 @@ const updatable: IUpdatable[] = []
 
 function init(): void
 {
-    const geometryBox = helper.box(50, 50, 50)
+    const geometryBox = helper.box(50, 50, 1000)
 
     const lineSegments = new THREE.LineSegments(geometryBox, new THREE.LineDashedMaterial({
-        color: 0xffaa00,
+        color: "#420000",
         dashSize: 3,
         gapSize: 1
     }))
     lineSegments.computeLineDistances()
 
     updatable.push(new Cursor(scene, config.cursor, camera))
+    updatable.push(new Grid())
 
     objects.box = lineSegments
     scene.add(lineSegments)
@@ -60,11 +62,8 @@ function update(dt: number): void
     smoothUpdate()
 
     // const time = Date.now() * 0.001
-    // scene.traverse((object) =>
-    // {
-    //     object.rotation.x = 0.25 * time
-    //     object.rotation.y = 0.25 * time
-    // })
+    // objects.box.rotation.x = 0.25 * time
+    // objects.box.rotation.y = 0.25 * time
 
     function smoothUpdate(): void
     {
@@ -127,7 +126,7 @@ function addLights(): void
 {
     objects.hemiLight = addHemiLight(scene)
     objects.dirLight = addDirLight(scene)
-    objects.ground = addGround(scene)
+    // objects.ground = addGround(scene)
     objects.sky = addSky(scene)
 
     renderer.outputEncoding = THREE.sRGBEncoding
