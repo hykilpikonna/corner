@@ -20,6 +20,7 @@ import {Options, Vue} from 'vue-class-component';
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
 import {Color} from "three";
+import {range} from "@/utils";
 
 @Options({components: {ColorPicker}})
 export default class MyColorPicker extends Vue
@@ -30,10 +31,7 @@ export default class MyColorPicker extends Vue
 
     mounted(): void
     {
-        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
-        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
-        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
-        return
+        this.palette = range(3).map(_ => range(10).map(_ => ''))
     }
 
     change(color: string): void
