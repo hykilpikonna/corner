@@ -1,6 +1,6 @@
 <template>
     <div id="Projects">
-        <ColorPicker v-model:color="color"></ColorPicker>
+        <MyColorPicker v-model:color="color"></MyColorPicker>
         <button @click="log"></button>
     </div>
 </template>
@@ -10,10 +10,10 @@ import {Options, Vue} from 'vue-class-component';
 import MyColorPicker from "@/views/color/ColorPicker.vue";
 import {Color} from "three";
 
-@Options({components: {ColorPicker: MyColorPicker}})
+@Options({components: {MyColorPicker}})
 export default class Projects extends Vue
 {
-    color = new Color('#ffffff')
+    color = '#ffffff'
 
     log(): void
     {

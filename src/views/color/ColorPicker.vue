@@ -67,14 +67,16 @@ export default class MyColorPicker extends Vue
         const el = this.$refs.window as HTMLElement
         let lastX = e.clientX, lastY = e.clientY
 
-        document.onmouseup = () => {document.onmousemove = null; document.onmouseup = null}
-        document.onmousemove = (e) =>
+        const mousemove = (e: MouseEvent) =>
         {
             const dx = lastX - e.clientX, dy = lastY - e.clientY
             lastX = e.clientX; lastY = e.clientY
             el.style.left = (el.offsetLeft - dx) + 'px'
             el.style.top = (el.offsetTop - dy) + 'px'
         }
+        const mouseup = () => {document.removeEventListener('mouseup', mouseup); document.removeEventListener('mousemove', mousemove)}
+        document.addEventListener('mouseup', mouseup)
+        document.addEventListener('mousemove', mousemove)
     }
 
     @Emit('updatePalette')
