@@ -210,6 +210,10 @@ export default class MyColorPicker extends Vue
     #palette
         width: 300px
 
+        // Transparency texture
+        background-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAGUlEQVQYV2M4gwH+YwCGIasIUwhT25BVBADtzYNYrHvv4gAAAABJRU5ErkJggg==)
+        background-repeat: repeat
+
         .row
             width: 100%
             background-color: red
