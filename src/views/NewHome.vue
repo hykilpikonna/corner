@@ -15,11 +15,13 @@
 
             <div id="colors" class="fbox-h">
                 <span class="colors-text">Colors</span>
-                <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}">
+                <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}"
+                     @click="pickerColor = c">
                     <div>{{i + 1}}</div>
                 </div>
             </div>
         </div>
+        <MyColorPicker v-if="pickerColor" :color="pickerColor" style="z-index: 3" @close="pickerColor = ''"/>
     </div>
 </template>
 
@@ -27,19 +29,41 @@
 import {Options, Vue} from 'vue-class-component';
 import {start} from "@/animation/Home";
 import {config} from "@/animation/Config";
-import {range} from "@/utils";
+import {KeyHandler, range} from "@/utils";
+import MyColorPicker from "@/views/color/ColorPicker.vue";
 
-@Options({components: {}})
-export default class NewHome extends Vue
+@Options({components: {MyColorPicker}})
+export default class NewHome extends KeyHandler
 {
     editMode = config.editMode
 
     colors = localStorage.getItem('palette') ? JSON.parse(localStorage.getItem('palette') as string)[0] :
         range(10).map(_ => '#ffa8a8')
 
+    pickerColor = ''
+    started = false
+
+    created(): void
+    {
+        this.keybinds = {Escape: e => this.pickerColor = ''}
+    }
+
     mounted(): void
     {
-        start('three')
+        if (!this.started)
+        {
+            start('three')
+            this.started = true
+        }
+    }
+
+    keyListener(e: KeyboardEvent): void
+    {
+        // Escape key to close color picker
+        if (e.key == 'Escape')
+        {
+            this.pickerColor = ''
+        }
     }
 }
 </script>
