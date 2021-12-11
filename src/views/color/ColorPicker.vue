@@ -1,5 +1,5 @@
 <template>
-    <div id="ColorPicker" ref="window" @keydown.esc="close">
+    <div id="ColorPicker" ref="el" @keydown.esc="close">
         <div id="title-colors" class="fbox-h">
             <div class="text" @mousedown="windowDrag" @click.right.alt="close">Colors</div>
             <div class="close fbox-vcenter" @click="close" v-if="showClose"><i class="fas fa-times"></i></div>
@@ -24,7 +24,7 @@
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
 import {range} from "@/utils";
-import {Emit, Model} from "vue-property-decorator";
+import {Emit, Model, Prop, Ref} from "vue-property-decorator";
 import {Vue, Options} from "vue-class-component";
 
 /**
@@ -44,6 +44,9 @@ export default class MyColorPicker extends Vue
     palette: string[][] = []
     showClose = false
 
+    @Ref() el!: HTMLElement
+    @Prop({default: null}) initialPos?: {x: number, y: number}
+
     /**
      * Init
      */
@@ -57,6 +60,11 @@ export default class MyColorPicker extends Vue
         this.storePalette()
     }
 
+    mounted(): void
+    {
+        if (this.initialPos) this.setPos(this.initialPos.x, this.initialPos.y)
+    }
+
     /**
      * Color change
      */
@@ -68,21 +76,27 @@ export default class MyColorPicker extends Vue
     }
 
     /**
+     * Set window position
+     */
+    setPos(x: number, y: number): void
+    {
+        this.el.style.left = x + 'px'
+        this.el.style.top = y + 'px'
+    }
+
+    /**
      * Window dragging
      */
     windowDrag(e: MouseEvent): void
     {
         e.preventDefault()
-
-        const el = this.$refs.window as HTMLElement
         let lastX = e.clientX, lastY = e.clientY
 
         const mousemove = (e: MouseEvent) =>
         {
             const dx = lastX - e.clientX, dy = lastY - e.clientY
             lastX = e.clientX; lastY = e.clientY
-            el.style.left = (el.offsetLeft - dx) + 'px'
-            el.style.top = (el.offsetTop - dy) + 'px'
+            this.setPos(this.el.offsetLeft - dx, this.el.offsetTop - dy)
         }
         const mouseup = () => {document.removeEventListener('mouseup', mouseup); document.removeEventListener('mousemove', mousemove)}
         document.addEventListener('mouseup', mouseup)
