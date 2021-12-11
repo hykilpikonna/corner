@@ -42,7 +42,7 @@ function runAfter(condition: () => boolean, callback: () => void, timeout=10): v
 
         callback()
         clearInterval(id)
-    }, 1)
+    }, 10)
 }
 
 @Options({components: {}})

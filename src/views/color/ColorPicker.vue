@@ -1,0 +1,130 @@
+<template>
+    <div id="ColorPicker">
+        <div id="title-colors" class="fbox-h">
+            <div>Colors</div>
+            <input v-model="colorInput" spellcheck="false">
+        </div>
+        <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="color"
+                     :disableHistory="true" @pureColorChange="change" format="hex"/>
+        <div id="palette">
+            <div class="row" v-for="p of palette" :key="p">
+                <div class="color" v-for="c in p" :key="c"
+                     :style="{'background-color': c ? c : '#333'}"/>
+            </div>
+        </div>
+    </div>
+</template>
+
+<script lang="ts">
+import {Options, Vue} from 'vue-class-component';
+import "vue3-colorpicker/style.css";
+import {ColorPicker} from "vue3-colorpicker";
+import {Color} from "three";
+
+@Options({components: {ColorPicker}})
+export default class MyColorPicker extends Vue
+{
+    color = "#ffffff"
+    colorInput = this.color.substr(1)
+    palette: string[][] = []
+
+    mounted(): void
+    {
+        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
+        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
+        this.palette.push(['', '', '', '', '', '', '', '', '', ''])
+        return
+    }
+
+    change(color: string): void
+    {
+        this.colorInput = color.substr(1)
+    }
+}
+</script>
+
+<style lang="sass">
+#ColorPicker
+    position: absolute
+    border-radius: 20px
+    overflow: hidden
+
+    $cp-color: #4d4d4d
+    $txt-color: #cbcbcb
+    background-color: $cp-color
+    box-shadow: 0 0 10px #00000026
+    color: $txt-color
+
+    #title-colors
+        margin: 8px 0
+        font-size: 1.2em
+        padding: 0 15px
+
+        div
+            flex-grow: 1
+            text-align: left
+
+        input
+            background-color: lighten($cp-color, 6)
+            font-family: monospace
+            color: $txt-color
+            border: none
+            padding: 0 10px
+            width: 60px
+            text-align: center
+            border-radius: 8px
+            transition: all 0.25s ease
+
+        input:focus-visible
+            outline: none
+            background-color: lighten($cp-color, 10)
+
+    .vc-colorpicker
+        width: 300px
+        background-color: transparent
+        box-shadow: none
+        padding-bottom: 0
+        border-radius: 0
+
+    .vc-colorpicker--container
+        padding: 0 3px
+
+    .vc-chrome-colorPicker, .vc-chrome-colorPicker-body
+        background-color: transparent
+
+    .vc-display
+        display: none
+
+    .vc-saturation, .vc-saturation__white, .vc-saturation__black
+        border-radius: 5px
+
+    .vc-saturation
+        height: 200px
+
+    .vc-chrome-colorPicker-body
+        margin-left: 10px
+        margin-right: 10px
+
+    #palette
+        width: 300px
+
+        .row
+            width: 100%
+            background-color: red
+            display: flex
+
+            .color:first-child
+                border-left: none
+
+        .row:first-child .color
+            border-top: none
+
+        .color
+            width: 30px
+            height: 30px
+            box-sizing: border-box
+            border-left: 1px solid $cp-color
+            border-top: 1px solid $cp-color
+            flex-grow: 1
+
+</style>
