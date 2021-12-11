@@ -17,6 +17,3 @@ export function range(fromOrTo: number, to?: number, step = 1): number[]
 
     return [...Array(Math.floor((to - from) / step))].map((_, i) => from + i * step);
 }
-
-console.log(range(3))
-console.log(range(2, 5))
