@@ -7,9 +7,9 @@
         <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="colorModel"
                      :disableHistory="true" @pureColorChange="change" format="hex"/>
         <div id="palette">
-            <div class="row" v-for="p of palette" :key="p">
-                <div class="color" v-for="c in p" :key="c"
-                     :style="{'background-color': c ? c : '#333'}"/>
+            <div class="row" v-for="(p, i) of palette" :key="i">
+                <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
+                     @click="setPalette(i, j)"/>
             </div>
         </div>
     </div>
@@ -44,6 +44,11 @@ export default class MyColorPicker extends Vue
         const c = new Color(this.colorModel)
         this.$emit('update:color', c)
         this.$emit('updateColor', c)
+    }
+
+    setPalette(i: number, j: number): void
+    {
+        this.palette[i][j] = this.colorModel
     }
 }
 </script>
