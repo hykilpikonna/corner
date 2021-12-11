@@ -1,6 +1,6 @@
 <template>
     <div id="Projects">
-        <ColorPicker style="margin-top: 10px" v-model:color="color"></ColorPicker>
+        <ColorPicker v-model:color="color"></ColorPicker>
         <button @click="log"></button>
     </div>
 </template>

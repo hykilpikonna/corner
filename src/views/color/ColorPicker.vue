@@ -1,7 +1,7 @@
 <template>
-    <div id="ColorPicker">
+    <div id="ColorPicker" ref="window">
         <div id="title-colors" class="fbox-h">
-            <div>Colors</div>
+            <div @mousedown="windowDrag">Colors</div>
             <input v-model="colorInput" spellcheck="false" @change="colorModel = colorInput">
         </div>
         <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="colorModel"
@@ -48,6 +48,29 @@ export default class MyColorPicker extends Vue
         this.$emit('updateColor', c)
     }
 
+    /**
+     * Window dragging
+     */
+    windowDrag(e: MouseEvent): void
+    {
+        e.preventDefault()
+
+        const el = this.$refs.window as HTMLElement
+        let lastX = e.clientX, lastY = e.clientY
+
+        document.onmouseup = () => {document.onmousemove = null; document.onmouseup = null}
+        document.onmousemove = (e) =>
+        {
+            const dx = lastX - e.clientX, dy = lastY - e.clientY
+            lastX = e.clientX; lastY = e.clientY
+            el.style.left = (el.offsetLeft - dx) + 'px'
+            el.style.top = (el.offsetTop - dy) + 'px'
+        }
+    }
+
+    /**
+     * Left click to override
+     */
     setPalette(i: number, j: number): void
     {
         this.palette[i][j] = this.colorModel
