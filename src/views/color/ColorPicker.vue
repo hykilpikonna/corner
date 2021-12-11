@@ -2,9 +2,9 @@
     <div id="ColorPicker">
         <div id="title-colors" class="fbox-h">
             <div>Colors</div>
-            <input v-model="colorInput" spellcheck="false">
+            <input v-model="colorInput" spellcheck="false" @change="colorModel = colorInput">
         </div>
-        <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="color"
+        <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="colorModel"
                      :disableHistory="true" @pureColorChange="change" format="hex"/>
         <div id="palette">
             <div class="row" v-for="p of palette" :key="p">
@@ -16,27 +16,34 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+import {Options, prop, Vue} from 'vue-class-component';
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
 import {Color} from "three";
 import {range} from "@/utils";
+import {Model, ModelSync, Prop} from "vue-property-decorator";
 
 @Options({components: {ColorPicker}})
 export default class MyColorPicker extends Vue
 {
-    color = "#ffffff"
-    colorInput = this.color.substr(1)
+    @Model() color!: Color
+    colorModel = ''
+    colorInput = ''
     palette: string[][] = []
 
-    mounted(): void
+    created(): void
     {
+        this.colorModel = '#' + this.color.getHexString()
+        this.colorInput = this.colorModel.substr(1)
         this.palette = range(3).map(_ => range(10).map(_ => ''))
     }
 
     change(color: string): void
     {
         this.colorInput = color.substr(1)
+        const c = new Color(this.colorModel)
+        this.$emit('update:color', c)
+        this.$emit('updateColor', c)
     }
 }
 </script>
