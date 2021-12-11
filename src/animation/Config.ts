@@ -18,7 +18,10 @@ export const config = {
     debug: false,
 
     // Edit mode
-    editMode: true
+    editMode: true,
+
+    // Editor config
+    editor: {zMin: 70, zMax: 90}
 }
 
 export const colors = {
