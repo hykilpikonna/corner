@@ -1,3 +1,6 @@
+import {Options, Vue} from "vue-class-component";
+import {withKeys} from "vue";
+
 /**
  * Same as python's range
  *
@@ -31,4 +34,39 @@ export function range(fromOrTo: number, to?: number, step = 1): number[]
 export function minMax(val: number, min: number, max: number): number
 {
     return val > max ? max : val < min ? min: val
+}
+
+/**
+ * Keybinds[key string] = (event) => Prevent default or not (Default: true)
+ */
+export type Keybinds = {[id: string]: (e: KeyboardEvent) => unknown}
+
+/**
+ * Key handler mixin
+ */
+export class KeyHandler extends Vue
+{
+    keybinds?: Keybinds
+
+    mounted(): void
+    {
+        document.addEventListener('keydown', this.keyListener)
+    }
+
+    unmounted(): void
+    {
+        document.removeEventListener('keydown', this.keyListener)
+    }
+
+    keyListener(e: KeyboardEvent): void
+    {
+        if (!this.keybinds) return
+        if (e.key in this.keybinds)
+        {
+            if (this.keybinds[e.key](e) !== false)
+            {
+                e.preventDefault()
+            }
+        }
+    }
 }
