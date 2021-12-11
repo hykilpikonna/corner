@@ -20,3 +20,15 @@ export function range(fromOrTo: number, to?: number, step = 1): number[]
 
     return [...Array(Math.floor((Math.abs(to - from)) / step))].map((_, i) => from + i * step * mul);
 }
+
+/**
+ * Make sure that the value is between a min and a max
+ *
+ * @param val
+ * @param min
+ * @param max
+ */
+export function minMax(val: number, min: number, max: number): number
+{
+    return val > max ? max : val < min ? min: val
+}
