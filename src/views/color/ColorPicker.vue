@@ -18,12 +18,12 @@
 </template>
 
 <script lang="ts">
-import {Options, prop, Vue} from 'vue-class-component';
+import {Options, Vue} from 'vue-class-component';
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
 import {Color} from "three";
 import {range} from "@/utils";
-import {Model, ModelSync, Prop} from "vue-property-decorator";
+import {Model} from "vue-property-decorator";
 
 @Options({components: {ColorPicker}})
 export default class MyColorPicker extends Vue
@@ -68,13 +68,9 @@ export default class MyColorPicker extends Vue
 
     dropPalette(e: DragEvent, i: number, j: number): void
     {
+        // We can assume that toI != fromI
         const fromI = this.dragging.i * 10 + this.dragging.j
         const toI = i * 10 + j
-        if (toI == fromI)
-        {
-            console.error('Drop on self')
-            return
-        }
         const incr = toI > fromI ? 1 : -1
 
         const currentColor = this.palette[this.dragging.i][this.dragging.j]
@@ -95,12 +91,12 @@ export default class MyColorPicker extends Vue
         console.log('Drag enter')
         console.log(e)
         console.log('' + i + ' ' + j)
-        e.preventDefault()
     }
 
     paletteDragOver(e: DragEvent, i: number, j: number): void
     {
-        e.preventDefault()
+        // Only allow drag if it's not dragging onto itself
+        if (!(i == this.dragging.i && j == this.dragging.j)) e.preventDefault()
     }
 }
 </script>
