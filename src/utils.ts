@@ -12,8 +12,8 @@
  */
 export function range(fromOrTo: number, to?: number, step = 1): number[]
 {
-    const from = to ? fromOrTo : 0
-    to = to ? to : fromOrTo
+    const from = to !== undefined ? fromOrTo : 0
+    to = to !== undefined ? to : fromOrTo
 
     if (to == from) return []
     const mul = to > from ? 1 : -1
