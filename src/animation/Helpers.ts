@@ -41,7 +41,7 @@ export function box(width: number, height: number, depth: number): THREE.BufferG
  */
 export function circle(color: THREE.Color | number | string, z: number, r: number): THREE.Mesh
 {
-    const geometry = new THREE.CircleGeometry(r, 32)
+    const geometry = new THREE.CircleGeometry(r, 64)
     const material = new THREE.MeshBasicMaterial({color})
     const circle = new THREE.Mesh(geometry, material)
     circle.position.z = z
