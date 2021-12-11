@@ -20,17 +20,16 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
-import {Color} from "three";
 import {range} from "@/utils";
-import {Model} from "vue-property-decorator";
+import {Emit, Model} from "vue-property-decorator";
+import {Vue, Options} from "vue-class-component";
 
 @Options({components: {ColorPicker}})
 export default class MyColorPicker extends Vue
 {
-    @Model() color!: Color
+    @Model('color') color!: string // Color prop in #ffffffff format
     colorModel = '' // Color model in #ffffffff format
     colorInput = '' // Color input in ffffff format
     palette: string[][] = []
@@ -40,7 +39,7 @@ export default class MyColorPicker extends Vue
      */
     created(): void
     {
-        this.colorModel = '#' + this.color.getHexString() + 'ff'
+        this.colorModel = this.color
         this.colorInput = this.colorModel.substr(1, 6)
 
         const storedPalette = localStorage.getItem('palette')
@@ -51,12 +50,11 @@ export default class MyColorPicker extends Vue
     /**
      * Color change
      */
-    change(color: string): void
+    @Emit('update:color')
+    change(color: string): string
     {
         this.colorInput = color.substr(1, 6)
-        const c = new Color(this.colorModel.substr(0, 7))
-        this.$emit('update:color', c)
-        this.$emit('updateColor', c)
+        return this.colorModel
     }
 
     /**
@@ -79,10 +77,11 @@ export default class MyColorPicker extends Vue
         }
     }
 
-    storePalette(): void
+    @Emit('updatePalette')
+    storePalette(): string[][]
     {
         localStorage.setItem('palette', JSON.stringify(this.palette))
-        this.$emit('updatePalette', this.palette)
+        return this.palette
     }
 
     /**
