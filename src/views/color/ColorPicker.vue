@@ -5,7 +5,7 @@
             <input v-model="colorInput" spellcheck="false" @change="colorModel = colorInput">
         </div>
         <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="colorModel"
-                     :disableHistory="true" @pureColorChange="change" format="hex"/>
+                     :disableHistory="true" @pureColorChange="change" format="hex8"/>
         <div id="palette">
             <div class="row" v-for="(p, i) of palette" :key="i">
                 <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
@@ -39,8 +39,8 @@ export default class MyColorPicker extends Vue
      */
     created(): void
     {
-        this.colorModel = '#' + this.color.getHexString()
-        this.colorInput = this.colorModel.substr(1)
+        this.colorModel = '#' + this.color.getHexString() + 'ff'
+        this.colorInput = this.colorModel.substr(1, 6)
         this.palette = range(3).map(_ => range(10).map(_ => ''))
     }
 
@@ -49,8 +49,8 @@ export default class MyColorPicker extends Vue
      */
     change(color: string): void
     {
-        this.colorInput = color.substr(1)
-        const c = new Color(this.colorModel)
+        this.colorInput = color.substr(1, 6)
+        const c = new Color(this.colorModel.substr(0, 7))
         this.$emit('update:color', c)
         this.$emit('updateColor', c)
     }
@@ -216,7 +216,6 @@ export default class MyColorPicker extends Vue
 
         .row
             width: 100%
-            background-color: red
             display: flex
 
             .color:first-child
