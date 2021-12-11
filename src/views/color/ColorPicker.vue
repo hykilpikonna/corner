@@ -44,7 +44,8 @@ export default class MyColorPicker extends Vue
         this.colorInput = this.colorModel.substr(1, 6)
 
         const storedPalette = localStorage.getItem('palette')
-        this.palette = !storedPalette ? range(3).map(_ => range(10).map(_ => '')) : JSON.parse(storedPalette);
+        this.palette = !storedPalette ? range(6).map(_ => range(10).map(_ => '')) : JSON.parse(storedPalette);
+        this.storePalette()
     }
 
     /**
@@ -78,13 +79,18 @@ export default class MyColorPicker extends Vue
         }
     }
 
+    storePalette(): void
+    {
+        localStorage.setItem('palette', JSON.stringify(this.palette))
+    }
+
     /**
      * Left click to override
      */
     setPalette(i: number, j: number): void
     {
         this.palette[i][j] = this.colorModel
-        localStorage.setItem('palette', JSON.stringify(this.palette))
+        this.storePalette()
     }
 
     /**
@@ -105,7 +111,7 @@ export default class MyColorPicker extends Vue
     {
         e.preventDefault()
         this.palette[i][j] = ''
-        localStorage.setItem('palette', JSON.stringify(this.palette))
+        this.storePalette()
     }
 
     dragging = {i: 0, j: 0}
@@ -132,7 +138,7 @@ export default class MyColorPicker extends Vue
             this.palette[row][col] = this.palette[lastR][lastC]
         }
         this.palette[i][j] = currentColor
-        localStorage.setItem('palette', JSON.stringify(this.palette))
+        this.storePalette()
     }
 
     paletteDragEnter(e: DragEvent, i: number, j: number): void
