@@ -9,8 +9,9 @@
         <div id="palette">
             <div class="row" v-for="(p, i) of palette" :key="i">
                 <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
-                     @click.exact="setPalette(i, j)" @contextmenu="(e) => rightClickPalette(e, i, j)"
-                     @click.alt="(e) => altClickPalette(e, i, j)"
+                     @click.exact="setPalette(i, j)"
+                     @click.right.alt="(e) => altClickPalette(e, i, j)"
+                     @click.right.exact="(e) => rightClickPalette(e, i, j)"
                      draggable="true" @dragstart="paletteDragStart(i, j)" @drop="(e) => dropPalette(e, i, j)"
                      @dragenter="(e) => paletteDragEnter(e, i, j)" @dragover="(e) => paletteDragOver(e, i, j)"/>
             </div>
@@ -30,8 +31,8 @@ import {Model} from "vue-property-decorator";
 export default class MyColorPicker extends Vue
 {
     @Model() color!: Color
-    colorModel = ''
-    colorInput = ''
+    colorModel = '' // Color model in #ffffffff format
+    colorInput = '' // Color input in ffffff format
     palette: string[][] = []
 
     /**
@@ -95,7 +96,7 @@ export default class MyColorPicker extends Vue
     }
 
     /**
-     * Alt click to remove
+     * Alt right click to remove
      */
     altClickPalette(e: Event, i: number, j: number): void
     {
@@ -165,6 +166,7 @@ export default class MyColorPicker extends Vue
         div
             flex-grow: 1
             text-align: left
+            user-select: none
 
         input
             background-color: lighten($cp-color, 6)
