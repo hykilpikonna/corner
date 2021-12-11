@@ -15,7 +15,7 @@
 
             <div id="colors" class="fbox-h">
                 <span class="colors-text">Colors</span>
-                <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c}">
+                <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}">
                     <div>{{i + 1}}</div>
                 </div>
             </div>
@@ -27,23 +27,15 @@
 import {Options, Vue} from 'vue-class-component';
 import {start} from "@/animation/Home";
 import {config} from "@/animation/Config";
+import {range} from "@/utils";
 
 @Options({components: {}})
 export default class NewHome extends Vue
 {
     editMode = config.editMode
 
-    colors = [
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-        '#ffa8a8',
-    ]
+    colors = localStorage.getItem('palette') ? JSON.parse(localStorage.getItem('palette') as string)[0] :
+        range(10).map(_ => '#ffa8a8')
 
     mounted(): void
     {
