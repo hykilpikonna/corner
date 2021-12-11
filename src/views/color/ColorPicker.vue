@@ -1,7 +1,8 @@
 <template>
-    <div id="ColorPicker" ref="window">
+    <div id="ColorPicker" ref="window" @keydown.esc="close">
         <div id="title-colors" class="fbox-h">
-            <div @mousedown="windowDrag">Colors</div>
+            <div class="text" @mousedown="windowDrag" @click.right.alt="close">Colors</div>
+            <div class="close fbox-vcenter" @click="close" v-if="showClose"><i class="fas fa-times"></i></div>
             <input v-model="colorInput" spellcheck="false" @change="colorModel = colorInput">
         </div>
         <ColorPicker id="picker" :isWidget="true" pickerType="chrome" v-model:pureColor="colorModel"
@@ -33,6 +34,7 @@ export default class MyColorPicker extends Vue
     colorModel = '' // Color model in #ffffffff format
     colorInput = '' // Color input in ffffff format
     palette: string[][] = []
+    showClose = false
 
     /**
      * Init
@@ -84,6 +86,13 @@ export default class MyColorPicker extends Vue
     {
         localStorage.setItem('palette', JSON.stringify(this.palette))
         return this.palette
+    }
+
+    @Emit()
+    close(e?: Event): void
+    {
+        if (e) e.preventDefault()
+        console.log('Color picker close')
     }
 
     /**
@@ -176,7 +185,11 @@ export default class MyColorPicker extends Vue
         font-size: 1.2em
         padding: 0 15px
 
-        div
+        div.close
+            font-size: 10px
+            margin-right: 10px
+
+        div.text
             flex-grow: 1
             text-align: left
             user-select: none
