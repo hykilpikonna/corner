@@ -10,7 +10,7 @@
             <div class="row" v-for="(p, i) of palette" :key="i">
                 <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
                      @click="setPalette(i, j)" @contextmenu="(e) => removePalette(e, i, j)"
-                     draggable="true" @drop="(e) => dropPalette(e, i, j)"
+                     draggable="true" @dragstart="paletteDragStart(i, j)" @drop="(e) => dropPalette(e, i, j)"
                      @dragenter="(e) => paletteDragEnter(e, i, j)" @dragover="(e) => paletteDragOver(e, i, j)"/>
             </div>
         </div>
@@ -59,28 +59,48 @@ export default class MyColorPicker extends Vue
         this.palette[i][j] = ''
     }
 
+    dragging = {i: 0, j: 0}
+
+    paletteDragStart(i: number, j: number): void
+    {
+        this.dragging = {i, j}
+    }
+
     dropPalette(e: DragEvent, i: number, j: number): void
     {
-        console.log('Drop')
-        console.log(e)
-        console.log('' + i + ' ' + j)
-        return
+        const fromI = this.dragging.i * 10 + this.dragging.j
+        const toI = i * 10 + j
+        if (toI == fromI)
+        {
+            console.error('Drop on self')
+            return
+        }
+        const incr = toI > fromI ? 1 : -1
+
+        const currentColor = this.palette[this.dragging.i][this.dragging.j]
+        for (let index of range(fromI, toI))
+        {
+            const col = index % 10, row = Math.floor(index / 10)
+            const lastI = index + incr
+            const lastC = lastI % 10, lastR = Math.floor(lastI / 10)
+            console.log(lastR, lastC, 'TO', row, col)
+            this.palette[row][col] = this.palette[lastR][lastC]
+        }
+        this.palette[i][j] = currentColor
     }
 
     paletteDragEnter(e: DragEvent, i: number, j: number): void
     {
+        // TODO: Drag preview
         console.log('Drag enter')
         console.log(e)
         console.log('' + i + ' ' + j)
-        return
+        e.preventDefault()
     }
 
     paletteDragOver(e: DragEvent, i: number, j: number): void
     {
-        console.log('Drag over')
-        console.log(e)
-        console.log('' + i + ' ' + j)
-        return
+        e.preventDefault()
     }
 }
 </script>
