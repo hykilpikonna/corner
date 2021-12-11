@@ -26,6 +26,11 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('../views/Blog.vue')
     },
     {
+        path: '/color',
+        name: 'ColorPicker',
+        component: () => import('../views/color/ColorPickerTest.vue')
+    },
+    {
         path: '/projects',
         name: 'Projects',
         component: () => import('../views/Projects.vue')
