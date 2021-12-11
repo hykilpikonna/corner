@@ -104,7 +104,6 @@ function update(dt: number): void
 export function start(id: string): void
 {
     scene = new THREE.Scene()
-    scene.background = new THREE.Color(config.background)
     // Create camera
     camera = new THREE.PerspectiveCamera(config.cam.fov, window.innerWidth / window.innerHeight,
         config.cam.near, config.cam.far)
