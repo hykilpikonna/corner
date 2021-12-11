@@ -10,6 +10,7 @@ import Grid from "@/animation/components/Grid";
 import Editor from "@/animation/components/Editor";
 
 export let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
+export let editor: Editor
 const clock = new THREE.Clock()
 const objects: { [id: string]: THREE.Object3D } = {}
 const updatable: IUpdatable[] = []
@@ -29,7 +30,7 @@ function init(): void
     lineSegments.computeLineDistances()
 
     updatable.push(new Cursor(scene, config.cursor, camera))
-    updatable.push(new Grid(), new Editor())
+    updatable.push(new Grid(), editor = new Editor())
 
     objects.box = lineSegments
     scene.add(lineSegments)
