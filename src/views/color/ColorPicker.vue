@@ -27,6 +27,14 @@ import {range} from "@/utils";
 import {Emit, Model} from "vue-property-decorator";
 import {Vue, Options} from "vue-class-component";
 
+/**
+ * Mouse Usage:
+ * - Alt + Right-click the title to close
+ * - Left-click on a color block to add color to palette
+ * - Left-drag on a color block to move color
+ * - Right-click on a color block to select color
+ * - Alt + Right-click on a color block to remove color
+ */
 @Options({components: {ColorPicker}})
 export default class MyColorPicker extends Vue
 {
