@@ -82,6 +82,7 @@ export default class MyColorPicker extends Vue
     storePalette(): void
     {
         localStorage.setItem('palette', JSON.stringify(this.palette))
+        this.$emit('updatePalette', this.palette)
     }
 
     /**
