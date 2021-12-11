@@ -83,6 +83,7 @@ export default class App extends Vue
     {
         if (this.currentRoute in this.$refs)
             this.currentLink = (this.$refs[this.currentRoute] as Vue).$el
+        else return
 
         // https://developer.mozilla.org/zh-CN/docs/Web/API/Element/getBoundingClientRect
         let box = this.currentLink.getBoundingClientRect()
