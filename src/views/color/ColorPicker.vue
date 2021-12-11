@@ -9,7 +9,9 @@
         <div id="palette">
             <div class="row" v-for="(p, i) of palette" :key="i">
                 <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
-                     @click="setPalette(i, j)"/>
+                     @click="setPalette(i, j)" @contextmenu="(e) => removePalette(e, i, j)"
+                     draggable="true" @drop="(e) => dropPalette(e, i, j)"
+                     @dragenter="(e) => paletteDragEnter(e, i, j)" @dragover="(e) => paletteDragOver(e, i, j)"/>
             </div>
         </div>
     </div>
@@ -49,6 +51,36 @@ export default class MyColorPicker extends Vue
     setPalette(i: number, j: number): void
     {
         this.palette[i][j] = this.colorModel
+    }
+
+    removePalette(e: Event, i: number, j: number): void
+    {
+        e.preventDefault()
+        this.palette[i][j] = ''
+    }
+
+    dropPalette(e: DragEvent, i: number, j: number): void
+    {
+        console.log('Drop')
+        console.log(e)
+        console.log('' + i + ' ' + j)
+        return
+    }
+
+    paletteDragEnter(e: DragEvent, i: number, j: number): void
+    {
+        console.log('Drag enter')
+        console.log(e)
+        console.log('' + i + ' ' + j)
+        return
+    }
+
+    paletteDragOver(e: DragEvent, i: number, j: number): void
+    {
+        console.log('Drag over')
+        console.log(e)
+        console.log('' + i + ' ' + j)
+        return
     }
 }
 </script>
