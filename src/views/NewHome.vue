@@ -16,12 +16,14 @@
             <div id="colors" class="fbox-h">
                 <span class="colors-text">Colors</span>
                 <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}"
-                     @click="pickerColor = c">
+                     @click="e => openPicker(e, c)">
                     <div>{{i + 1}}</div>
                 </div>
             </div>
         </div>
-        <MyColorPicker v-if="pickerColor" :color="pickerColor" style="z-index: 3" @close="pickerColor = ''"/>
+        <MyColorPicker v-if="pickerColor" :color="pickerColor" style="z-index: 3"
+                       @close="pickerColor = ''" :initial-pos="initialPos"
+                       @updatePalette="p => colors = p[0]"/>
     </div>
 </template>
 
@@ -41,11 +43,12 @@ export default class NewHome extends KeyHandler
         range(10).map(_ => '#ffa8a8')
 
     pickerColor = ''
+    initialPos = {x: 0, y: 0}
     started = false
 
     created(): void
     {
-        this.keybinds = {Escape: e => this.pickerColor = ''}
+        this.keybinds = {Escape: _ => this.pickerColor = ''}
     }
 
     mounted(): void
@@ -57,13 +60,10 @@ export default class NewHome extends KeyHandler
         }
     }
 
-    keyListener(e: KeyboardEvent): void
+    openPicker(e: MouseEvent, c: string): void
     {
-        // Escape key to close color picker
-        if (e.key == 'Escape')
-        {
-            this.pickerColor = ''
-        }
+        this.pickerColor = c
+        this.initialPos = {x: e.clientX - 150, y: e.clientY + 50}
     }
 }
 </script>
