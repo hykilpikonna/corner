@@ -9,7 +9,8 @@
         <div id="palette">
             <div class="row" v-for="(p, i) of palette" :key="i">
                 <div class="color" v-for="(c, j) in p" :key="j" :style="{'background-color': c ? c : '#333'}"
-                     @click="setPalette(i, j)" @contextmenu="(e) => removePalette(e, i, j)"
+                     @click="setPalette(i, j)" @contextmenu="(e) => rightClickPalette(e, i, j)"
+                     @click.alt="(e) => altClickPalette(e, i, j)"
                      draggable="true" @dragstart="paletteDragStart(i, j)" @drop="(e) => dropPalette(e, i, j)"
                      @dragenter="(e) => paletteDragEnter(e, i, j)" @dragover="(e) => paletteDragOver(e, i, j)"/>
             </div>
@@ -33,6 +34,9 @@ export default class MyColorPicker extends Vue
     colorInput = ''
     palette: string[][] = []
 
+    /**
+     * Init
+     */
     created(): void
     {
         this.colorModel = '#' + this.color.getHexString()
@@ -40,6 +44,9 @@ export default class MyColorPicker extends Vue
         this.palette = range(3).map(_ => range(10).map(_ => ''))
     }
 
+    /**
+     * Color change
+     */
     change(color: string): void
     {
         this.colorInput = color.substr(1)
@@ -76,7 +83,20 @@ export default class MyColorPicker extends Vue
         this.palette[i][j] = this.colorModel
     }
 
-    removePalette(e: Event, i: number, j: number): void
+    /**
+     * Right click to select
+     */
+    rightClickPalette(e: Event, i: number, j: number): void
+    {
+        e.preventDefault()
+        this.colorModel = this.palette[i][j]
+        this.change(this.colorModel)
+    }
+
+    /**
+     * Alt click to remove
+     */
+    altClickPalette(e: Event, i: number, j: number): void
     {
         e.preventDefault()
         this.palette[i][j] = ''
