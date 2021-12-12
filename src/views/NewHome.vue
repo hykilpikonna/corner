@@ -29,7 +29,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {start} from "@/animation/Home";
+import {editor, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
 import {KeyHandler, range} from "@/utils";
 import MyColorPicker from "@/views/color/ColorPicker.vue";
@@ -48,7 +48,8 @@ export default class NewHome extends KeyHandler
 
     created(): void
     {
-        this.keybinds = {Escape: _ => this.pickerColor = ''}
+        this.keybinds.Escape = _ => this.pickerColor = ''
+        range(10).forEach(i => this.keybinds[i.toString()] = _ => editor.color = this.colors[i])
     }
 
     mounted(): void

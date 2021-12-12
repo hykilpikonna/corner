@@ -46,7 +46,7 @@ export type Keybinds = {[id: string]: (e: KeyboardEvent) => unknown}
  */
 export class KeyHandler extends Vue
 {
-    keybinds?: Keybinds
+    keybinds: Keybinds = {}
 
     mounted(): void
     {
@@ -60,7 +60,6 @@ export class KeyHandler extends Vue
 
     keyListener(e: KeyboardEvent): void
     {
-        if (!this.keybinds) return
         if (e.key in this.keybinds)
         {
             if (this.keybinds[e.key](e) !== false)
