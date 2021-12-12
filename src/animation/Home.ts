@@ -12,7 +12,7 @@ import Editor from "@/animation/components/Editor";
 export let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 export let editor: Editor
 const clock = new THREE.Clock()
-const objects: { [id: string]: THREE.Object3D } = {}
+export const objects: { [id: string]: THREE.Object3D } = {}
 const updatable: IUpdatable[] = []
 
 // ////////////////////
@@ -127,8 +127,9 @@ function addLights(): void
 {
     objects.hemiLight = addHemiLight(scene)
     objects.dirLight = addDirLight(scene)
-    // objects.ground = addGround(scene)
+    objects.ground = addGround(scene)
     objects.sky = addSky(scene)
+    objects.ground.visible = false
 
     renderer.outputEncoding = THREE.sRGBEncoding
     renderer.shadowMap.enabled = true

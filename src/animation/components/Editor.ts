@@ -38,7 +38,7 @@ export default class Editor implements IUpdatable
                 this.scale -= direction / 10
                 this.hand.scale.set(this.scale, this.scale, this.scale)
             }
-            else this.z = minMax(this.z - direction, config.editor.zMin, config.editor.zMax)
+            else this.z = minMax(this.z - direction * 2, config.editor.zMin, config.editor.zMax)
 
         }, false)
     }
