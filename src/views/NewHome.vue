@@ -17,7 +17,7 @@
                 <span class="colors-text">Colors</span>
                 <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}"
                      @click="e => openPicker(e, c)">
-                    <div>{{i + 1}}</div>
+                    <div>{{(i + 1) % 10}}</div>
                 </div>
             </div>
         </div>
@@ -49,7 +49,7 @@ export default class NewHome extends KeyHandler
     created(): void
     {
         this.keybinds.Escape = _ => this.pickerColor = ''
-        range(10).forEach(i => this.keybinds[i.toString()] = _ => editor.color = this.colors[i])
+        range(10).forEach(i => this.keybinds[((i + 1) % 10)+''] = _ => editor.color = this.colors[i])
     }
 
     mounted(): void
@@ -82,6 +82,7 @@ export default class NewHome extends KeyHandler
 #editor-controls
     position: absolute
     z-index: 2
+    user-select: none
 
     // Positioning
     top: 20px
