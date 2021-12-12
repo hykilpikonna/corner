@@ -24,9 +24,7 @@
 
             <div class="separator"/>
 
-            <div>
-                Light
-            </div>
+            <div @click="_ => toggle('sky')">Sky</div>
         </div>
         <MyColorPicker v-if="pickerColor" :color="pickerColor" style="z-index: 3"
                        @close="pickerColor = ''" :initial-pos="initialPos"
@@ -36,7 +34,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {editor, start} from "@/animation/Home";
+import {editor, objects, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
 import {KeyHandler, range} from "@/utils";
 import MyColorPicker from "@/views/color/ColorPicker.vue";
@@ -65,6 +63,16 @@ export default class NewHome extends KeyHandler
         {
             start('three')
             this.started = true
+        }
+    }
+
+    toggle(s: string): void
+    {
+        if (s == 'sky')
+        {
+            objects.hemiLight.visible = !objects.hemiLight.visible
+            objects.dirLight.visible = !objects.dirLight.visible
+            objects.sky.visible = !objects.sky.visible
         }
     }
 

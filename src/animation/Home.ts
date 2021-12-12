@@ -8,6 +8,7 @@ import Cursor from "@/animation/components/Cursor";
 import IUpdatable from "@/animation/components/IUpdatable";
 import Grid from "@/animation/components/Grid";
 import Editor from "@/animation/components/Editor";
+import {Color} from "three";
 
 export let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 export let editor: Editor
@@ -105,6 +106,7 @@ function update(dt: number): void
 export function start(id: string): void
 {
     scene = new THREE.Scene()
+    scene.background = new Color('#f9f2e0')
     // Create camera
     camera = new THREE.PerspectiveCamera(config.cam.fov, window.innerWidth / window.innerHeight,
         config.cam.near, config.cam.far)
