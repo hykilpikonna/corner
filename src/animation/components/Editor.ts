@@ -1,4 +1,4 @@
-import {Color, Material, Mesh, MeshBasicMaterial, Object3D} from "three";
+import {Color, Material, Mesh, MeshBasicMaterial, Object3D, Vector3} from "three";
 import IUpdatable from "@/animation/components/IUpdatable";
 import {circle} from "@/animation/Helpers";
 import {camera, scene} from "@/animation/Home";
@@ -6,17 +6,27 @@ import {moused, projectTo3D} from "@/animation/Trackers";
 import {config} from "@/animation/Config";
 import {minMax} from "@/utils";
 
+type DisplayCircle = {x: number, y: number, z: number, radius: number, color: string}
+
 export default class Editor implements IUpdatable
 {
     hand: Mesh
     radius = 3
     scale = 1
     z = config.editor.zMax
+    data: DisplayCircle[] = []
+    circles: Mesh[] = []
 
     constructor()
     {
         this.hand = circle('#ffffff', 0, this.radius)
         scene.add(this.hand)
+
+        window.addEventListener('mousedown', (e) =>
+        {
+            console.log('clicked', e)
+            this.addCirc(this.radius * this.scale, this.hand.position, this.color)
+        })
 
         window.addEventListener('wheel', (e) =>
         {
@@ -43,6 +53,24 @@ export default class Editor implements IUpdatable
         }, false)
     }
 
+    addCirc(radius: number, pos: Vector3, color: string): void
+    {
+        const data = {...pos, radius, color}
+        data.z -= config.editor.zMax
+        this.data.push(data)
+        this.displayCirc(data)
+    }
+
+    displayCirc(params: DisplayCircle): void
+    {
+        const circ = circle(params.color, 0, params.radius)
+        circ.position.x = params.x
+        circ.position.y = params.y
+        circ.position.z = params.z + config.editor.zMax
+        scene.add(circ)
+        this.circles.push(circ)
+    }
+
     update(dt: number): void
     {
         const pos = projectTo3D(moused.x, moused.y, this.z)
@@ -52,7 +80,7 @@ export default class Editor implements IUpdatable
 
     get color(): string
     {
-        return this.handMaterial.color.getHexString()
+        return '#' + this.handMaterial.color.getHexString()
     }
 
     set color(value: string)

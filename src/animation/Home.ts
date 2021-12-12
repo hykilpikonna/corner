@@ -62,7 +62,7 @@ function update(dt: number): void
 
     // smoothBuffer.cam.x = moused.x * config.mouseFactor
     // smoothBuffer.cam.y = moused.y * config.mouseFactor
-    smoothUpdate()
+    // smoothUpdate()
 
     // const time = Date.now() * 0.001
     // objects.box.rotation.x = 0.25 * time
@@ -131,6 +131,7 @@ function addLights(): void
     objects.dirLight = addDirLight(scene)
     objects.ground = addGround(scene)
     objects.sky = addSky(scene)
+    objects.sky.visible = false
     objects.ground.visible = false
 
     renderer.outputEncoding = THREE.sRGBEncoding
