@@ -14,11 +14,18 @@
             <div class="separator"/>
 
             <div id="colors" class="fbox-h">
-                <span class="colors-text">Colors</span>
                 <div class="color" v-for="(c, i) in colors" :key="i" :style="{'background-color': c ?? '#333'}"
                      @click="e => openPicker(e, c)">
                     <div>{{(i + 1) % 10}}</div>
                 </div>
+            </div>
+
+            <div class="f-grow1"></div>
+
+            <div class="separator"/>
+
+            <div>
+                Light
             </div>
         </div>
         <MyColorPicker v-if="pickerColor" :color="pickerColor" style="z-index: 3"
@@ -109,20 +116,20 @@ export default class NewHome extends KeyHandler
 
     #colors
         align-items: center
-        .colors-text
-            margin-right: 5px
 
         .color
             width: 12px
             height: 12px
-            margin-left: 5px
 
             div
                 margin-top: -10px
                 font-size: 8px
                 color: #8f8f8f
 
-#editor-controls > *
-    margin-right: 10px
+            + .color
+                margin-left: 5px
+
+#editor-controls > * + *
+    margin-left: 10px
 
 </style>
