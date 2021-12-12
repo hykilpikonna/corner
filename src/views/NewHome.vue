@@ -34,7 +34,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {editor, objects, start} from "@/animation/Home";
+import {camera, editor, objects, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
 import {KeyHandler, range} from "@/utils";
 import MyColorPicker from "@/views/color/ColorPicker.vue";
@@ -53,8 +53,26 @@ export default class NewHome extends KeyHandler
 
     created(): void
     {
+        // Escape to close picker
         this.keybinds.Escape = _ => this.pickerColor = ''
+
+        // Pick colors
         range(10).forEach(i => this.keybinds[((i + 1) % 10)+''] = _ => editor.color = this.colors[i])
+
+        // Camera position binds
+        this.keybinds.ArrowLeft = _ => camera.position.x -= 1
+        this.keybinds.ArrowRight = _ => camera.position.x += 1
+        this.keybinds.ArrowUp = _ => camera.position.y += 1
+        this.keybinds.ArrowDown = _ => camera.position.y -= 1
+        this.keybinds.J = _ => camera.rotateY(Math.PI / 60)
+        this.keybinds.L = _ => camera.rotateY(-Math.PI / 60)
+        this.keybinds.I = _ => camera.rotateX(Math.PI / 60)
+        this.keybinds.K = _ => camera.rotateX(-Math.PI / 60)
+        this.keybinds.Ctrl0 = _ =>
+        {
+            camera.position.set(0, 0, 200)
+            camera.lookAt(0, 0, 0)
+        }
     }
 
     mounted(): void
