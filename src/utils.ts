@@ -1,5 +1,7 @@
 import {Options, Vue} from "vue-class-component";
 import {withKeys} from "vue";
+import {NodeLib} from "three/examples/jsm/nodes/core/NodeLib";
+import keywords = NodeLib.keywords;
 
 /**
  * Same as python's range
@@ -47,10 +49,18 @@ export type Keybinds = {[id: string]: (e: KeyboardEvent) => unknown}
 export class KeyHandler extends Vue
 {
     keybinds: Keybinds = {}
+    _keybinds: Keybinds = {}
+
+    initKeybinds(): void
+    {
+        return
+    }
 
     mounted(): void
     {
         document.addEventListener('keydown', this.keyListener)
+        this.initKeybinds()
+        Object.keys(this.keybinds).forEach(it => this._keybinds[it.toLowerCase()] = this.keybinds[it])
     }
 
     unmounted(): void
@@ -60,9 +70,16 @@ export class KeyHandler extends Vue
 
     keyListener(e: KeyboardEvent): void
     {
-        if (e.key in this.keybinds)
+        let key = e.key
+        if (e.shiftKey) key = 'Shift' + key
+        if (e.altKey) key = 'Alt' + key
+        if (e.ctrlKey) key = 'Ctrl' + key
+        if (e.metaKey) key = 'Cmd' + key
+        console.log(key)
+
+        if (key in this._keybinds)
         {
-            if (this.keybinds[e.key](e) !== false)
+            if (this._keybinds[key](e) !== false)
             {
                 e.preventDefault()
             }
