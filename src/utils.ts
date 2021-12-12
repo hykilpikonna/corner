@@ -75,6 +75,7 @@ export class KeyHandler extends Vue
         if (e.altKey) key = 'Alt' + key
         if (e.ctrlKey) key = 'Ctrl' + key
         if (e.metaKey) key = 'Cmd' + key
+        key = key.toLowerCase()
         console.log(key)
 
         if (key in this._keybinds)
