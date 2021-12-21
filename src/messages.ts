@@ -6,6 +6,7 @@ export const messages = {
             home: 'Home',
             about: 'About',
             blog: 'Blog',
+            life: 'Life',
             projects: 'Projects',
         }
     },

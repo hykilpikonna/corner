@@ -7,7 +7,7 @@
         <div id="items" class="fbox-v">
             <router-link class="router-link" ref="projects" to="/projects">{{ $t('nav.projects') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="blog" to="/blog">{{ $t('nav.blog') }}</router-link>
+            <router-link class="router-link" ref="life" to="/life">{{ $t('nav.life') }}</router-link>
             <div class="dot">·</div>
             <router-link class="router-link" ref="about" to="/about">{{ $t('nav.about') }}</router-link>
             <div class="dot">·</div>
