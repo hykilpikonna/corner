@@ -2,7 +2,7 @@
     <table class="meta">
         <tr v-for="(v, k) in filteredTable" :key="k">
             <td>{{k}}</td>
-            <td>{{v}}</td>
+            <td v-html="v"></td>
         </tr>
     </table>
 </template>
