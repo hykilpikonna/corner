@@ -83,6 +83,17 @@ export function parseExtensions(raw: string): string
         lines[i] = lines[i].replace(re.command, s)
     }
 
+    /**
+     * Collapse section
+     */
+    function collapseSection()
+    {
+        const e = findSectionEnd()
+        const title = lines[i].substring(lines[i].indexOf(' ') + 1).replace(re.command, '')
+        lines[i] = `<Collapse title="${encodeURIComponent(title)}">`
+        lines.splice(e, 0, '</Collapse>\n')
+    }
+
     // Run all commands in markdown
     while (i < lines.length)
     {
