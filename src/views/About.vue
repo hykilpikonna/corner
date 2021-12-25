@@ -28,7 +28,7 @@ export default class About extends Vue
 
     updated(): void
     {
-        $('#accordion').accordion({collapsible: true, header: 'h3'})
+        $('#accordion').accordion({collapsible: true, header: 'h3', heightStyle: "content"})
     }
 }
 </script>
@@ -71,4 +71,10 @@ export default class About extends Vue
 
     li
         font-size: 0.875em
+
+    h3.ui-accordion-header
+        margin: 0
+        padding-top: 0.5em
+        padding-bottom: 0.5em
+
 </style>
