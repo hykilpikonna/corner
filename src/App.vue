@@ -51,6 +51,13 @@ export default class App extends Vue
 
     updateBookmark(to: RouteLocationNormalized): void
     {
+        // Update title
+        // Use next tick to handle router history correctly
+        // see: https://github.com/vuejs/vue-router/issues/914#issuecomment-384477609
+        this.$nextTick(() => {
+            document.title = to.meta.title ? `Hykilpikonna - ${to.meta.title}` : 'Hykilpikonna - Home';
+        })
+
         console.log('AfterEach called', to)
         this.currentRoute = (to.name as string).toLowerCase()
 
