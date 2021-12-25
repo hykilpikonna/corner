@@ -36,5 +36,11 @@ export default class MetaTable extends Vue
 </script>
 
 <style lang="sass" scoped>
+.meta
+    td:first-child
+        text-align: right
 
+    td:last-child
+        display: inline-block
+        margin-left: 20px
 </style>
