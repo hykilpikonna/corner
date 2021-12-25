@@ -99,10 +99,7 @@ export default class Blog extends Vue
 @import "src/css/colors"
 
 #Blog
-    background: #fdf9f1
-    margin: 20px auto 0
-    border-radius: 50px 50px 0 0
-    padding: 20px
+    margin: 20px auto
     font-size: 0.8em
     width: min(450px, 80vw)
 
@@ -112,7 +109,7 @@ export default class Blog extends Vue
 
 .post
     width: 100%
-    background: #f9f2e0
+    background: #fdf9f1
     border-radius: 20px
     margin-bottom: 20px
     padding: 12px 20px 8px
@@ -170,7 +167,7 @@ export default class Blog extends Vue
             background-repeat: no-repeat
             background-position: center
 
-            margin-right: 10px
+            margin-right: 2px
 
         .img:last-child
             margin-right: 0
@@ -200,12 +197,6 @@ export default class Blog extends Vue
 // Phone layout
 @media screen and (max-width: 570px)
     #Blog
-        border-radius: 0
-        padding: 0
-        background: unset
         margin: 20px 20px 0
         width: unset
-
-    .post
-        background-color: #fdf9f1
 </style>
