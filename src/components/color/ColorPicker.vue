@@ -23,7 +23,7 @@
 <script lang="ts">
 import "vue3-colorpicker/style.css";
 import {ColorPicker} from "vue3-colorpicker";
-import {range} from "@/utils";
+import {range} from "@/scripts/utils";
 import {Emit, Model, Prop, Ref} from "vue-property-decorator";
 import {Vue, Options} from "vue-class-component";
 
