@@ -36,9 +36,12 @@ export default class MetaTable extends Vue
 </script>
 
 <style lang="sass" scoped>
+@import "src/css/colors"
+
 .meta
     td:first-child
         text-align: right
+        color: $color-text-light
 
     td:last-child
         display: inline-block
