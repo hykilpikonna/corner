@@ -4,11 +4,11 @@
             <i class="icon fas fa-caret-right"></i>
             <div class="fbox-v">
                 <div id="title">{{d.title}}</div>
-                <div id="subtitle">By {{d.creators.map(it => it.firstName + ' ' + it.lastName).join(' & ')}}{{date.year() ? ', ' + date.year() : ''}}</div>
+                <div id="subtitle">By {{authors}}{{date.year() ? ', ' + date.year() : ''}}</div>
             </div>
         </div>
         <div id="details">
-            Text
+            <MetaTable :table="tableData"/>
         </div>
     </div>
 </template>
@@ -19,6 +19,9 @@ import {Prop} from "vue-property-decorator";
 import moment from "moment";
 import $ from "jquery";
 import 'jqueryui';
+import MetaTable from "@/components/MetaTable.vue";
+import {capitalize} from "@/scripts/utils";
+import linkifyUrls from "linkify-urls";
 
 export interface ZoteroLink
 {
@@ -40,6 +43,7 @@ export interface ZoteroCreator
 export interface ZoteroData
 {
     key: string
+    version: number
     itemType: string // 'document'
     title: string
     creators: ZoteroCreator[]
@@ -75,14 +79,26 @@ export interface ZoteroItem
     data: ZoteroData
 }
 
-@Options({components: {}})
+@Options({components: {MetaTable}})
 export default class ZoteroPublicationView extends Vue
 {
     @Prop({required: true}) item!: ZoteroItem
 
     get d(): ZoteroData { return this.item.data }
-
     get date(): moment.Moment { return moment(this.item.meta.parsedDate) }
+    get authors(): string { return this.d.creators.map(it => it.firstName + ' ' + it.lastName).join(' & ') }
+
+    get tableData(): {[id: string]: unknown}
+    {
+        const t: {[id: string]: unknown} = {...this.d}
+        t.creators = this.authors
+        delete t.key
+        delete t.version
+        delete t.title
+        if (t.itemType) t.itemType = capitalize(t.itemType as string)
+        if (t.url) t.url = linkifyUrls(t.url as string)
+        return t
+    }
 
     mounted(): void
     {
@@ -102,6 +118,9 @@ export default class ZoteroPublicationView extends Vue
 
     #subtitle
         font-size: 0.9em
+
+    #details
+        padding-left: calc(1.6em + 6px)
 
 .header
     align-items: center
