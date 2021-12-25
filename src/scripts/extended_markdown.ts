@@ -1,3 +1,4 @@
+/* eslint-disable prefer-const */
 /**
  * Regex used in markdown extension parsing
  */
@@ -12,9 +13,10 @@ const re = {
  * @param raw Extended markdown
  * @return Parsed markdown
  */
-function parseExtensions(raw: string): string
+export function parseExtensions(raw: string): string
 {
-    const lines = raw.replace('\r\n', '\n').split('\n')
+    // @ts-ignore
+    let lines = raw.replace('\r\n', '\n').split('\n')
     let i = 0
 
     /**
@@ -35,22 +37,32 @@ function parseExtensions(raw: string): string
 
         // Find next same-level or higher-level header's index
         let j = i + 1
-        while (!(lines[i].startsWith('#') && re.hashes.exec(lines[i])![0].length <= level)) j++
+        for (; j < lines.length; j++)
+        {
+            const r = re.hashes.exec(lines[j])
+            if (r && r[0].length <= level) break
+        }
+        lines.splice(i, j - i)
     }
 
     // Run all commands in markdown
     while (i < lines.length)
     {
+        console.log(`Line ${i}`)
+
         // Find commands
         const r = re.command.exec(lines[i])
-        if (!r) continue
-        const cmd = r[0].substring(5).trim()
+        if (r)
+        {
+            const cmd = r[0].substring(5).trim()
 
-        // Run cmd
-        eval(cmd)
+            // Run cmd
+            console.log(`Running command`, cmd)
+            eval(cmd)
+        }
 
         i++;
     }
 
-    return raw
+    return lines.join('\n')
 }

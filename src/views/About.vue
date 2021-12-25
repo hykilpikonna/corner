@@ -8,6 +8,7 @@
 import {Options, Vue} from 'vue-class-component';
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
+import {parseExtensions} from '@/scripts/extended_markdown'
 
 @Options({components: {}})
 export default class About extends Vue
@@ -18,9 +19,9 @@ export default class About extends Vue
     {
         // TODO: Cloudflare CDN
         fetch("https://raw.githubusercontent.com/hykilpikonna/hykilpikonna/main/README.md").then(it => it.text())
-            .then(it => this.html = marked(it.replace(emojiRegex(), (emoji) => {
+            .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
-            })))
+            }))))
     }
 }
 </script>
