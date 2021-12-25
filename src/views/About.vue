@@ -9,6 +9,8 @@ import {Options, Vue} from 'vue-class-component';
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
+import $ from 'jquery'
+import 'jqueryui'
 
 @Options({components: {}})
 export default class About extends Vue
@@ -22,6 +24,11 @@ export default class About extends Vue
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
+    }
+
+    updated(): void
+    {
+        $('#accordion').accordion({collapsible: true, header: 'h3'})
     }
 }
 </script>
