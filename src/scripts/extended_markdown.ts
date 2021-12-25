@@ -74,6 +74,12 @@ export function parseExtensions(raw: string): string
         i--
     }
 
+    function hideLines(n: number)
+    {
+        lines.splice(i, n)
+        i--
+    }
+
     /**
      * Add something
      * @param s String
