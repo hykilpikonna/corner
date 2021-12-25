@@ -31,6 +31,8 @@ export default class About extends Vue
 #About
     width: min(600px, 80vw)
     margin: auto
+    padding-bottom: 100px
+    padding-top: 20px
 
 .emoji
     font-weight: normal
