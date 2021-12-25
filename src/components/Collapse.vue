@@ -44,4 +44,7 @@ export default class Collapse extends Vue
 
     h3:hover
         //background-color: rgba(255, 131, 115, 0.36)
+
+    .content
+        padding-bottom: 0.5em
 </style>

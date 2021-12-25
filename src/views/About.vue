@@ -94,6 +94,6 @@ export default class About extends Vue
 
     li
         font-size: 0.9em
-        margin-top: 0.25em
+        margin-bottom: 0.25em
 
 </style>
