@@ -16,6 +16,7 @@ import {parseExtensions} from '@/scripts/extended_markdown'
 import $ from 'jquery'
 import 'jqueryui'
 import ZoteroPublication, {ZoteroAttachment, ZoteroItem} from "@/components/ZoteroPublication.vue";
+import {backendUrl} from "@/scripts/constants";
 
 @Options({components: {ZoteroPublication}})
 export default class About extends Vue
@@ -31,8 +32,8 @@ export default class About extends Vue
                 return `<span class="emoji">${emoji}</span>`
             }))))
 
-        // Fetch publications from zotero TODO: CDN
-        fetch('https://api.zotero.org/users/8463157/publications/items?linkwrap=1&order=date&sort=desc&start=0&include=data&limit=100')
+        // Fetch publications from zotero
+        fetch(`${backendUrl}/zotero.json`)
             .then(it => it.json()).then(it =>
             {
                 // Filter out publications and attachments
