@@ -38,6 +38,7 @@ export default class Collapse extends Vue
         margin: 0
         padding-top: 0.5em
         padding-bottom: 0.5em
+        user-select: none
 
     h3.ui-accordion-header:not(.ui-accordion-header-active):after
         content: '...'
