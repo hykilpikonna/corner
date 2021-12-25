@@ -7,6 +7,7 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {marked} from 'marked';
+import emojiRegex from 'emoji-regex';
 
 @Options({components: {}})
 export default class About extends Vue
@@ -17,17 +18,22 @@ export default class About extends Vue
     {
         // TODO: Cloudflare CDN
         fetch("https://raw.githubusercontent.com/hykilpikonna/hykilpikonna/main/README.md").then(it => it.text())
-            .then(it => this.html = marked(it))
+            .then(it => this.html = marked(it.replace(emojiRegex(), (emoji) => {
+                return `<span class="emoji">${emoji}</span>`
+            })))
     }
 }
 </script>
 
-<style lang="sass" scoped>
+<style lang="sass">
 @import "../css/colors"
 
 #About
     width: min(600px, 80vw)
     margin: auto
+
+.emoji
+    font-weight: normal
 
 // Markdown style
 .markdown-content

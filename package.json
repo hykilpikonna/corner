@@ -12,6 +12,7 @@
         "@types/marked": "^4.0.1",
         "@types/three": "^0.135.0",
         "core-js": "^3.6.5",
+        "emoji-regex": "^10.0.0",
         "marked": "^4.0.6",
         "meshline": "^2.0.3",
         "moment": "^2.29.1",
