@@ -2,7 +2,9 @@
     <div id="About" class="markdown-content">
         <Dynamic :template="html"></Dynamic>
 
-        <ZoteroPublication v-for="item in publications" :key="item.key" :item="item"/>
+        <Collapse title="<span class='emoji'>🎓</span> Published papers">
+            <ZoteroPublication v-for="item in publications" :key="item.key" :item="item"/>
+        </Collapse>
     </div>
 </template>
 

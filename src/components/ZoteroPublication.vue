@@ -9,11 +9,11 @@
         </div>
         <div id="details">
             <MetaTable id="table" :table="tableData"/>
-            <div id="abstract">
+            <div id="abstract" v-if="d.abstractNote">
                 <div class="label">Abstract</div>
                 <div class="content">{{d.abstractNote}}</div>
             </div>
-            <div id="attachments" v-if="item.attachments">
+            <div id="attachments" v-if="item.attachments.length !== 0">
                 <div class="label">Attachments</div>
                 <div class="content" v-for="a of item.attachments" :key="a.data.key">
                     <a :href="a.links['enclosure'].href">{{a.data.title}}</a>
@@ -147,8 +147,8 @@ export default class ZoteroPublicationView extends Vue
 <style lang="sass" scoped>
 
 .publication
-    margin-block-start: 1em
-    margin-block-end: 1em
+    padding-top: 0.5em
+    padding-bottom: 0.5em
 
     #title
         font-weight: bold
