@@ -3,8 +3,10 @@ import App from './App.vue'
 import router from './scripts/router'
 import {i18n} from "@/messages";
 import '@fortawesome/fontawesome-free/css/all.min.css'
+import Collapse from "@/components/Collapse.vue";
 
 const app = createApp(App).use(router).use(i18n)
+    .component('Collapse', Collapse)
     .component('Dynamic', {
         props: ['template'],
         render() {
