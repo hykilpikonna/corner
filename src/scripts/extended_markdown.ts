@@ -7,6 +7,25 @@ const re = {
     hashes: /^#+/g,
 }
 
+declare global
+{
+    interface RegExp
+    {
+        find(s: string): RegExpExecArray | null;
+    }
+}
+
+/**
+ * Make sure that regex find is consistent
+ * https://stackoverflow.com/questions/11477415/why-does-javascripts-regex-exec-not-always-return-the-same-value
+ */
+RegExp.prototype.find = function(s)
+{
+    const r = this.exec(s)
+    this.lastIndex = 0
+    return r
+}
+
 /**
  * Parse markdown extensions
  *
@@ -24,7 +43,7 @@ export function parseExtensions(raw: string): string
      */
     function findSectionEnd(): number
     {
-        const r = re.hashes.exec(lines[i])
+        const r = re.hashes.find(lines[i])
         if (!r) return -1
         const level = r[0].length
 
@@ -32,7 +51,7 @@ export function parseExtensions(raw: string): string
         let j = i + 1
         for (; j < lines.length; j++)
         {
-            const r = re.hashes.exec(lines[j])
+            const r = re.hashes.find(lines[j])
             if (r && r[0].length <= level) break
         }
         return j
@@ -52,6 +71,7 @@ export function parseExtensions(raw: string): string
     {
         const e = findSectionEnd()
         if (e != -1) lines.splice(i, e - i)
+        i--
     }
 
     /**
@@ -69,7 +89,7 @@ export function parseExtensions(raw: string): string
         console.log(`Line ${i}`)
 
         // Find commands
-        const r = re.command.exec(lines[i])
+        const r = re.command.find(lines[i])
         if (r)
         {
             let cmd = r[0]
@@ -78,9 +98,6 @@ export function parseExtensions(raw: string): string
             // Run cmd
             console.log(`Running command`, cmd)
             eval(cmd)
-
-            // Remove cmd
-            lines[i] = lines[i].replace(re.command, '')
         }
 
         i++;
