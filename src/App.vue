@@ -29,7 +29,7 @@
 
 <script lang="ts">
 import {Options, Vue} from "vue-class-component";
-import router from "@/router";
+import router from "@/scripts/router";
 import {RouteLocationNormalized} from "vue-router";
 
 @Options({components: {}})
