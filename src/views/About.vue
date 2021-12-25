@@ -16,7 +16,7 @@ import {parseExtensions} from '@/scripts/extended_markdown'
 import $ from 'jquery'
 import 'jqueryui'
 import ZoteroPublication, {ZoteroAttachment, ZoteroItem} from "@/components/ZoteroPublication.vue";
-import {backendUrl} from "@/scripts/constants";
+import {hosts} from "@/scripts/constants";
 
 @Options({components: {ZoteroPublication}})
 export default class About extends Vue
@@ -27,13 +27,13 @@ export default class About extends Vue
     mounted(): void
     {
         // Fetch readme
-        fetch(`${backendUrl}/profile-readme.md`).then(it => it.text())
+        fetch(`${hosts.content}/profile-readme.md`).then(it => it.text())
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
 
         // Fetch publications from zotero
-        fetch(`${backendUrl}/zotero.json`)
+        fetch(`${hosts.api}/zotero.json`)
             .then(it => it.json()).then(it =>
             {
                 // Filter out publications and attachments
