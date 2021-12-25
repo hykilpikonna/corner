@@ -13,7 +13,7 @@ import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
 import $ from 'jquery'
 import 'jqueryui'
-import ZoteroPublication, {ZoteroItem} from "@/components/ZoteroPublication.vue";
+import ZoteroPublication, {ZoteroAttachment, ZoteroItem} from "@/components/ZoteroPublication.vue";
 
 @Options({components: {ZoteroPublication}})
 export default class About extends Vue
@@ -33,8 +33,14 @@ export default class About extends Vue
         fetch('https://api.zotero.org/users/8463157/publications/items?linkwrap=1&order=date&sort=desc&start=0&include=data&limit=100')
             .then(it => it.json()).then(it =>
             {
+                // Filter out publications and attachments
                 this.publications = it
+                let files: ZoteroAttachment[] = it
+                files = files.filter(it => it.data.itemType === 'attachment')
                 this.publications = this.publications.filter(it => it.data.itemType !== 'attachment')
+
+                // Add attachments to
+                this.publications.forEach(it => it.attachments = files.filter(a => a.data.parentItem == it.key))
             })
     }
 

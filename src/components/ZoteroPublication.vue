@@ -8,7 +8,17 @@
             </div>
         </div>
         <div id="details">
-            <MetaTable :table="tableData"/>
+            <MetaTable id="table" :table="tableData"/>
+            <div id="abstract">
+                <div class="label">Abstract</div>
+                <div class="content">{{d.abstractNote}}</div>
+            </div>
+            <div id="attachments" v-if="item.attachments">
+                <div class="label">Attachments</div>
+                <div class="content" v-for="a of item.attachments" :key="a.data.key">
+                    <a :href="a.links['enclosure'].href">{{a.data.title}}</a>
+                </div>
+            </div>
         </div>
     </div>
 </template>
@@ -29,6 +39,8 @@ export interface ZoteroLink
     type: string // 'text/html'
     attachmentType?: string // 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     attachmentSize?: number // bytes?
+    title?: string
+    length?: string
 }
 
 export type ZoteroLinks = {[id: string]: ZoteroLink}
@@ -61,22 +73,45 @@ export interface ZoteroData
     extra?: string
 }
 
+export interface ZoteroLibrary
+{
+    type: string // 'user'
+    id: number
+    name: string
+    links: ZoteroLinks
+}
+
+export interface ZoteroMeta
+{
+    creatorSummary: string // Gui and Burton
+    parsedDate: string // 2021-12-09
+    numChildren: number
+}
+
 export interface ZoteroItem
 {
     key: string
     version: number
-    library: {
-        type: string // 'user'
-        id: number
-        name: string
-        links: ZoteroLinks
-    }
-    meta: {
-        creatorSummary: string // Gui and Burton
-        parsedDate: string // 2021-12-09
-        numChildren: 1
-    }
+    library: ZoteroLibrary
+    meta: ZoteroMeta
     data: ZoteroData
+
+    attachments: ZoteroAttachment[]
+}
+
+export interface ZoteroAttachment
+{
+    links: ZoteroLinks
+    data: {
+        key: string
+        parentItem: string
+        itemType: string // == 'attachment'
+        title: string
+        contentType: string
+        fileName: string
+        md5: string
+        mtime: number
+    }
 }
 
 @Options({components: {MetaTable}})
@@ -95,6 +130,7 @@ export default class ZoteroPublicationView extends Vue
         delete t.key
         delete t.version
         delete t.title
+        delete t.abstractNote
         if (t.itemType) t.itemType = capitalize(t.itemType as string)
         if (t.url) t.url = linkifyUrls(t.url as string)
         return t
@@ -102,7 +138,8 @@ export default class ZoteroPublicationView extends Vue
 
     mounted(): void
     {
-        $('.publication').accordion({collapsible: true, header: 'div.header', active: false})
+        $('.publication').accordion({collapsible: true, header: 'div.header', active: false,
+            heightStyle: "content"})
     }
 }
 </script>
@@ -121,6 +158,17 @@ export default class ZoteroPublicationView extends Vue
 
     #details
         padding-left: calc(1.6em + 6px)
+
+        > div
+            margin-bottom: 1em
+
+        #table
+            margin: 1em 0
+
+        .label
+            font-weight: bold
+
+        font-size: 0.8em
 
 .header
     align-items: center
