@@ -30,17 +30,23 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('../views/Life.vue')
     },
     {
+        path: '/projects',
+        name: 'Projects',
+        meta: {title: 'Projects'},
+        component: () => import('../views/Projects.vue')
+    },
+    {
+        path: '/blog',
+        name: 'Blog',
+        meta: {title: '记事本'},
+        component: () => import('../views/Blog.vue')
+    },
+    {
         path: '/color',
         name: 'ColorPicker',
         meta: {title: 'Color Picker'},
         component: () => import('../components/color/ColorPickerTest.vue')
     },
-    {
-        path: '/projects',
-        name: 'Projects',
-        meta: {title: 'Projects'},
-        component: () => import('../views/Projects.vue')
-    }
 ]
 
 export const router = createRouter({
