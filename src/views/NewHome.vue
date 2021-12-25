@@ -37,7 +37,7 @@ import {Options, Vue} from 'vue-class-component';
 import {camera, editor, objects, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
 import {KeyHandler, range} from "@/utils";
-import MyColorPicker from "@/views/color/ColorPicker.vue";
+import MyColorPicker from "@/components/color/ColorPicker.vue";
 
 @Options({components: {MyColorPicker}})
 export default class NewHome extends KeyHandler
