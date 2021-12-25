@@ -60,7 +60,7 @@ export function parseExtensions(raw: string): string
      */
     function add(s: string)
     {
-        lines[i].replace(re.command, s)
+        lines[i] = lines[i].replace(re.command, s)
     }
 
     // Run all commands in markdown
@@ -78,10 +78,14 @@ export function parseExtensions(raw: string): string
             // Run cmd
             console.log(`Running command`, cmd)
             eval(cmd)
+
+            // Remove cmd
+            lines[i] = lines[i].replace(re.command, '')
         }
 
         i++;
     }
 
+    console.log(lines.join('\n'))
     return lines.join('\n')
 }
