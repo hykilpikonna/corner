@@ -5,9 +5,12 @@
                 <img class="thumb" v-if="p.reply.thumb" :src="p.reply.thumb" alt="">
                 <div class="mtext"><span>{{p.reply.text}}</span></div>
             </div>
-            <div class="images" v-if="p.images">
+            <div class="images" v-if="p.images && p.images.length === 1">
+                <img v-for="i in p.images" :key="i" :src="i.url" alt="image">
+            </div>
+            <div class="images" v-if="p.images && p.images.length !== 1">
                 <div class="img" v-for="i in p.images" :key="i"
-                     :style="{'background-image': `url(${i.url})`}"></div>
+                     :style="{'background-image': `url(${i.url})`, ...getImageStyle(p, i)}"></div>
             </div>
             <div class="text">{{p.text}}</div>
             <div class="info font-code">
@@ -24,6 +27,19 @@
 import {Options, Vue} from 'vue-class-component';
 import {backendUrl} from "@/constants";
 import moment from "moment";
+
+export interface Image {
+    href: string
+    url: string
+    style: {
+        left: number
+        top: number
+        width: number
+        height: number
+        'margin-right': number
+        'margin-bottom': number
+    }
+}
 
 export interface Post {
     id: string
@@ -43,10 +59,11 @@ export interface Post {
         duration: string
         src: string
     }
-    images?: {
-        href: string
-        url: string
-    }[]
+    images?: Image[]
+    img_group_style?: {
+        width: number
+        height: number
+    }
 }
 
 @Options({components: {}})
@@ -64,6 +81,17 @@ export default class Blog extends Vue
             console.log(it)
         })
     }
+    
+    getImageStyle(post: Post, i: Image): unknown
+    {
+        if (post.img_group_style)
+        {
+            return {}
+        }
+        else return {
+
+        }
+    }
 }
 </script>
 
@@ -75,8 +103,8 @@ export default class Blog extends Vue
     margin: 20px auto 0
     border-radius: 50px 50px 0 0
     padding: 20px
-    font-size: 0.9em
-    width: min(600px, 80vw)
+    font-size: 0.8em
+    width: min(450px, 80vw)
 
 .post.service
     .id
@@ -89,7 +117,9 @@ export default class Blog extends Vue
     margin-bottom: 20px
     padding: 12px 20px 8px
     overflow: auto
+    overflow-x: hidden
     box-sizing: border-box
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -1px rgb(0 0 0 / 6%)
 
     text-align: left
 
@@ -129,7 +159,7 @@ export default class Blog extends Vue
         margin: 0 -20px 10px
 
     .images
-        margin: -20px -20px 10px
+        margin: -12px -20px 10px
         display: flex
 
         .img
@@ -137,10 +167,19 @@ export default class Blog extends Vue
             height: 200px
             width: 200px
             background-size: cover
+            background-repeat: no-repeat
+            background-position: center
 
             margin-right: 10px
+
         .img:last-child
             margin-right: 0
+
+        img
+            max-width: 100%
+            min-width: 100%
+            width: auto
+            height: auto
 
     .text
         white-space: pre-line
