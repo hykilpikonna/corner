@@ -1,7 +1,7 @@
 import {createApp, h} from 'vue'
 import App from './App.vue'
 import router from './scripts/router'
-import {i18n} from "@/messages"
+import {i18n} from "@/scripts/messages"
 import '@fortawesome/fontawesome-free/css/all.min.css'
 import Collapse from "@/components/Collapse.vue"
 

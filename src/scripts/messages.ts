@@ -6,7 +6,7 @@ export const messages = {
             home: 'Home',
             about: 'About',
             blog: 'Blog',
-            life: 'Life',
+            life: '生活',
             projects: 'Projects',
         }
     },

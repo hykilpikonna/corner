@@ -6,7 +6,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {backendUrl} from "@/constants";
+import {backendUrl} from "@/scripts/constants";
 import moment from "moment";
 import PostView from "@/components/Post.vue";
 

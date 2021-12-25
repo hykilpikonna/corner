@@ -36,7 +36,7 @@
 import {Options, Vue} from 'vue-class-component';
 import {camera, editor, objects, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
-import {KeyHandler, range} from "@/utils";
+import {KeyHandler, range} from "@/scripts/utils";
 import MyColorPicker from "@/components/color/ColorPicker.vue";
 
 @Options({components: {MyColorPicker}})

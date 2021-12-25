@@ -4,7 +4,7 @@ import {circle} from "@/animation/Helpers";
 import {camera, scene} from "@/animation/Home";
 import {moused, projectTo3D} from "@/animation/Trackers";
 import {config} from "@/animation/Config";
-import {minMax} from "@/utils";
+import {minMax} from "@/scripts/utils";
 
 type DisplayCircle = {x: number, y: number, z: number, radius: number, color: string}
 
