@@ -27,7 +27,7 @@ export default class About extends Vue
     mounted(): void
     {
         // Fetch readme
-        fetch(`${hosts.content}/profile-readme.md`).then(it => it.text())
+        fetch(`${hosts.content}/README.md`).then(it => it.text())
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
