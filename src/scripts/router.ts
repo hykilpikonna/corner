@@ -28,7 +28,7 @@ const routes: Array<RouteRecordRaw> = [
     {
         path: '/color',
         name: 'ColorPicker',
-        component: () => import('../views/color/ColorPickerTest.vue')
+        component: () => import('../components/color/ColorPickerTest.vue')
     },
     {
         path: '/projects',
