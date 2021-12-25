@@ -145,6 +145,7 @@ export default class App extends Vue
     .dot
         content: '·'
         margin: 20px 0
+        user-select: none
 
     .router-link, .dot
         text-decoration: none
