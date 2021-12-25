@@ -1,6 +1,8 @@
 <template>
     <div id="About" class="markdown-content">
         <Dynamic :template="html"></Dynamic>
+
+        <ZoteroPublication v-for="item in publications" :key="item.key" :item="item"/>
     </div>
 </template>
 
@@ -11,11 +13,13 @@ import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
 import $ from 'jquery'
 import 'jqueryui'
+import ZoteroPublication, {ZoteroItem} from "@/components/ZoteroPublication.vue";
 
-@Options({components: {}})
+@Options({components: {ZoteroPublication}})
 export default class About extends Vue
 {
     html = ""
+    publications: ZoteroItem[] = []
 
     mounted(): void
     {
@@ -24,6 +28,10 @@ export default class About extends Vue
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
+
+        // Fetch publications from zotero TODO: CDN
+        fetch('https://api.zotero.org/hykilpikonna/publications/items?linkwrap=1&order=date&sort=desc&start=0&include=data&limit=100')
+            .then(it => it.json()).then(it => this.publications = it)
     }
 
     updated(): void
