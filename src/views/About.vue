@@ -20,7 +20,7 @@ export default class About extends Vue
     mounted(): void
     {
         // TODO: Cloudflare CDN
-        fetch("https://raw.githubusercontent.com/hykilpikonna/hykilpikonna/main/README.md").then(it => it.text())
+        fetch("/README.md").then(it => it.text())
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
@@ -71,10 +71,5 @@ export default class About extends Vue
 
     li
         font-size: 0.875em
-
-    h3.ui-accordion-header
-        margin: 0
-        padding-top: 0.5em
-        padding-bottom: 0.5em
 
 </style>
