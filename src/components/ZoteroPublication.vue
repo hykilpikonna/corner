@@ -1,7 +1,15 @@
 <template>
-    <div id="Publication">
-        <div id="title">{{d.title}}</div>
-        <div id="subtitle">By {{d.creators.map(it => it.firstName + ' ' + it.lastName).join(' & ')}}{{date ? ', ' + date.year() : ''}}</div>
+    <div class="publication">
+        <div class="header fbox-h">
+            <i class="icon fas fa-caret-right"></i>
+            <div class="fbox-v">
+                <div id="title">{{d.title}}</div>
+                <div id="subtitle">By {{d.creators.map(it => it.firstName + ' ' + it.lastName).join(' & ')}}{{date.year() ? ', ' + date.year() : ''}}</div>
+            </div>
+        </div>
+        <div id="details">
+            Text
+        </div>
     </div>
 </template>
 
@@ -9,6 +17,8 @@
 import {Options, Vue} from 'vue-class-component';
 import {Prop} from "vue-property-decorator";
 import moment from "moment";
+import $ from "jquery";
+import 'jqueryui';
 
 export interface ZoteroLink
 {
@@ -72,10 +82,35 @@ export default class ZoteroPublicationView extends Vue
 
     get d(): ZoteroData { return this.item.data }
 
-    get date(): moment.Moment { return moment(this.d.date) }
+    get date(): moment.Moment { return moment(this.item.meta.parsedDate) }
+
+    mounted(): void
+    {
+        $('.publication').accordion({collapsible: true, header: 'div.header', active: false})
+    }
 }
 </script>
 
 <style lang="sass" scoped>
 
+.publication
+    margin-block-start: 1em
+    margin-block-end: 1em
+
+    #title
+        font-weight: bold
+
+    #subtitle
+        font-size: 0.9em
+
+.header
+    align-items: center
+
+    .icon
+        transition: all 0.25s ease
+        padding: 0 0.8em
+
+.header.ui-accordion-header-active
+    .icon
+        transform: rotate(90deg)
 </style>

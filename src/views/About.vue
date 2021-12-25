@@ -76,13 +76,16 @@ export default class About extends Vue
         margin-bottom: 0.25em
         padding: 0
 
+    h3
+        font-size: 1.2em
+
     p
-        font-size: 0.875em
+        font-size: 0.9em
         margin: 0.5em 0
         line-height: 1.6
 
     li
-        font-size: 0.875em
+        font-size: 0.9em
         margin-top: 0.25em
 
 </style>
