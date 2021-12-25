@@ -30,8 +30,12 @@ export default class About extends Vue
             }))))
 
         // Fetch publications from zotero TODO: CDN
-        fetch('https://api.zotero.org/hykilpikonna/publications/items?linkwrap=1&order=date&sort=desc&start=0&include=data&limit=100')
-            .then(it => it.json()).then(it => this.publications = it)
+        fetch('https://api.zotero.org/users/8463157/publications/items?linkwrap=1&order=date&sort=desc&start=0&include=data&limit=100')
+            .then(it => it.json()).then(it =>
+            {
+                this.publications = it
+                this.publications = this.publications.filter(it => it.data.itemType !== 'attachment')
+            })
     }
 
     updated(): void
