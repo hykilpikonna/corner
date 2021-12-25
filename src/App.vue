@@ -109,6 +109,8 @@ export default class App extends Vue
     align-items: flex-start
     z-index: 2
 
+    font-family: "Microsoft YaHei UI", $font
+
     #menu
         padding: 5px 10px
         margin: 15px 10px
