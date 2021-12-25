@@ -3123,6 +3123,16 @@ create-hmac@^1.1.0, create-hmac@^1.1.4, create-hmac@^1.1.7:
     safe-buffer "^5.0.1"
     sha.js "^2.4.8"
 
+create-html-element@^4.0.1:
+  version "4.0.1"
+  resolved "https://registry.yarnpkg.com/create-html-element/-/create-html-element-4.0.1.tgz#037197116084de7822c7259f426ab53f38efa1a9"
+  integrity sha512-K/wr7TGTPh4v2m5JpxNWQ/W4/lHkVjun7rTmg8ycNjbJE0ngjxvVYSiYzgq4iiJ+H5zq2FcPu6ZehCZHHcZtfA==
+  dependencies:
+    escape-goat "^4.0.0"
+    html-tags "^3.1.0"
+    stringify-attributes "^3.0.0"
+    type-fest "^2.5.0"
+
 cross-spawn@^5.0.1:
   version "5.1.0"
   resolved "https://registry.npmjs.org/cross-spawn/-/cross-spawn-5.1.0.tgz"
@@ -3802,6 +3812,16 @@ escalade@^3.1.1:
   version "3.1.1"
   resolved "https://registry.npmjs.org/escalade/-/escalade-3.1.1.tgz"
   integrity sha512-k0er2gUkLf8O0zKJiAhmkTnJlTvINGv7ygDNPbeIsX/TJjGJZHuh9B2UxbsaEkmlEo9MfhrSzmhIlhRlI2GXnw==
+
+escape-goat@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/escape-goat/-/escape-goat-3.0.0.tgz#e8b5fb658553fe8a3c4959c316c6ebb8c842b19c"
+  integrity sha512-w3PwNZJwRxlp47QGzhuEBldEqVHHhh8/tIPcl6ecf2Bou99cdAt0knihBV0Ecc7CGxYduXVBDheH1K2oADRlvw==
+
+escape-goat@^4.0.0:
+  version "4.0.0"
+  resolved "https://registry.yarnpkg.com/escape-goat/-/escape-goat-4.0.0.tgz#9424820331b510b0666b98f7873fe11ac4aa8081"
+  integrity sha512-2Sd4ShcWxbx6OY1IHyla/CVNwvg7XwZVoXZHcSu9w9SReNP1EzzD5T8NWKIR38fIqEns9kDWKUQTXXAmlDrdPg==
 
 escape-html@~1.0.3:
   version "1.0.3"
@@ -5698,6 +5718,13 @@ lines-and-columns@^1.1.6:
   version "1.2.4"
   resolved "https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz"
   integrity sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==
+
+linkify-urls@^4.0.0:
+  version "4.0.0"
+  resolved "https://registry.yarnpkg.com/linkify-urls/-/linkify-urls-4.0.0.tgz#44bb1375a3d287eea11c4e7c6a5a5756c9ecb29e"
+  integrity sha512-Kjj+9gZtj+Yf93LL1UPND6F/F5hcZAINuBfS4AKiOUh5mmfVjSiZWBg75ebCJ8onkf0lIMJhiOQXF3BCBBmCtw==
+  dependencies:
+    create-html-element "^4.0.1"
 
 loader-fs-cache@^1.0.0:
   version "1.0.3"
@@ -8267,6 +8294,13 @@ string_decoder@~1.1.1:
   dependencies:
     safe-buffer "~5.1.0"
 
+stringify-attributes@^3.0.0:
+  version "3.0.0"
+  resolved "https://registry.yarnpkg.com/stringify-attributes/-/stringify-attributes-3.0.0.tgz#10d8c3615924df47b70d28c848d71c8afb0a8e52"
+  integrity sha512-tJKiThlLfog6ljT7ZTihlMh0iAtjKlu/ss9DMmBE5oOosbMqOMcuxc7zDfxP2lGzSb2Bwvbd3gQTqTSCmXyySw==
+  dependencies:
+    escape-goat "^3.0.0"
+
 strip-ansi@^3.0.0, strip-ansi@^3.0.1:
   version "3.0.1"
   resolved "https://registry.npmjs.org/strip-ansi/-/strip-ansi-3.0.1.tgz"
@@ -8643,6 +8677,11 @@ type-fest@^0.8.1:
   version "0.8.1"
   resolved "https://registry.npmjs.org/type-fest/-/type-fest-0.8.1.tgz"
   integrity sha512-4dbzIzqvjtgiM5rw1k5rEHtBANKmdudhGyBEajN01fEyhaAIhsoKNy6y7+IN93IfpFtwY9iqi7kD+xwKhQsNJA==
+
+type-fest@^2.5.0:
+  version "2.8.0"
+  resolved "https://registry.yarnpkg.com/type-fest/-/type-fest-2.8.0.tgz#39d7c9f9c508df8d6ce1cf5a966b0e6568dcc50d"
+  integrity sha512-O+V9pAshf9C6loGaH0idwsmugI2LxVNR7DtS40gVo2EXZVYFgz9OuNtOhgHLdHdapOEWNdvz9Ob/eeuaWwwlxA==
 
 type-is@~1.6.17, type-is@~1.6.18:
   version "1.6.18"
