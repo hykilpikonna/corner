@@ -1,11 +1,12 @@
 <template>
-    <div id="Publishing">
+    <div id="Publication">
 
     </div>
 </template>
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
+import {Prop} from "vue-property-decorator";
 
 export interface ZoteroLink
 {
@@ -60,9 +61,9 @@ export interface ZoteroItem
 }
 
 @Options({components: {}})
-export default class Publishing extends Vue
+export default class ZoteroPublicationView extends Vue
 {
-
+    @Prop({required: true}) item!: ZoteroItem
 }
 </script>
 
