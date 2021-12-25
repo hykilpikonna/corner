@@ -1,9 +1,16 @@
-import {createApp} from 'vue'
+import {createApp, h} from 'vue'
 import App from './App.vue'
 import router from './scripts/router'
 import {i18n} from "@/messages";
 import '@fortawesome/fontawesome-free/css/all.min.css'
 
 const app = createApp(App).use(router).use(i18n)
+    .component('Dynamic', {
+        props: ['template'],
+        render() {
+            return h({template: this.template})
+        }
+    })
+
 // app.config.performance = true
 app.mount('#app')

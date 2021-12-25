@@ -1,6 +1,6 @@
 <template>
-    <div id="About" class="markdown-content" v-html="html">
-
+    <div id="About" class="markdown-content">
+        <Dynamic :template="html"></Dynamic>
     </div>
 </template>
 
