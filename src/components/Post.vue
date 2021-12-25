@@ -11,7 +11,7 @@
             <div class="img" v-for="i in p.images" :key="i"
                  :style="{'background-image': `url(${i.url})`, ...getImageStyle(p, i)}"></div>
         </div>
-        <div class="text">{{p.text}}</div>
+        <div class="text" v-html="text"></div>
         <div class="info font-code unselectable">
             <div class="id">#{{p.id}}</div>
             <div class="f-grow1"></div>
@@ -25,11 +25,18 @@
 import {Options, Vue} from 'vue-class-component';
 import {Prop} from "vue-property-decorator";
 import {Image, Post} from "@/views/Life.vue";
+import linkifyUrls from 'linkify-urls';
 
 @Options({components: {}})
 export default class PostView extends Vue
 {
     @Prop({required: true}) p!: Post
+
+    get text(): string | undefined
+    {
+        if (!this.p.text) return undefined
+        return linkifyUrls(this.p.text)
+    }
 
     getImageStyle(post: Post, i: Image): unknown
     {
@@ -137,4 +144,13 @@ export default class PostView extends Vue
         i
             font-size: 0.8em
             margin-left: 4px
+</style>
+
+<style lang="sass">
+@import "src/css/colors"
+
+.post
+    a
+        color: $color-text-special
+        text-decoration: none
 </style>
