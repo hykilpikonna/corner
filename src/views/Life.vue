@@ -6,7 +6,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {backendUrl} from "@/scripts/constants";
+import {hosts} from "@/scripts/constants";
 import moment from "moment";
 import PostView from "@/components/Post.vue";
 
@@ -55,7 +55,7 @@ export default class Blog extends Vue
 
     created(): void
     {
-        fetch(`${backendUrl}/posts.json`).then(it => it.json()).then(it => {
+        fetch(`${hosts.api}/posts.json`).then(it => it.json()).then(it => {
             this.posts = it
             this.posts.forEach(it => it.date = moment(it.date).format('YYYY-MM-DD h:mm'))
             this.posts.reverse()

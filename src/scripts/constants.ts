@@ -1,2 +1,5 @@
 // export const backendUrl = 'http://localhost:5000'
-export const backendUrl = 'https://telegram-api.hydev.org'
+export const hosts = {
+    api: 'https://profile-api.hydev.org',
+    content: 'https://profile-content.hydev.org'
+}
