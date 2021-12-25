@@ -26,8 +26,8 @@ export default class About extends Vue
 
     mounted(): void
     {
-        // TODO: Cloudflare CDN
-        fetch("/README.md").then(it => it.text())
+        // Fetch readme
+        fetch(`${backendUrl}/profile-readme.md`).then(it => it.text())
             .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
                 return `<span class="emoji">${emoji}</span>`
             }))))
