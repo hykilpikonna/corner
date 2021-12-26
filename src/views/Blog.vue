@@ -1,16 +1,25 @@
 <template>
     <div id="Blog">
-        
+        <BlogPostPreview v-for="m of metas" :key="m" :meta="m"/>
     </div>
 </template>
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
+import BlogPostPreview, {BlogPostMeta} from "@/components/BlogPostPreview.vue";
+import {hosts} from "@/scripts/constants";
 
-@Options({components: {}})
+@Options({components: {BlogPostPreview}})
 export default class Blog extends Vue
 {
+    metas: BlogPostMeta[] = []
 
+    mounted(): void
+    {
+        fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
+            this.metas = it
+        })
+    }
 }
 </script>
 

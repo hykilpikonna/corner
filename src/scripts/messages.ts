@@ -5,7 +5,7 @@ export const messages = {
         nav: {
             home: 'Home',
             about: 'About',
-            blog: 'Blog',
+            blog: '记事本',
             life: '生活',
             projects: 'Projects',
         }
