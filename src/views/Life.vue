@@ -1,5 +1,11 @@
 <template>
     <div id="Life" v-if="posts.length !== 0">
+        <div id="header">
+            <div>欢迎！</div>
+            <div>
+
+            </div>
+        </div>
         <PostView :p="p" v-for="p in posts" :key="p.id"/>
     </div>
 </template>
@@ -73,6 +79,10 @@ export default class Blog extends Vue
     margin: 20px auto
     font-size: 0.8em
     width: min(450px, 80vw)
+
+    #header
+        color: $color-text-light
+        margin-bottom: 20px
 
 // Phone layout
 @media screen and (max-width: 570px)
