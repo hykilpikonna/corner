@@ -24,5 +24,7 @@ export default class Blog extends Vue
 </script>
 
 <style lang="sass" scoped>
-
+#Blog
+    width: 600px
+    margin: 20px auto
 </style>

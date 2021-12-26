@@ -1,6 +1,11 @@
 <template>
-    <div id="BlogPostPreview">
-        <div id="title">{{meta.title}}</div>
+    <div id="BlogPostPreview" class="card">
+        <div id="date">{{meta.date}}</div>
+        <div id="titles">
+            <div id="title">{{meta.title}}</div>
+            <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
+        </div>
+        <div id="expand">展开...</div>
     </div>
 </template>
 
@@ -30,10 +35,10 @@ export default class BlogPostPreview extends Vue
     {
         if (!this.meta.subtitle)
         {
-            fetch(`${hosts.content}/${this.meta.file}`).then(it => it.text()).then(it =>
-            {
-                this.meta.subtitle = marked(it)
-            })
+            // fetch(`${hosts.content}/${this.meta.file}`).then(it => it.text()).then(it =>
+            // {
+            //     this.meta.subtitle = marked(it)
+            // })
         }
     }
 }
