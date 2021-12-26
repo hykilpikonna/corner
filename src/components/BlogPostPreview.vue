@@ -5,13 +5,13 @@
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
             <div class="tags" v-if="tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
+                <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
             </div>
         </div>
         <img id="title-image" :src="image" v-if="image" alt="Title Image">
         <div id="preview" class="markdown-content" v-html="content"></div>
         <div class="tags" v-if="!tagOnTop">
-            <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
+            <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
         </div>
 <!--        <div id="expand" v-if="meta.more_content">展开...</div>-->
     </div>
@@ -42,7 +42,7 @@ export default class BlogPostPreview extends Vue
 {
     @Prop({required: true}) meta!: BlogPostMeta
     @Prop({default: true}) imageOnTop = true
-    @Prop({default: true}) tagOnTop = true
+    @Prop({default: false}) tagOnTop = false
 
     created(): void
     {
