@@ -78,10 +78,10 @@ export default class BlogPostPreview extends Vue
     > * + *
         margin-top: 10px
 
-    .tag
+    .tags
         font-size: 0.7em
 
-    .tag + .tag
+    .tag-wrap + .tag-wrap
         margin-left: 5px
 
     #titles
