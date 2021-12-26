@@ -59,8 +59,7 @@ export default class PostView extends Vue
         display: none
 
 .post
-    width: 100%
-
+    padding: 12px 20px 8px
     text-align: left
 
     > *
