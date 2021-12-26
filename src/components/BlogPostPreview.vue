@@ -5,6 +5,7 @@
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
         </div>
+        <img :src="image" v-if="image" alt="Title Image">
         <div id="expand">展开...</div>
     </div>
 </template>
@@ -41,6 +42,9 @@ export default class BlogPostPreview extends Vue
             // })
         }
     }
+
+    get image(): string | null
+    { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
 }
 </script>
 
@@ -64,6 +68,14 @@ export default class BlogPostPreview extends Vue
         #subtitle
             font-size: 0.8em
             color: $color-text-light
+
+    img
+        $margin: 10px
+        max-width: calc(100% + 2 * $margin)
+        min-width: calc(100% + 2 * $margin)
+        border-radius: 10px
+        margin-left: -$margin
+        margin-right: -$margin
 
     #expand
         font-size: 0.8em
