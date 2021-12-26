@@ -9,11 +9,11 @@
             </div>
         </div>
         <img id="title-image" :src="image" v-if="image" alt="Title Image">
-        <div id="preview" class="markdown-content" v-html="preview"></div>
+        <div id="preview" class="markdown-content" v-html="content"></div>
         <div class="tags" v-if="!tagOnTop">
             <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
         </div>
-        <div id="expand" v-if="meta.more_content">展开...</div>
+<!--        <div id="expand" v-if="meta.more_content">展开...</div>-->
     </div>
 </template>
 
@@ -31,8 +31,7 @@ export interface BlogPostMeta
     file: string
     date: string
 
-    preview: string
-    more_content: string
+    content: string
 
     subtitle?: string
     title_image?: string
@@ -56,7 +55,7 @@ export default class BlogPostPreview extends Vue
         }
     }
 
-    get preview(): string { return marked(this.meta.preview) }
+    get content(): string { return marked(this.meta.content) }
 
     get image(): string | null
     { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
