@@ -1,9 +1,9 @@
 <template>
-    <div id="BlogPostPreview" class="card">
         <div id="date">{{meta.date}}</div>
         <div id="titles">
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
+    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}">
         </div>
         <img id="title-image" :src="image" v-if="image" alt="Title Image">
         <div id="preview" class="markdown-content" v-html="preview"></div>
@@ -39,6 +39,8 @@ export interface BlogPostMeta
 export default class BlogPostPreview extends Vue
 {
     @Prop({required: true}) meta!: BlogPostMeta
+    @Prop({default: true}) imageOnTop!: boolean
+    @Prop({default: true}) tagOnTop!: boolean
 
     created(): void
     {
