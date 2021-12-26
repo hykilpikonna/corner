@@ -1,5 +1,7 @@
 <template>
     <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}">
+        <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
+
         <div id="titles">
             <div id="date">{{meta.date}}</div>
             <div id="title">{{meta.title}}</div>
@@ -8,10 +10,13 @@
                 <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
             </div>
         </div>
-        <img id="title-image" :src="image" v-if="image" alt="Title Image">
-        <div id="preview" class="markdown-content" v-html="content"></div>
-        <div class="tags" v-if="!tagOnTop">
-            <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
+
+        <div id="content">
+            <img class="title-image" :src="image" v-if="image && !imageOnTop" alt="Title Image">
+            <div id="preview" class="markdown-content" v-html="content"></div>
+            <div class="tags" v-if="!tagOnTop">
+                <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
+            </div>
         </div>
 <!--        <div id="expand" v-if="meta.more_content">展开...</div>-->
     </div>
@@ -74,7 +79,7 @@ export default class BlogPostPreview extends Vue
         font-size: 0.7em
         color: $color-text-light
 
-    > * + *
+    > * + *, #content > * + *
         margin-top: 10px
 
     .tags
@@ -109,9 +114,8 @@ export default class BlogPostPreview extends Vue
 
 // Put image on top
 #BlogPostPreview.image-top
-    #title-image
-        order: -1
-        margin: -15px -20px 10px
+    .title-image
+        margin: -15px -20px 0px
         max-width: calc(100% + 40px)
         min-width: calc(100% + 40px)
 
