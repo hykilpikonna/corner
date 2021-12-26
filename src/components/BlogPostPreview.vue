@@ -88,4 +88,14 @@ export default class BlogPostPreview extends Vue
         padding-top: 10px
         color: $color-text-light
 
+@media screen and (max-width: 400px)
+    #BlogPostPreview
+        img
+            $margin: 15px
+            max-width: calc(100% + 2 * $margin)
+            min-width: calc(100% + 2 * $margin)
+            border-radius: 10px
+            margin-left: -$margin
+            margin-right: -$margin
+
 </style>
