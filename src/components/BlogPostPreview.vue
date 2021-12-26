@@ -45,5 +45,28 @@ export default class BlogPostPreview extends Vue
 </script>
 
 <style lang="sass" scoped>
+@import 'src/css/colors'
+
+#BlogPostPreview
+    text-align: left
+
+    #date
+        font-size: 0.7em
+        color: $color-text-light
+
+    #titles
+        padding-bottom: 10px
+
+        #title
+            font-size: 1.2em
+            font-weight: bold
+
+        #subtitle
+            font-size: 0.8em
+            color: $color-text-light
+
+    #expand
+        font-size: 0.8em
+        padding-top: 10px
 
 </style>
