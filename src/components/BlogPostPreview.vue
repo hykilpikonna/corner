@@ -1,9 +1,9 @@
 <template>
-        <div id="date">{{meta.date}}</div>
+    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}">
         <div id="titles">
+            <div id="date">{{meta.date}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
-    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}">
         </div>
         <img id="title-image" :src="image" v-if="image" alt="Title Image">
         <div id="preview" class="markdown-content" v-html="preview"></div>
