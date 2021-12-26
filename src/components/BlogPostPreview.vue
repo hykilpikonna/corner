@@ -68,9 +68,16 @@ export default class BlogPostPreview extends Vue
         font-size: 0.7em
         color: $color-text-light
 
-    #titles
-        padding-bottom: 10px
+    > * + *
+        margin-top: 10px
 
+    .tag
+        font-size: 0.7em
+
+    .tag + .tag
+        margin-left: 5px
+
+    #titles
         #title
             font-size: 1.2em
             font-weight: bold
