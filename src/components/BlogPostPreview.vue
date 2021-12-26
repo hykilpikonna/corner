@@ -1,5 +1,5 @@
 <template>
-    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}">
+    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}" ref="el">
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
         <div id="titles">
@@ -24,10 +24,12 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Prop} from "vue-property-decorator";
+import {Prop, Ref} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
+import $ from "jquery";
+import 'jqueryui';
 
 export interface BlogPostMeta
 {
@@ -46,8 +48,10 @@ export interface BlogPostMeta
 export default class BlogPostPreview extends Vue
 {
     @Prop({required: true}) meta!: BlogPostMeta
-    @Prop({default: true}) imageOnTop = true
-    @Prop({default: false}) tagOnTop = false
+    @Prop({default: false}) imageOnTop = false
+    @Prop({default: true}) tagOnTop = true
+
+    @Ref() readonly el!: HTMLDivElement
 
     created(): void
     {
@@ -58,6 +62,11 @@ export default class BlogPostPreview extends Vue
             //     this.meta.subtitle = marked(it)
             // })
         }
+    }
+
+    mounted(): void
+    {
+        $(this.el).accordion({collapsible: true, header: '#titles', heightStyle: 'content', active: false})
     }
 
     get content(): string { return marked(this.meta.content) }
@@ -106,6 +115,14 @@ export default class BlogPostPreview extends Vue
         border-radius: 10px
         margin-left: -$margin
         margin-right: -$margin
+
+    // Fix accordion overflow: none
+    #content
+        $padding: 20px
+        margin-left: -$padding
+        padding-left: $padding
+        margin-right: -$padding
+        padding-right: $padding
 
     #expand
         font-size: 0.8em
