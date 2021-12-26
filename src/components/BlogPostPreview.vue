@@ -39,8 +39,8 @@ export interface BlogPostMeta
 export default class BlogPostPreview extends Vue
 {
     @Prop({required: true}) meta!: BlogPostMeta
-    @Prop({default: true}) imageOnTop!: boolean
-    @Prop({default: true}) tagOnTop!: boolean
+    @Prop({default: true}) imageOnTop = true
+    @Prop({default: true}) tagOnTop = true
 
     created(): void
     {
@@ -65,6 +65,8 @@ export default class BlogPostPreview extends Vue
 
 #BlogPostPreview
     text-align: left
+    display: flex
+    flex-direction: column
 
     #date
         font-size: 0.7em
@@ -100,6 +102,14 @@ export default class BlogPostPreview extends Vue
         font-size: 0.8em
         padding-top: 10px
         color: $color-text-light
+
+// Put image on top
+#BlogPostPreview.image-top
+    #title-image
+        order: -1
+        margin: -15px -20px 10px
+        max-width: calc(100% + 40px)
+        min-width: calc(100% + 40px)
 
 @media screen and (max-width: 400px)
     #BlogPostPreview
