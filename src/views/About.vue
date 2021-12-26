@@ -46,11 +46,6 @@ export default class About extends Vue
                 this.publications.forEach(it => it.attachments = files.filter(a => a.data.parentItem == it.key))
             })
     }
-
-    updated(): void
-    {
-        $('#accordion').accordion({collapsible: true, header: 'h3', heightStyle: "content"})
-    }
 }
 </script>
 
