@@ -24,7 +24,15 @@ export default class Blog extends Vue
 </script>
 
 <style lang="sass" scoped>
+$width: 600px
+
 #Blog
-    width: 600px
+    width: $width
     margin: 20px auto
+
+// Phone layout
+@media screen and (max-width: $width + 40px)
+    #Blog
+        margin: 10px
+        width: unset
 </style>
