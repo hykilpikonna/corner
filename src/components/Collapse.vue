@@ -16,6 +16,7 @@ import $ from "jquery";
 export default class Collapse extends Vue
 {
     @Prop() title!: string
+    @Prop({default: false}) active = false
 
     show = false
 
@@ -27,7 +28,7 @@ export default class Collapse extends Vue
     mounted(): void
     {
         $('.collapse').accordion({collapsible: true, header: 'h3', heightStyle: 'content',
-            active: false})
+            active: this.active})
     }
 }
 </script>
