@@ -5,8 +5,11 @@
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
         </div>
-        <img :src="image" v-if="image" alt="Title Image">
+        <img id="title-image" :src="image" v-if="image" alt="Title Image">
         <div id="preview" class="markdown-content" v-html="preview"></div>
+        <div id="tags">
+            <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
+        </div>
         <div id="expand" v-if="meta.more_content">展开...</div>
     </div>
 </template>
@@ -16,6 +19,7 @@ import {Options, Vue} from 'vue-class-component';
 import {Prop} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
+import Tag from "@/components/Tag.vue";
 
 export interface BlogPostMeta
 {
@@ -31,7 +35,7 @@ export interface BlogPostMeta
     title_image?: string
 }
 
-@Options({components: {}})
+@Options({components: {Tag}})
 export default class BlogPostPreview extends Vue
 {
     @Prop({required: true}) meta!: BlogPostMeta
