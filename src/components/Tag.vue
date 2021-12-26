@@ -1,5 +1,8 @@
 <template>
-    <div class="tag fbox-vcenter"><slot></slot></div>
+    <div class="tag fbox-vcenter">
+        <slot></slot>
+        <div class="after"></div>
+    </div>
 </template>
 
 <script lang="ts">
@@ -32,12 +35,11 @@ $triangle-width: $tag-height / 2 * 0.8
     margin-right: $triangle-width
     transition: color 0.2s
 
-.tag::after
-    content: ''
-    border-bottom: $tag-height / 2 solid transparent
-    border-top: $tag-height / 2 solid transparent
-    border-left: $triangle-width solid $tag-color
-    position: absolute
-    right: -$triangle-width
-    top: 0
+    .after
+        border-bottom: $tag-height / 2 solid transparent
+        border-top: $tag-height / 2 solid transparent
+        border-left: $triangle-width solid $tag-color
+        position: absolute
+        right: -$triangle-width
+        top: 0
 </style>
