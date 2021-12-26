@@ -86,5 +86,6 @@ export default class BlogPostPreview extends Vue
     #expand
         font-size: 0.8em
         padding-top: 10px
+        color: $color-text-light
 
 </style>
