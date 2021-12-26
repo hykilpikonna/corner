@@ -1,5 +1,5 @@
 <template>
-    <div class="post" :class="{'service': p.type === 'service'}">
+    <div class="post card" :class="{'service': p.type === 'service'}">
         <div class="reply" v-if="p.reply">
             <img class="thumb" v-if="p.reply.thumb" :src="p.reply.thumb" alt="">
             <div class="mtext"><span>{{p.reply.text}}</span></div>
@@ -60,14 +60,6 @@ export default class PostView extends Vue
 
 .post
     width: 100%
-    background: #fdf9f1
-    border-radius: 20px
-    margin-bottom: 20px
-    padding: 12px 20px 8px
-    overflow: auto
-    overflow-x: hidden
-    box-sizing: border-box
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -1px rgb(0 0 0 / 6%)
 
     text-align: left
 
