@@ -4,10 +4,13 @@
             <div id="date">{{meta.date}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
+            <div class="tags" v-if="tagOnTop">
+                <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
+            </div>
         </div>
         <img id="title-image" :src="image" v-if="image" alt="Title Image">
         <div id="preview" class="markdown-content" v-html="preview"></div>
-        <div id="tags">
+        <div class="tags" v-if="!tagOnTop">
             <Tag v-for="t in meta.tags" :key="t">{{t}}</Tag>
         </div>
         <div id="expand" v-if="meta.more_content">展开...</div>
@@ -82,6 +85,8 @@ export default class BlogPostPreview extends Vue
         margin-left: 5px
 
     #titles
+        position: relative
+
         #title
             font-size: 1.2em
             font-weight: bold
@@ -110,6 +115,13 @@ export default class BlogPostPreview extends Vue
         margin: -15px -20px 10px
         max-width: calc(100% + 40px)
         min-width: calc(100% + 40px)
+
+// Put tags on top
+#BlogPostPreview.tag-top
+    .tags
+        position: absolute
+        right: 0
+        top: 0
 
 @media screen and (max-width: 400px)
     #BlogPostPreview
