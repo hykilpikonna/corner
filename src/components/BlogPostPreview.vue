@@ -6,7 +6,8 @@
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
         </div>
         <img :src="image" v-if="image" alt="Title Image">
-        <div id="expand">展开...</div>
+        <div id="preview" class="markdown-content" v-html="preview"></div>
+        <div id="expand" v-if="meta.more_content">展开...</div>
     </div>
 </template>
 
@@ -22,6 +23,9 @@ export interface BlogPostMeta
     tags: string[]
     file: string
     date: string
+
+    preview: string
+    more_content: string
 
     subtitle?: string
     title_image?: string
@@ -42,6 +46,8 @@ export default class BlogPostPreview extends Vue
             // })
         }
     }
+
+    get preview(): string { return marked(this.meta.preview) }
 
     get image(): string | null
     { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
