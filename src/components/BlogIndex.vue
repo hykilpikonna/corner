@@ -33,12 +33,15 @@ export default class BlogIndexLinks extends Vue
 
 .index
     *
+        display: inline-block
         margin-right: 10px
-        margin-top: 5px
         margin-bottom: 5px
 
 .index-tags
     font-size: 0.7em
+
+    *
+        margin-bottom: 10px
 
 .index-categories
     font-size: 0.8em
