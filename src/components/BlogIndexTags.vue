@@ -1,6 +1,6 @@
 <template>
     <div class="index-tags">
-        <Tag v-for="t in meta.tags" :key="t" :tag-name="t[0]">{{t[0]}} ({{t[1]}})</Tag>
+        <Tag v-for="t in meta.tags" :key="t" :tag-name="t[0]" direction="right">{{t[0]}} ({{t[1]}})</Tag>
     </div>
 </template>
 
