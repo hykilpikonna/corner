@@ -1,7 +1,7 @@
 <template>
-    <div class="tag-wrap">
+    <div class="tag-wrap unselectable clickable" @click="e => clickTag(e)">
         <div class="tag fbox-vcenter" :class="direction">
-            <slot></slot>
+            <div ref="el"><slot></slot></div>
             <div class="after"></div>
         </div>
     </div>
@@ -9,12 +9,23 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Prop} from "vue-property-decorator";
+import {Prop, Ref} from "vue-property-decorator";
+import {pushQuery} from "@/scripts/router";
 
 @Options({components: {}})
 export default class Tag extends Vue
 {
     @Prop({default: 'left'}) direction: 'left' | 'right' = 'left'
+    @Prop() tagName?: string
+
+    @Ref() readonly el!: HTMLDivElement
+
+    clickTag(e: PointerEvent): void
+    {
+        const t = this.tagName ?? this.el.innerText
+        e.stopPropagation()
+        pushQuery({tag: t})
+    }
 }
 </script>
 

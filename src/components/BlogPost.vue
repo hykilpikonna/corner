@@ -8,7 +8,7 @@
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
             <div class="tags">
                 <div v-if="tagOnTop" style="display: inline-block">
-                    <Tag v-for="t in meta.tags" :key="t" direction="left" @click="e => clickTag(e, t)">{{t}}</Tag>
+                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
                 </div>
                 <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
             </div>
@@ -20,7 +20,7 @@
                 <Dynamic :template="content"></Dynamic>
             </div>
             <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t" direction="right" @click="e => clickTag(e, t)">{{t}}</Tag>
+                <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
             </div>
         </div>
     </div>
@@ -110,12 +110,6 @@ export default class BlogPostPreview extends Vue
     updateTitle(): void
     {
         if (this.active) document.title = `Blog: ${this.meta.title}`
-    }
-
-    clickTag(e: PointerEvent, t: string): void
-    {
-        e.stopPropagation()
-        pushQuery({tag: t})
     }
 
     /**
