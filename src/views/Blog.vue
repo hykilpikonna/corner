@@ -8,6 +8,7 @@
 import {Options, Vue} from 'vue-class-component';
 import BlogPostPreview, {BlogPostMeta} from "@/components/BlogPostPreview.vue";
 import {hosts} from "@/scripts/constants";
+import {Prop} from "vue-property-decorator";
 
 export interface BlogMeta
 {
@@ -19,6 +20,10 @@ export interface BlogMeta
 @Options({components: {BlogPostPreview}})
 export default class Blog extends Vue
 {
+    @Prop() post?: string
+    @Prop() category?: string
+    @Prop() tag?: string
+
     meta: BlogMeta = {tags: [], categories: [], posts: []}
 
     mounted(): void
