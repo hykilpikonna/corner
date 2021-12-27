@@ -36,7 +36,7 @@ export default class Blog extends Vue
 
     get filteredPosts(): BlogPost[]
     {
-        const posts = this.meta.posts.filter(it => !it.pinned || (this.tag ? it.tags.includes(this.tag) :
+        const posts = this.meta.posts.filter(it => it.pinned || (this.tag ? it.tags.includes(this.tag) :
             this.category ? it.category == this.category : true))
 
         // Put pinned posts on top
