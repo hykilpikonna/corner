@@ -6,8 +6,7 @@
             <span v-if="category">📂{{category}}</span>
             <span class="no-after" v-if="activePost">{{activePost.title}}</span>
         </div>
-        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m"
-                         :active="post ? m.url_name === post : m === filteredPosts[0] && m.pinned"/>
+        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m" :active="m === activePost"/>
     </div>
 </template>
 
