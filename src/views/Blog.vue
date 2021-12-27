@@ -6,7 +6,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import BlogPostPreview, {BlogPostMeta} from "@/components/BlogPostPreview.vue";
+import BlogPostPreview, {BlogPost} from "@/components/BlogPost.vue";
 import {hosts} from "@/scripts/constants";
 import {Prop} from "vue-property-decorator";
 
@@ -14,7 +14,7 @@ export interface BlogMeta
 {
     tags: [string, number][]
     categories: [string, number][]
-    posts: BlogPostMeta[]
+    posts: BlogPost[]
 }
 
 @Options({components: {BlogPostPreview}})
@@ -33,7 +33,7 @@ export default class Blog extends Vue
         })
     }
 
-    get filteredPosts(): BlogPostMeta[]
+    get filteredPosts(): BlogPost[]
     {
         return this.meta.posts.filter(it => it.pinned || (this.tag ? it.tags.includes(this.tag) :
             this.category ? it.category == this.category : true))
