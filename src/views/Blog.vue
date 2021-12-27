@@ -1,10 +1,10 @@
 <template>
     <div id="Blog">
         <div id="breadcrumb">
-            <span>Blog</span>
+            <span class="clickable" @click="() => $router.push({query: {}})">Blog</span>
             <span v-if="tag">🏷️{{tag}}</span>
             <span v-if="category">📂{{category}}</span>
-            <span class="no-after" v-if="activePost">{{activePost.title}}</span>
+            <span class="no-after" v-if="post && activePost">{{activePost.title}}</span>
         </div>
         <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m" :active="m === activePost"/>
     </div>
