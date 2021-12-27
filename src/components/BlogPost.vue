@@ -66,7 +66,7 @@ export default class BlogPostPreview extends Vue
         this.isActiveChangeDueToClickTitle = true
 
         // Change url
-        if (!this.isActive()) this.$router.push(`/blog?post=${this.meta.url_name}`)
+        if (!this.active) this.$router.push(`/blog?post=${this.meta.url_name}`)
         else this.$router.push('/blog')
     }
 
@@ -104,11 +104,6 @@ export default class BlogPostPreview extends Vue
     updateTitle(): void
     {
         if (this.active) document.title = `Blog: ${this.meta.title}`
-    }
-
-    isActive(): boolean
-    {
-        return $(`.${this.uid} > .ui-state-active`).length != 0
     }
 
     /**
