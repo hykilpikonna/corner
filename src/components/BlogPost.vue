@@ -1,5 +1,5 @@
 <template>
-    <div id="BlogPostPreview" class="card" :class="{'image-top': imageOnTop, 'tag-top': tagOnTop}" ref="el">
+    <div id="BlogPostPreview" class="card" :class="elClass">
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
         <div id="titles">
@@ -53,30 +53,31 @@ export default class BlogPostPreview extends Vue
     @Prop({required: true}) meta!: BlogPost
     @Prop({default: false}) imageOnTop = false
     @Prop({default: true}) tagOnTop = true
+    @Prop({default: false}) active = false
 
-    @Ref() readonly el!: HTMLDivElement
-
-    created(): void
-    {
-        if (!this.meta.subtitle)
-        {
-            // fetch(`${hosts.content}/${this.meta.file}`).then(it => it.text()).then(it =>
-            // {
-            //     this.meta.subtitle = marked(it)
-            // })
-        }
-    }
+    readonly uid = (Math.random() + 1).toString(36).substring(7)
 
     mounted(): void
     {
-        $(this.el).accordion({collapsible: true, header: '#titles', heightStyle: 'content', active: false})
+        // Create accordion
+        $(`.${this.uid}`).accordion({collapsible: true, header: '#titles', heightStyle: 'content',
+            active: this.active})
+    }
+
+    /**
+     * Element classes
+     */
+    get elClass(): string[]
+    {
+        let classes = [this.uid]
+        if (this.imageOnTop) classes.push('image-top')
+        if (this.tagOnTop) classes.push('tag-top')
+        return classes
     }
 
     get content(): string { return marked(this.meta.content) }
     get date(): moment.Moment { return moment(this.meta.date) }
-
-    get image(): string | null
-    { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
+    get image(): string | null { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
 }
 </script>
 
