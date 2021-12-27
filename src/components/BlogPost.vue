@@ -38,6 +38,7 @@ export interface BlogPost
     tags: string[]
     file: string
     date: string
+    url_name: string
 
     content: string
 
