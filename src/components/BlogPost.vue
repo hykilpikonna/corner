@@ -23,7 +23,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Prop} from "vue-property-decorator";
+import {Prop, Watch} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
@@ -58,17 +58,18 @@ export default class BlogPostPreview extends Vue
 
     readonly uid = (Math.random() + 1).toString(36).substring(7)
 
+    isActiveChangeDueToClickTitle = false
+
     clickTitle(): void
     {
+        console.log(`Blog Post: ClickTitle called on`, this.meta.title)
+        this.isActiveChangeDueToClickTitle = true
+
         // Collapse everything that's not this
         $(`.card:not(.${this.uid})`).accordion('option', {active: false});
 
         // Change url
-        console.log(this.isActive())
-        if (!this.isActive())
-        {
-            this.$router.push(`/blog?post=${this.meta.url_name}`)
-        }
+        if (!this.isActive()) this.$router.push(`/blog?post=${this.meta.url_name}`)
         else this.$router.push('/blog')
     }
 
@@ -77,6 +78,25 @@ export default class BlogPostPreview extends Vue
         // Create accordion
         $(`.${this.uid}`).accordion({collapsible: true, header: '#titles', heightStyle: 'content',
             active: this.active ? 0 : false})
+    }
+
+    /**
+     * Watch active status change, use this to change accordions' activation on history back/forward
+     */
+    @Watch('active')
+    onActiveChange(): void
+    {
+        console.log('Blog Post: onActiveChange Called on', this.meta.title)
+
+        // Ignore active status changes due to clicking the title
+        if (this.isActiveChangeDueToClickTitle)
+        {
+            this.isActiveChangeDueToClickTitle = false
+            return
+        }
+
+        // Change accordion activation status
+        $(`.${this.uid}`).accordion('option', {active: this.active ? 0 : false});
     }
 
     isActive(): boolean
