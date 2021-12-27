@@ -2,7 +2,7 @@
     <div id="BlogPostPreview" class="card" :class="elClass">
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
-        <div id="titles" @click="clickTitle">
+        <div id="titles" class="unselectable clickable" @click="clickTitle">
             <div id="date">{{date.format('YYYY-MM-DD')}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
@@ -156,6 +156,16 @@ export default class BlogPostPreview extends Vue
         margin-left: 5px
 
     #titles
+        // Position patch
+        margin-top: -15px
+        padding-top: 15px
+        margin-left: -20px
+        padding-left: 20px
+        margin-right: -20px
+        padding-right: 20px
+        margin-bottom: -15px
+        padding-bottom: 15px
+
         position: relative
 
         #title
@@ -198,8 +208,8 @@ export default class BlogPostPreview extends Vue
 #BlogPostPreview.tag-top
     .tags
         position: absolute
-        right: 0
-        top: 0
+        right: 20px
+        top: 15px
 
 @media screen and (max-width: 400px)
     #BlogPostPreview
