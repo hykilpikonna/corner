@@ -1,6 +1,6 @@
 <template>
     <div id="Blog">
-        <BlogPostPreview v-for="m of metas" :key="m" :meta="m"/>
+        <BlogPostPreview v-for="m of meta.posts" :key="m" :meta="m"/>
     </div>
 </template>
 
@@ -9,15 +9,22 @@ import {Options, Vue} from 'vue-class-component';
 import BlogPostPreview, {BlogPostMeta} from "@/components/BlogPostPreview.vue";
 import {hosts} from "@/scripts/constants";
 
+export interface BlogMeta
+{
+    tags: [string, number][]
+    categories: [string, number][]
+    posts: BlogPostMeta[]
+}
+
 @Options({components: {BlogPostPreview}})
 export default class Blog extends Vue
 {
-    metas: BlogPostMeta[] = []
+    meta: BlogMeta = {tags: [], categories: [], posts: []}
 
     mounted(): void
     {
         fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
-            this.metas = it
+            this.meta = it
         })
     }
 }
