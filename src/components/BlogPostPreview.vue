@@ -18,7 +18,6 @@
                 <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
             </div>
         </div>
-<!--        <div id="expand" v-if="meta.more_content">展开...</div>-->
     </div>
 </template>
 
