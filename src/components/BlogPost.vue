@@ -65,9 +65,6 @@ export default class BlogPostPreview extends Vue
         console.log(`Blog Post: ClickTitle called on`, this.meta.title)
         this.isActiveChangeDueToClickTitle = true
 
-        // Collapse everything that's not this
-        $(`.card:not(.${this.uid})`).accordion('option', {active: false});
-
         // Change url
         if (!this.isActive()) this.$router.push(`/blog?post=${this.meta.url_name}`)
         else this.$router.push('/blog')
