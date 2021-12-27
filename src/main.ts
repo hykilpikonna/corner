@@ -2,8 +2,7 @@ import {createApp, h} from 'vue'
 import App from './App.vue'
 import router from './scripts/router'
 import {i18n} from "@/scripts/messages"
-import '@fortawesome/fontawesome-free/css/solid.min.css'
-import '@fortawesome/fontawesome-free/css/brands.min.css'
+import '@fortawesome/fontawesome-free/css/all.min.css'
 import Collapse from "@/components/Collapse.vue"
 import BlogIndex from "@/components/BlogIndex.vue";
 
