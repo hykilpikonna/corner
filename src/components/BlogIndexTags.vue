@@ -1,14 +1,15 @@
 <template>
     <div class="index-tags">
-        <div v-for="t in meta.tags" :key="t">{{t}}</div>
+        <Tag v-for="t in meta.tags" :key="t">{{t[0]}} ({{t[1]}})</Tag>
     </div>
 </template>
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {BlogMeta, staticMeta} from '@/views/Blog.vue'
+import Tag from "@/components/Tag.vue";
 
-@Options({components: {}})
+@Options({components: {Tag}})
 export default class BlogIndexLinks extends Vue
 {
     meta: BlogMeta = staticMeta
@@ -16,5 +17,9 @@ export default class BlogIndexLinks extends Vue
 </script>
 
 <style lang="sass" scoped>
+.index-tags
+    font-size: 0.7em
 
+    * + *
+        margin-left: 10px
 </style>
