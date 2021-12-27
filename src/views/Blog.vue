@@ -23,6 +23,8 @@ export interface BlogMeta
     posts: BlogPost[]
 }
 
+export let staticMeta: BlogMeta = {tags: [], categories: [], posts: []}
+
 @Options({components: {BlogPostPreview}})
 export default class Blog extends Vue
 {
@@ -36,6 +38,7 @@ export default class Blog extends Vue
     {
         fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
             this.meta = it
+            staticMeta = it
         })
     }
 
