@@ -39,7 +39,8 @@ const routes: Array<RouteRecordRaw> = [
         path: '/blog',
         name: 'Blog',
         meta: {title: '记事本'},
-        component: () => import('../views/Blog.vue')
+        component: () => import('../views/Blog.vue'),
+        props: route => ({ query: route.query.q })
     },
     {
         path: '/color',
