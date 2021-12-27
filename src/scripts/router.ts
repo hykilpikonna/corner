@@ -1,4 +1,4 @@
-import {createRouter, createWebHashHistory, RouteRecordRaw} from 'vue-router'
+import {createRouter, createWebHashHistory, NavigationFailure, RouteRecordRaw} from 'vue-router'
 import Home from '../views/Home.vue'
 
 const routes: Array<RouteRecordRaw> = [
@@ -54,5 +54,20 @@ export const router = createRouter({
     history: createWebHashHistory(),
     routes
 })
+
+export function pushQuery(query: {[id: string]: string | null}): Promise<void | NavigationFailure | undefined>
+{
+    const queries = {...router.currentRoute.value.query ?? {}}
+
+    console.log(query)
+
+    for (const k of Object.keys(query))
+    {
+        if (query[k] == null) delete queries[k]
+        else queries[k] = query[k]
+    }
+
+    return router.push({query: queries})
+}
 
 export default router
