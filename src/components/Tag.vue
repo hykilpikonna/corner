@@ -52,8 +52,8 @@ $tag-height: 20px
 $tag-color: $color-bg-6
 $text-color: $color-text-light
 
-$padding: $tag-height / 2
-$triangle-width: $tag-height / 2 * 0.8
+$padding: calc($tag-height / 2)
+$triangle-width: calc($tag-height / 2) * 0.8
 
 .tag-wrap
     display: inline-block
@@ -67,8 +67,8 @@ $triangle-width: $tag-height / 2 * 0.8
     transition: color 0.2s
 
     .after
-        border-bottom: $tag-height / 2 solid transparent
-        border-top: $tag-height / 2 solid transparent
+        border-bottom: $padding solid transparent
+        border-top: $padding solid transparent
         border-left: $triangle-width solid $tag-color
         position: absolute
         top: 0
