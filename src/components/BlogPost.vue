@@ -72,6 +72,8 @@ export default class BlogPostPreview extends Vue
 
     mounted(): void
     {
+        this.updateTitle()
+
         // Create accordion
         $(`.${this.uid}`).accordion({collapsible: true, header: '#titles', heightStyle: 'content',
             active: this.active ? 0 : false})
@@ -79,13 +81,16 @@ export default class BlogPostPreview extends Vue
 
     /**
      * Watch active status change, use this to change accordions' activation on history back/forward
+     *
+     * Also use this to change the title
      */
     @Watch('active')
     onActiveChange(): void
     {
-        console.log('Blog Post: onActiveChange Called on', this.meta.title)
+        this.updateTitle()
 
         // Ignore active status changes due to clicking the title
+        console.log('Blog Post: onActiveChange Called on', this.meta.title)
         if (this.isActiveChangeDueToClickTitle)
         {
             this.isActiveChangeDueToClickTitle = false
@@ -94,6 +99,11 @@ export default class BlogPostPreview extends Vue
 
         // Change accordion activation status
         $(`.${this.uid}`).accordion('option', {active: this.active ? 0 : false});
+    }
+
+    updateTitle(): void
+    {
+        if (this.active) document.title = `Blog: ${this.meta.title}`
     }
 
     isActive(): boolean
