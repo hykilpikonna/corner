@@ -26,14 +26,14 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Emit, Prop, Watch} from "vue-property-decorator";
+import {Prop, Watch} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
 import $ from "jquery";
 import 'jqueryui';
 import moment from "moment";
-import router, {pushQuery} from "@/scripts/router";
+import {pushQuery} from "@/scripts/router";
 
 export interface BlogPost
 {
@@ -127,7 +127,7 @@ export default class BlogPostPreview extends Vue
         return classes
     }
 
-    get content(): string { return marked(this.meta.content) }
+    get content(): string { return marked(this.meta.content.replaceAll('\n', '  \n')) }
     get date(): moment.Moment { return moment(this.meta.date) }
     get image(): string | null { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
 }
