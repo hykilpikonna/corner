@@ -136,6 +136,7 @@ export default class BlogPostPreview extends Vue
     text-align: left
     display: flex
     flex-direction: column
+    overflow: hidden
 
     #date
         font-size: 0.7em
