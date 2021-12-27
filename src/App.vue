@@ -57,7 +57,7 @@ export default class App extends Vue
         // Use next tick to handle router history correctly
         // see: https://github.com/vuejs/vue-router/issues/914#issuecomment-384477609
         this.$nextTick(() => {
-            if (to.name == 'Blog' && to.params) return
+            if (to.name == 'Blog' && Object.keys(to.query).length != 0) return
             document.title = to.meta.title ? `Hykilpikonna - ${to.meta.title}` : 'Hykilpikonna - Home';
         })
 
