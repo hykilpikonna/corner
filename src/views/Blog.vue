@@ -1,6 +1,7 @@
 <template>
     <div id="Blog">
-        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m" :active="m.url_name === post"/>
+        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m"
+                         :active="post ? m.url_name === post : m === filteredPosts[0] && m.pinned"/>
     </div>
 </template>
 
