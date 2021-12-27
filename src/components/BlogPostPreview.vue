@@ -91,7 +91,7 @@ export default class BlogPostPreview extends Vue
         color: $color-text-light
 
     > * + *, #content > * + *
-        margin-top: 10px
+        padding-top: 10px
 
     .tags
         font-size: 0.7em
