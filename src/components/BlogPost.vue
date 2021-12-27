@@ -76,7 +76,7 @@ export default class BlogPostPreview extends Vue
     {
         // Create accordion
         $(`.${this.uid}`).accordion({collapsible: true, header: '#titles', heightStyle: 'content',
-            active: this.active})
+            active: this.active ? 0 : false})
     }
 
     isActive(): boolean
