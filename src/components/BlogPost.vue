@@ -157,14 +157,8 @@ export default class BlogPostPreview extends Vue
 
     #titles
         // Position patch
-        margin-top: -15px
-        padding-top: 15px
-        margin-left: -20px
-        padding-left: 20px
-        margin-right: -20px
-        padding-right: 20px
-        margin-bottom: -15px
-        padding-bottom: 15px
+        margin: -15px -20px
+        padding: 15px 20px
 
         position: relative
 
