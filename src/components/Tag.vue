@@ -11,6 +11,7 @@
 import {Options, Vue} from 'vue-class-component';
 import {Prop, Ref} from "vue-property-decorator";
 import {pushQuery} from "@/scripts/router";
+import {staticMeta} from '@/views/Blog.vue'
 
 @Options({components: {}})
 export default class Tag extends Vue
@@ -22,9 +23,24 @@ export default class Tag extends Vue
 
     clickTag(e: PointerEvent): void
     {
-        const t = this.tagName ?? this.el.innerText
         e.stopPropagation()
-        pushQuery({tag: t})
+
+        const t = this.tagName ?? this.el.innerText
+        const q: {[id: string]: string | null} = {tag: t}
+
+        // Check if the currently selected post is in this tag
+        const url_name = this.$route.query.post
+        if (url_name)
+        {
+            const posts = staticMeta.posts.filter(it => it.url_name == url_name)
+            if (posts && !posts[0].tags.includes(t))
+            {
+                // Doesn't include tag, remove post selection
+                q.post = null
+            }
+        }
+
+        pushQuery(q)
     }
 }
 </script>
