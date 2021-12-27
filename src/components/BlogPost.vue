@@ -6,8 +6,11 @@
             <div id="date">{{date.format('YYYY-MM-DD')}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
-            <div class="tags" v-if="tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
+            <div class="tags">
+                <div v-if="tagOnTop" style="display: inline-block">
+                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
+                </div>
+                <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
             </div>
         </div>
 
@@ -140,6 +143,10 @@ export default class BlogPostPreview extends Vue
 
     .tags
         font-size: 0.7em
+
+        #pin
+            margin-left: 10px
+            transform: rotate(45deg)
 
     .tag-wrap + .tag-wrap
         margin-left: 5px
