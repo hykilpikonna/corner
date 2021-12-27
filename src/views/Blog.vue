@@ -1,6 +1,6 @@
 <template>
     <div id="Blog">
-        <BlogPostPreview v-for="m of meta.posts" :key="m" :meta="m"/>
+        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m"/>
     </div>
 </template>
 
@@ -31,6 +31,12 @@ export default class Blog extends Vue
         fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
             this.meta = it
         })
+    }
+
+    get filteredPosts(): BlogPostMeta[]
+    {
+        return this.meta.posts.filter(it => it.pinned || (this.tag ? it.tags.includes(this.tag) :
+            this.category ? it.category == this.category : true))
     }
 }
 </script>
