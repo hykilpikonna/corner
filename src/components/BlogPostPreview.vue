@@ -33,6 +33,7 @@ import moment from "moment";
 
 export interface BlogPostMeta
 {
+    id: number
     title: string
     tags: string[]
     file: string
@@ -42,6 +43,8 @@ export interface BlogPostMeta
 
     subtitle?: string
     title_image?: string
+    category?: string
+    pinned?: number
 }
 
 @Options({components: {Tag}})
