@@ -31,7 +31,7 @@ import $ from "jquery";
 import 'jqueryui';
 import moment from "moment";
 
-export interface BlogPostMeta
+export interface BlogPost
 {
     id: number
     title: string
@@ -50,7 +50,7 @@ export interface BlogPostMeta
 @Options({components: {Tag}})
 export default class BlogPostPreview extends Vue
 {
-    @Prop({required: true}) meta!: BlogPostMeta
+    @Prop({required: true}) meta!: BlogPost
     @Prop({default: false}) imageOnTop = false
     @Prop({default: true}) tagOnTop = true
 
