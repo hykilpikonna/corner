@@ -8,7 +8,7 @@
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
             <div class="tags">
                 <div v-if="tagOnTop" style="display: inline-block">
-                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
+                    <Tag v-for="t in meta.tags" :key="t" direction="left" @click="e => clickTag(e, t)">{{t}}</Tag>
                 </div>
                 <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
             </div>
@@ -18,7 +18,7 @@
             <img class="title-image" :src="image" v-if="image && !imageOnTop" alt="Title Image">
             <div id="preview" class="markdown-content" v-html="content"></div>
             <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
+                <Tag v-for="t in meta.tags" :key="t" direction="right" @click="e => clickTag(e, t)">{{t}}</Tag>
             </div>
         </div>
     </div>
@@ -26,13 +26,14 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Prop, Watch} from "vue-property-decorator";
+import {Emit, Prop, Watch} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
 import $ from "jquery";
 import 'jqueryui';
 import moment from "moment";
+import router, {pushQuery} from "@/scripts/router";
 
 export interface BlogPost
 {
@@ -69,8 +70,8 @@ export default class BlogPostPreview extends Vue
         this.isActiveChangeDueToClickTitle = true
 
         // Change url
-        if (!this.active) this.$router.push(`/blog?post=${this.meta.url_name}`)
-        else this.$router.push('/blog')
+        if (!this.active) pushQuery({post: this.meta.url_name})
+        else pushQuery({post: null})
     }
 
     mounted(): void
@@ -109,6 +110,12 @@ export default class BlogPostPreview extends Vue
         if (this.active) document.title = `Blog: ${this.meta.title}`
     }
 
+    clickTag(e: PointerEvent, t: string): void
+    {
+        e.stopPropagation()
+        pushQuery({tag: t})
+    }
+
     /**
      * Element classes
      */
@@ -143,6 +150,7 @@ export default class BlogPostPreview extends Vue
 
     .tags
         font-size: 0.7em
+        z-index: 50
 
         #pin
             margin-left: 10px
