@@ -42,6 +42,7 @@ export default class Blog extends Vue
     get activePost(): BlogPost | null
     {
         const p = this.filteredPosts
+        if (p.length == 0) return null
         return this.post ? p.filter(it => it.url_name == this.post)[0] : p[0].pinned ? p[0] : null
     }
 
