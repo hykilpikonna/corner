@@ -45,6 +45,8 @@ export default class BlogIndexLinks extends Vue
 
 .index-categories
     font-size: 0.8em
-    text-decoration: underline
     color: $color-text-special
+
+    *
+        text-decoration: underline
 </style>
