@@ -71,6 +71,11 @@ export default class BlogPostPreview extends Vue
             active: this.active})
     }
 
+    isActive(): boolean
+    {
+        return $(`.${this.uid} > .ui-state-active`).length != 0
+    }
+
     /**
      * Element classes
      */
