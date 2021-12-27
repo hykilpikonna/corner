@@ -2,7 +2,7 @@
     <div id="BlogPostPreview" class="card" :class="elClass">
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
-        <div id="titles">
+        <div id="titles" @click="clickTitle">
             <div id="date">{{date.format('YYYY-MM-DD')}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
@@ -23,7 +23,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {Prop, Ref} from "vue-property-decorator";
+import {Prop} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
@@ -56,6 +56,12 @@ export default class BlogPostPreview extends Vue
     @Prop({default: false}) active = false
 
     readonly uid = (Math.random() + 1).toString(36).substring(7)
+
+    clickTitle(): void
+    {
+        // Collapse everything that's not this
+        $(`.card:not(.${this.uid})`).accordion('option', {active: false});
+    }
 
     mounted(): void
     {
