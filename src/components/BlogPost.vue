@@ -16,7 +16,9 @@
 
         <div id="content">
             <img class="title-image" :src="image" v-if="image && !imageOnTop" alt="Title Image">
-            <div id="preview" class="markdown-content" v-html="content"></div>
+            <div id="text" class="markdown-content">
+                <Dynamic :template="content"></Dynamic>
+            </div>
             <div class="tags" v-if="!tagOnTop">
                 <Tag v-for="t in meta.tags" :key="t" direction="right" @click="e => clickTag(e, t)">{{t}}</Tag>
             </div>
