@@ -1,5 +1,11 @@
 <template>
     <div id="Blog">
+        <div id="breadcrumb">
+            <span>Blog</span>
+            <span v-if="tag">🏷️{{tag}}</span>
+            <span v-if="category">📂{{category}}</span>
+            <span class="no-after" v-if="activePost">{{activePost.title}}</span>
+        </div>
         <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m"
                          :active="post ? m.url_name === post : m === filteredPosts[0] && m.pinned"/>
     </div>
@@ -34,6 +40,12 @@ export default class Blog extends Vue
         })
     }
 
+    get activePost(): BlogPost | null
+    {
+        const p = this.filteredPosts
+        return this.post ? p.filter(it => it.url_name == this.post)[0] : p[0].pinned ? p[0] : null
+    }
+
     get filteredPosts(): BlogPost[]
     {
         const posts = this.meta.posts.filter(it => it.pinned || (this.tag ? it.tags.includes(this.tag) :
@@ -48,11 +60,23 @@ export default class Blog extends Vue
 </script>
 
 <style lang="sass" scoped>
+@import "src/css/colors"
+
 $width: 600px
 
 #Blog
     width: $width
     margin: 20px auto
+
+    #breadcrumb
+        color: $color-text-light
+        margin-bottom: 20px
+        text-align: left
+
+        span:not(.no-after):after
+            content: ">"
+            margin: 0 10px
+
 
 // Phone layout
 @media screen and (max-width: $width + 40px)
