@@ -3,7 +3,7 @@
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
         <div id="titles">
-            <div id="date">{{meta.date}}</div>
+            <div id="date">{{date.format('YYYY-MM-DD')}}</div>
             <div id="title">{{meta.title}}</div>
             <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
             <div class="tags" v-if="tagOnTop">
@@ -30,6 +30,7 @@ import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
 import $ from "jquery";
 import 'jqueryui';
+import moment from "moment";
 
 export interface BlogPostMeta
 {
@@ -70,6 +71,7 @@ export default class BlogPostPreview extends Vue
     }
 
     get content(): string { return marked(this.meta.content) }
+    get date(): moment.Moment { return moment(this.meta.date) }
 
     get image(): string | null
     { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
