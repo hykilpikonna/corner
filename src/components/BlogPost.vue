@@ -32,8 +32,6 @@ import {Prop, Watch} from "vue-property-decorator";
 import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
-import $ from "jquery";
-import 'jqueryui';
 import moment from "moment";
 import {pushQuery} from "@/scripts/router";
 

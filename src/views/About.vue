@@ -13,8 +13,6 @@ import {Options, Vue} from 'vue-class-component';
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
-import $ from 'jquery'
-import 'jqueryui'
 import ZoteroPublication, {ZoteroAttachment, ZoteroItem} from "@/components/ZoteroPublication.vue";
 import {hosts} from "@/scripts/constants";
 
