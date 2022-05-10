@@ -18,7 +18,9 @@ import {Prop} from "vue-property-decorator";
 
 export interface BlogMeta
 {
+    // tags[i] = [Tag Name, Number of Blog Posts]
     tags: [string, number][]
+    // categories[i] = [Category Name, Number of Posts]
     categories: [string, number][]
     posts: BlogPost[]
 }

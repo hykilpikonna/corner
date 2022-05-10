@@ -22,7 +22,10 @@
             "dom",
             "dom.iterable",
             "scripthost"
-        ]
+        ],
+
+        "emitDecoratorMetadata": true,
+        "allowJs": true
     },
     "include": [
         "src/**/*.ts",

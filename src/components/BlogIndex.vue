@@ -3,7 +3,7 @@
         <Tag v-for="t in meta.tags" :key="t" :tag-name="t[0]" direction="right">{{t[0]}} ({{t[1]}})</Tag>
     </div>
     <div class="index index-categories" v-else>
-        <span v-for="c in meta.categories" :key="c" class="clickable unselectable" @click="click(c)">{{c[0]}} ({{c[1]}})</span>
+        <span v-for="c in meta.categories" :key="c[0]" class="clickable unselectable" @click="click(c)">{{c[0]}} ({{c[1]}})</span>
     </div>
 </template>
 

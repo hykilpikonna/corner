@@ -30,6 +30,7 @@ import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
 import linkifyUrls from "linkify-urls";
+import {$} from '@/scripts/constants';
 
 export interface ZoteroLink
 {
