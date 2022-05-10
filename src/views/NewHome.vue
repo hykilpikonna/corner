@@ -33,7 +33,7 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+import {Options} from 'vue-class-component';
 import {camera, editor, objects, start} from "@/animation/Home";
 import {config} from "@/animation/Config";
 import {KeyHandler, range} from "@/scripts/utils";

@@ -1,14 +1,13 @@
 import * as THREE from 'three'
+import {Color} from 'three'
 import * as helper from "@/animation/Helpers"
-import {circle} from "@/animation/Helpers"
-import {initMouseTracker, moused} from "@/animation/Trackers"
+import {initMouseTracker} from "@/animation/Trackers"
 import {addDirLight, addGround, addHemiLight, addSky} from "@/animation/Shaders"
-import {colors, config} from "@/animation/Config"
+import {config} from "@/animation/Config"
 import Cursor from "@/animation/components/Cursor";
 import IUpdatable from "@/animation/components/IUpdatable";
 import Grid from "@/animation/components/Grid";
 import Editor from "@/animation/components/Editor";
-import {Color} from "three";
 
 export let renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera
 export let editor: Editor

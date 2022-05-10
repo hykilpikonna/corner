@@ -1,10 +1,4 @@
-import {
-    createRouter,
-    createWebHashHistory,
-    createWebHistory,
-    NavigationFailure,
-    RouteRecordRaw
-} from 'vue-router'
+import {createRouter, createWebHistory, NavigationFailure, RouteRecordRaw} from 'vue-router'
 import Home from '../views/Home.vue'
 
 const routes: Array<RouteRecordRaw> = [

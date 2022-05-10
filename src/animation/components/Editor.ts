@@ -1,7 +1,7 @@
-import {Color, Material, Mesh, MeshBasicMaterial, Object3D, Vector3} from "three";
+import {Mesh, MeshBasicMaterial, Vector3} from "three";
 import IUpdatable from "@/animation/components/IUpdatable";
 import {circle} from "@/animation/Helpers";
-import {camera, scene} from "@/animation/Home";
+import {scene} from "@/animation/Home";
 import {moused, projectTo3D} from "@/animation/Trackers";
 import {config} from "@/animation/Config";
 import {minMax} from "@/scripts/utils";
