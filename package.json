@@ -3,21 +3,17 @@
     "version": "0.1.0",
     "private": true,
     "scripts": {
-        "serve": "vue-cli-service serve",
-        "build": "vue-cli-service build",
-        "lint": "vue-cli-service lint"
+        "serve": "vite",
+        "build": "vue-tsc --noEmit && yarn lint && vite build",
+        "lint": "eslint --ext .js,.vue --ignore-path .gitignore --fix src"
     },
     "dependencies": {
+        "vite": "^2.8.6",
+        "@vitejs/plugin-vue": "^2.2.4",
         "@fortawesome/fontawesome-free": "^5.15.4",
-        "@types/jquery": "^3.5.11",
-        "@types/jqueryui": "^1.12.16",
-        "@types/marked": "^4.0.1",
-        "@types/three": "^0.135.0",
         "animsition": "^4.0.2",
         "core-js": "^3.6.5",
         "emoji-regex": "^10.0.0",
-        "jquery": "^3.6.0",
-        "jqueryui": "^1.11.1",
         "linkify-urls": "^4.0.0",
         "marked": "^4.0.6",
         "meshline": "^2.0.3",
@@ -26,24 +22,22 @@
         "vue": "^3.0.0",
         "vue-class-component": "^8.0.0-rc.1",
         "vue-i18n": "^9.2.0-beta.23",
-        "vue-property-decorator": "^9.1.2",
+        "vue-property-decorator": "^10.0.0-rc.3",
         "vue-router": "^4.0.0-0",
         "vue3-colorpicker": "^2.0.4"
     },
     "devDependencies": {
+        "@types/jquery": "^3.5.11",
+        "@types/jqueryui": "^1.12.16",
+        "@types/marked": "^4.0.1",
+        "@types/three": "^0.135.0",
         "@typescript-eslint/eslint-plugin": "^4.18.0",
         "@typescript-eslint/parser": "^4.18.0",
-        "@vue/cli-plugin-babel": "~4.5.0",
-        "@vue/cli-plugin-eslint": "~4.5.0",
-        "@vue/cli-plugin-router": "~4.5.0",
-        "@vue/cli-plugin-typescript": "~4.5.0",
-        "@vue/cli-service": "~4.5.0",
-        "@vue/compiler-sfc": "^3.0.0",
         "@vue/eslint-config-typescript": "^7.0.0",
         "eslint": "^6.7.2",
         "eslint-plugin-vue": "^7.0.0",
         "sass": "^1.26.5",
-        "sass-loader": "^8.0.2",
-        "typescript": "~4.1.5"
+        "typescript": "^4.6.2",
+        "vue-tsc": "^0.32.1"
     }
 }
