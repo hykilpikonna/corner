@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 /* eslint-disable */
 declare module '*.vue'
 {
