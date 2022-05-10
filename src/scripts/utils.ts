@@ -1,7 +1,5 @@
 import {Options, Vue} from "vue-class-component";
 import {withKeys} from "vue";
-import {NodeLib} from "three/examples/jsm/nodes/core/NodeLib";
-import keywords = NodeLib.keywords;
 
 /**
  * Same as python's range

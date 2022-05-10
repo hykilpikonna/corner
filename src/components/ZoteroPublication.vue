@@ -27,8 +27,6 @@
 import {Options, Vue} from 'vue-class-component';
 import {Prop} from "vue-property-decorator";
 import moment from "moment";
-import $ from "jquery";
-import 'jqueryui';
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
 import linkifyUrls from "linkify-urls";
