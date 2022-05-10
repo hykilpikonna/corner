@@ -1,6 +1,8 @@
 <template>
-    <div id="Others">
-    </div>
+  <div id="Others">
+    <h2>更多链接</h2>
+    <router-link class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</router-link>
+  </div>
 </template>
 
 <script lang="ts">
@@ -16,8 +18,14 @@ export default class Others extends Vue
 </script>
 
 <style lang="sass" scoped>
+@import "src/css/colors"
+
 #Others
-    text-align: left
-    width: 600px
-    margin: 20px auto
+  text-align: left
+  width: 600px
+  margin: 2em auto 0
+
+a
+  color: $color-text-main
+  display: block
 </style>
