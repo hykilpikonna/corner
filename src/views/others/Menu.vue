@@ -1,12 +1,20 @@
 <template>
   <div id="Menu">
-    <div class="category" v-for="cat of menu" :key="cat.cat">
-      <div class="name">{{ cat.cat }}</div>
-      <div class="subtitle">{{ cat.subtitle }}</div>
-      <div class="items">
-        <div class="item" v-for="item of cat.items" :key="item.name">
-          <div class="name" :class="{recommend: item.recommend, original: item.original}">
-            {{ item.name }}
+    <div class="title">
+      <h2>小桂桂的私房菜 菜单</h2>
+      <div class="subtitle">在桂桂家里可以吃到这些哦</div>
+    </div>
+    <div class="columns">
+      <div class="column" v-for="(col, colI) in cols" :key="colI">
+        <div class="category" v-for="cat of col" :key="cat.cat">
+          <div class="name">{{ cat.cat }}</div>
+          <div class="subtitle">{{ cat.subtitle }}</div>
+          <div class="items">
+            <div class="item" v-for="item of cat.items" :key="item.name">
+              <div class="name" :class="{recommend: item.recommend, original: item.original}">
+                {{ item.name }}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -37,6 +45,8 @@ export interface MenuCategory
   cat: string
   subtitle?: string
   items: MenuItem[]
+
+  column?: number
 }
 
 export const menu: MenuCategory[] = [
@@ -128,9 +138,54 @@ export const menu: MenuCategory[] = [
 @Options({components: {}})
 export default class Menu extends Vue
 {
-  menu = menu
+  max_cols = 2
+  cols: MenuCategory[][] = new Array(this.max_cols)
+
+  created()
+  {
+    // Calculate menu layout
+    const tmp = Array.from(menu)
+    tmp.sort((a, b) => b.items.length - a.items.length)
+
+    // Two columns
+    let col_counts = new Array(this.max_cols).fill(0)
+    for (const cat of tmp)
+    {
+      // Get column index with minimal item count
+      let col = col_counts.indexOf(Math.min(...col_counts))
+
+      cat.column = col
+      col_counts[col] += cat.items.length
+    }
+
+    // Separate arrays by column
+    for (let i = 0; i < this.max_cols; i++)
+      this.cols[i] = menu.filter(it => it.column == i)
+  }
 }
 </script>
 
 <style lang="sass" scoped>
+@import "src/css/colors"
+
+.title
+  margin-bottom: 1em
+
+  h2
+    margin-bottom: 0
+
+  .subtitle
+    color: $color-text-light
+
+
+.columns
+  display: flex
+  flex-wrap: wrap
+
+  .column
+    flex: 50%
+    max-width: 50%
+
+
+
 </style>
