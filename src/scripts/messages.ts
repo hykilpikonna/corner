@@ -4,10 +4,11 @@ export const messages = {
     en: {
         nav: {
             home: 'Home',
-            about: 'About',
+            about: '关于',
             blog: '记事本',
             life: '生活',
             projects: 'Projects',
+            others: '更多'
         }
     },
     zh: {

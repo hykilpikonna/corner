@@ -5,7 +5,7 @@ const routes: Array<RouteRecordRaw> = [
     {
         path: '/',
         name: 'Home',
-        meta: {title: 'Home'},
+        meta: {title: 'Home', nav: true},
         component: Home
     },
     {
@@ -17,7 +17,7 @@ const routes: Array<RouteRecordRaw> = [
     {
         path: '/about',
         name: 'About',
-        meta: {title: 'About Me'},
+        meta: {title: '关于', nav: true},
         // route level code-splitting
         // this generates a separate chunk (about.[hash].js) for this route
         // which is lazy-loaded when the route is visited.
@@ -26,21 +26,27 @@ const routes: Array<RouteRecordRaw> = [
     {
         path: '/life',
         name: 'Life',
-        meta: {title: 'Life'},
+        meta: {title: '生活', nav: true},
         component: () => import('../views/Life.vue')
-    },
-    {
-        path: '/projects',
-        name: 'Projects',
-        meta: {title: 'Projects'},
-        component: () => import('../views/Projects.vue')
     },
     {
         path: '/blog',
         name: 'Blog',
-        meta: {title: '记事本'},
+        meta: {title: '记事本', nav: true},
         component: () => import('../views/Blog.vue'),
         props: route => (route.query)
+    },
+    {
+        path: '/others',
+        name: 'Others',
+        meta: {title: '更多', nav: true},
+        component: () => import('../views/Others.vue')
+    },
+    {
+        path: '/kitchen-menu',
+        name: 'Menu',
+        meta: {title: '菜单', navBookmark: 'Others'},
+        component: () => import('../views/others/Menu.vue')
     },
     {
         path: '/color',

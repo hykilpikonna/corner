@@ -5,9 +5,9 @@
         <div id="menu" @click="showMenu"><i class="fas fa-bars"></i></div>
 
         <div id="items" class="fbox-v">
-            <router-link class="router-link" ref="blog" to="/blog">{{ $t('nav.blog') }}</router-link>
+            <router-link class="router-link" ref="others" to="/others">{{ $t('nav.others') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="projects" to="/projects">{{ $t('nav.projects') }}</router-link>
+            <router-link class="router-link" ref="blog" to="/blog">{{ $t('nav.blog') }}</router-link>
             <div class="dot">·</div>
             <router-link class="router-link" ref="life" to="/life">{{ $t('nav.life') }}</router-link>
             <div class="dot">·</div>
@@ -62,7 +62,7 @@ export default class App extends Vue
         })
 
         console.log('AfterEach called', to)
-        this.currentRoute = (to.name as string).toLowerCase()
+        this.currentRoute = ((to.meta?.navBookmark ?? to.name) as string).toLowerCase()
 
         this.calculateBookmarkCss()
         this.menuOpen = false
@@ -72,7 +72,7 @@ export default class App extends Vue
     {
         console.log('Mounted called', this.$route)
         router.afterEach(this.updateBookmark)
-        if (this.$route.name) this.currentRoute = (this.$route.name as string).toLowerCase()
+        if (this.$route.name) this.currentRoute = ((this.$route.meta?.navBookmark ?? this.$route.name) as string).toLowerCase()
 
         // Resize listener
         window.addEventListener('resize', this.calculateBookmarkCss, true);
