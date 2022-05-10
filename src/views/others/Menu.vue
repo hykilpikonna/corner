@@ -214,4 +214,13 @@ export default class Menu extends Vue
 .items
   .item.recommend
     color: $color-text-special
+
+  .item.original:after
+    content: '原创'
+    font-size: 0.8em
+    color: #ec9139
+    background: rgba(255, 200, 131, 0.4)
+    border-radius: 5px
+    padding: 0 5px
+    margin-left: 10px
 </style>
