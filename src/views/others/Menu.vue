@@ -10,11 +10,10 @@
           <div class="cat">{{ cat.cat }}！</div>
           <div class="subtitle">{{ cat.subtitle }}</div>
           <div class="items">
-            <div class="item" v-for="item of cat.items" :key="item.name">
+            <div class="item" v-for="item of cat.items" :key="item.name"
+                 :class="{recommend: item.recommend, original: item.original}">
               <span class="number">{{ item.id }}. </span>
-              <span class="name" :class="{recommend: item.recommend, original: item.original}">
-                {{ item.name }}
-              </span>
+              <span class="name">{{ item.name }}</span>
             </div>
           </div>
         </div>
@@ -57,12 +56,12 @@ export const menu: MenuCategory[] = [
     cat: '🍖 猪肉',
     items: [
       {name: '玉米排骨汤', recommend: true},
+      {name: '红烧蜜汁五花肉（+卤蛋）', recommend: true},
       {name: '蒜香炸排骨'},
-      {name: '蒜蓉粉丝蒸排骨'},
       {name: '椒盐排骨'},
       {name: '酱香排骨'},
       {name: '四川回锅肉'},
-      {name: '红烧蜜汁五花肉（+卤蛋）', recommend: true},
+      {name: '蒜蓉粉丝蒸排骨'},
     ]
   },
   {
@@ -91,11 +90,11 @@ export const menu: MenuCategory[] = [
     cat: '🥗 菜',
     items: [
       {name: '肉丁炒芹菜', recommend: true},
-      {name: '韭菜炒蛋'},
-      {name: '白菜炖粉条'},
       {name: '干锅菜花', recommend: true},
+      {name: '韭菜炒蛋'},
       {name: '红烧土豆'},
       {name: '葱花鸡蛋'},
+      {name: '白菜炖粉条'},
       {name: '素炒绿叶菜（大白菜/小油菜）'},
     ]
   },
@@ -133,7 +132,9 @@ export const menu: MenuCategory[] = [
   {
     cat: '🍸 饮料',
     items: [
-      {name: '白桃奶油鸡尾酒', recommend: true, original: true}
+      {name: '白桃奶油鸡尾酒', recommend: true, original: true},
+      {name: '火龙果葡萄酒', original: true},
+      {name: '水果宾治鸡尾酒'}
     ]
   },
 ]
@@ -204,9 +205,13 @@ export default class Menu extends Vue
     font-weight: bold
 
   .subtitle
-    font-size: 0.9em
+    font-size: 0.8em
+    margin-bottom: 0.5em
     color: $color-text-light
 
   margin-bottom: 1em
 
+.items
+  .item.recommend
+    color: $color-text-special
 </style>
