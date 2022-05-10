@@ -7,13 +7,14 @@
     <div class="columns">
       <div class="column" v-for="(col, colI) in cols" :key="colI">
         <div class="category" v-for="cat of col" :key="cat.cat">
-          <div class="name">{{ cat.cat }}</div>
+          <div class="cat">{{ cat.cat }}！</div>
           <div class="subtitle">{{ cat.subtitle }}</div>
           <div class="items">
             <div class="item" v-for="item of cat.items" :key="item.name">
-              <div class="name" :class="{recommend: item.recommend, original: item.original}">
+              <span class="number">{{ item.id }}. </span>
+              <span class="name" :class="{recommend: item.recommend, original: item.original}">
                 {{ item.name }}
-              </div>
+              </span>
             </div>
           </div>
         </div>
@@ -38,6 +39,8 @@ export interface MenuItem
   img?: string
   recommend?: boolean
   original?: boolean
+
+  id?: number
 }
 
 export interface MenuCategory
@@ -51,7 +54,7 @@ export interface MenuCategory
 
 export const menu: MenuCategory[] = [
   {
-    cat: '猪肉',
+    cat: '🍖 猪肉',
     items: [
       {name: '玉米排骨汤', recommend: true},
       {name: '蒜香炸排骨'},
@@ -63,7 +66,7 @@ export const menu: MenuCategory[] = [
     ]
   },
   {
-    cat: '鸡肉',
+    cat: '🍗 鸡肉',
     items: [
       {name: '土豆炖鸡腿', recommend: true},
       {name: '香烤鸡腿', recommend: true},
@@ -72,20 +75,20 @@ export const menu: MenuCategory[] = [
     ]
   },
   {
-    cat: '牛肉',
+    cat: '🥩 牛肉',
     items: [
       {name: '煎牛排'},
       {name: '牛肉粉丝汤'}
     ]
   },
   {
-    cat: '海鲜',
+    cat: '🐟 海鲜',
     items: [
       {name: '煎三文鱼皮'}
     ]
   },
   {
-    cat: '菜',
+    cat: '🥗 菜',
     items: [
       {name: '肉丁炒芹菜', recommend: true},
       {name: '韭菜炒蛋'},
@@ -97,38 +100,38 @@ export const menu: MenuCategory[] = [
     ]
   },
   {
-    cat: '面条',
+    cat: '🍜 面条',
     items: [
       {name: '味噌叉烧豚骨面'},
       {name: '番茄牛肉面'},
       {name: '黑椒炒意面'},
+      {name: '炒面（挂面/乌冬/意面/方便面）'},
     ]
   },
   {
-    cat: '其他的',
+    cat: '🍥 其他的',
     items: [
       {name: '鸡蛋火腿吐司', recommend: true},
       {name: '茶叶蛋'},
     ]
   },
   {
-    cat: '主食',
+    cat: '🍛 主食',
     items: [
       {name: '照烧肥牛饭（肥牛片/五花肉）', recommend: true},
       {name: '咖喱饭（牛肉块/肥牛片/五花肉)'},
       {name: '炒饭'},
-      {name: '炒面'},
     ]
   },
   {
-    cat: '蛋糕',
+    cat: '🍰 蛋糕',
     subtitle: '（要提前几天预定哦！ qwq',
     items: [
       {name: '提拉米苏', recommend: true},
     ]
   },
   {
-    cat: '饮料',
+    cat: '🍸 饮料',
     items: [
       {name: '白桃奶油鸡尾酒', recommend: true, original: true}
     ]
@@ -161,6 +164,10 @@ export default class Menu extends Vue
     // Separate arrays by column
     for (let i = 0; i < this.max_cols; i++)
       this.cols[i] = menu.filter(it => it.column == i)
+
+    // Assign ID to each item
+    let id = 0
+    this.cols.forEach(col => col.forEach(cat => cat.items.forEach(it => it.id = id++)))
   }
 }
 </script>
@@ -168,8 +175,12 @@ export default class Menu extends Vue
 <style lang="sass" scoped>
 @import "src/css/colors"
 
+#Menu
+  margin-top: 2em
+  text-align: left
+
 .title
-  margin-bottom: 1em
+  margin-bottom: 2em
 
   h2
     margin-bottom: 0
