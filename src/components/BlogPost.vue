@@ -20,7 +20,7 @@
                 <Dynamic :template="content"></Dynamic>
             </div>
             <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t" direction="right">{{t}}</Tag>
+                <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{t}}</Tag>
             </div>
         </div>
     </div>
@@ -34,6 +34,7 @@ import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
 import moment from "moment";
 import {pushQuery} from "@/scripts/router";
+import {$} from '@/scripts/constants';
 
 export interface BlogPost
 {

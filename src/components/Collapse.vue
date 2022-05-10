@@ -10,6 +10,7 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {Prop} from "vue-property-decorator";
+import {$} from '@/scripts/constants';
 
 @Options({components: {}})
 export default class Collapse extends Vue

@@ -5,10 +5,10 @@
             <div class="mtext"><span>{{p.reply.text}}</span></div>
         </div>
         <div class="images" v-if="p.images && p.images.length === 1">
-            <img v-for="i in p.images" :key="i" :src="i.url" alt="image">
+            <img v-for="i in p.images" :key="i.url" :src="i.url" alt="image">
         </div>
         <div class="images" v-if="p.images && p.images.length !== 1">
-            <div class="img" v-for="i in p.images" :key="i"
+            <div class="img" v-for="i in p.images" :key="i[0]"
                  :style="{'background-image': `url(${i.url})`, ...getImageStyle(p, i)}"></div>
         </div>
         <div class="text" v-html="text"></div>

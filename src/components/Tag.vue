@@ -21,7 +21,7 @@ export default class Tag extends Vue
 
     @Ref() readonly el!: HTMLDivElement
 
-    clickTag(e: PointerEvent): void
+    clickTag(e: MouseEvent): void
     {
         e.stopPropagation()
 
