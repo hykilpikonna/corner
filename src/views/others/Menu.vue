@@ -198,5 +198,15 @@ export default class Menu extends Vue
     max-width: 50%
 
 
+.category
+  .cat
+    font-size: 1.2em
+    font-weight: bold
+
+  .subtitle
+    font-size: 0.9em
+    color: $color-text-light
+
+  margin-bottom: 1em
 
 </style>
