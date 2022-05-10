@@ -1,7 +1,17 @@
 <template>
-    <div id="Menu">
-
+  <div id="Menu">
+    <div class="category" v-for="cat of menu" :key="cat.cat">
+      <div class="name">{{ cat.cat }}</div>
+      <div class="subtitle">{{ cat.subtitle }}</div>
+      <div class="items">
+        <div class="item" v-for="item of cat.items" :key="item.name">
+          <div class="name" :class="{recommend: item.recommend, original: item.original}">
+            {{ item.name }}
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
 </template>
 
 <script lang="ts">
