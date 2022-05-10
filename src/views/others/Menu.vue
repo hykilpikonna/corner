@@ -14,6 +14,7 @@
                  :class="{recommend: item.recommend, original: item.original}">
               <span class="number">{{ item.id }}. </span>
               <span class="name">{{ item.name }}</span>
+              <span class="sub" v-if="item.sub">（{{item.sub}}）</span>
             </div>
           </div>
         </div>
@@ -35,6 +36,7 @@ export enum Flavor
 export interface MenuItem
 {
   name: string
+  sub?: string
   img?: string
   recommend?: boolean
   original?: boolean
@@ -56,7 +58,7 @@ export const menu: MenuCategory[] = [
     cat: '🍖 猪肉',
     items: [
       {name: '玉米排骨汤', recommend: true},
-      {name: '红烧蜜汁五花肉（+卤蛋）', recommend: true},
+      {name: '红烧蜜汁五花肉', sub: '+卤蛋', recommend: true},
       {name: '蒜香炸排骨'},
       {name: '椒盐排骨'},
       {name: '酱香排骨'},
@@ -95,7 +97,7 @@ export const menu: MenuCategory[] = [
       {name: '红烧土豆'},
       {name: '葱花鸡蛋'},
       {name: '白菜炖粉条'},
-      {name: '素炒绿叶菜（大白菜/小油菜）'},
+      {name: '素炒绿叶菜', sub: '大白菜/小油菜'},
     ]
   },
   {
@@ -104,7 +106,7 @@ export const menu: MenuCategory[] = [
       {name: '味噌叉烧豚骨面'},
       {name: '番茄牛肉面'},
       {name: '黑椒炒意面'},
-      {name: '炒面（挂面/乌冬/意面/方便面）'},
+      {name: '炒面', sub: '挂面/乌冬/意面/方便面'},
     ]
   },
   {
@@ -117,8 +119,8 @@ export const menu: MenuCategory[] = [
   {
     cat: '🍛 主食',
     items: [
-      {name: '照烧肥牛饭（肥牛片/五花肉）', recommend: true},
-      {name: '咖喱饭（牛肉块/肥牛片/五花肉)'},
+      {name: '照烧肥牛饭', sub: '肥牛片/五花肉', recommend: true},
+      {name: '咖喱饭', sub: '牛肉块/肥牛片/五花肉'},
       {name: '炒饭'},
     ]
   },
@@ -176,9 +178,12 @@ export default class Menu extends Vue
 <style lang="sass" scoped>
 @import "src/css/colors"
 
+$width: 600px
+
 #Menu
-  margin-top: 2em
   text-align: left
+  width: $width
+  margin: 2em auto 0
 
 .title
   margin-bottom: 2em
@@ -192,12 +197,14 @@ export default class Menu extends Vue
 
 .columns
   display: flex
+  justify-content: space-between
   flex-wrap: wrap
 
   .column
-    flex: 50%
+    flex-grow: 0
     max-width: 50%
-
+    min-width: 180px
+    white-space: nowrap
 
 .category
   .cat
@@ -212,6 +219,9 @@ export default class Menu extends Vue
   margin-bottom: 1em
 
 .items
+  .sub
+    font-size: 0.7em
+
   .item.recommend
     color: $color-text-special
 
@@ -223,4 +233,14 @@ export default class Menu extends Vue
     border-radius: 5px
     padding: 0 5px
     margin-left: 10px
+
+
+// Phone layout
+@media screen and (max-width: $width + 40px)
+  #Menu
+    margin: 2em 20px 0
+    width: unset
+
+  .columns
+    //justify-content: space-around
 </style>
