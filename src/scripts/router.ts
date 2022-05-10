@@ -1,4 +1,10 @@
-import {createRouter, createWebHashHistory, NavigationFailure, RouteRecordRaw} from 'vue-router'
+import {
+    createRouter,
+    createWebHashHistory,
+    createWebHistory,
+    NavigationFailure,
+    RouteRecordRaw
+} from 'vue-router'
 import Home from '../views/Home.vue'
 
 const routes: Array<RouteRecordRaw> = [
@@ -57,7 +63,7 @@ const routes: Array<RouteRecordRaw> = [
 ]
 
 export const router = createRouter({
-    history: createWebHashHistory(),
+    history: createWebHistory(),
     routes
 })
 
