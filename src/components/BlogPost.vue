@@ -29,12 +29,11 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {Prop, Watch} from "vue-property-decorator";
-import {hosts} from "@/scripts/constants";
+import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import Tag from "@/components/Tag.vue";
 import moment from "moment";
 import {pushQuery} from "@/scripts/router";
-import {$} from '@/scripts/constants';
 
 export interface BlogPost
 {

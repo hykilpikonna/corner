@@ -1,6 +1,6 @@
 import * as THREE from 'three'
+import {DirectionalLight, HemisphereLight, Mesh} from 'three'
 import {colors, config} from "@/animation/Config";
-import {DirectionalLight, HemisphereLight, Mesh} from "three";
 
 export const vertexShader = `
     varying vec3 vWorldPosition;

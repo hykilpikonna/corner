@@ -8,7 +8,6 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import MyColorPicker from "@/components/color/ColorPicker.vue";
-import {Color} from "three";
 
 @Options({components: {MyColorPicker}})
 export default class Projects extends Vue
