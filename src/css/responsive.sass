@@ -1,0 +1,24 @@
+@import "src/css/colors"
+
+$width: 600px
+
+.general-page
+  text-align: left
+  width: $width
+  margin: 2em auto 0
+
+.title
+  margin-bottom: 2em
+
+  h2
+    margin-bottom: 0
+
+  .subtitle
+    color: $color-text-light
+
+
+// Phone layout
+@media screen and (max-width: $width + 40px)
+  .general-page
+    margin: 2em 20px 0
+    width: unset
