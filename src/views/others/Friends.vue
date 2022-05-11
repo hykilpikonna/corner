@@ -6,9 +6,11 @@
     </div>
 
     <div class="friends" v-if="friends">
-      <div class="friend" v-for="f in friends" :key="f.name">
-        <div class="name">{{ f.name }}</div>
-        <img class="avatar" :src="f.avatar">
+      <div class="friend card clickable" v-for="f in friends" :key="f.name" @click="click(f)">
+        <img class="avatar" :src="f.avatar" alt="">
+        <div class="info">
+          <div class="name">{{ f.name }}</div>
+        </div>
       </div>
     </div>
   </div>
@@ -40,6 +42,11 @@ export default class Friends extends Vue
     this.friends.forEach(f => {
       if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
     })
+  }
+
+  click(f: Friend)
+  {
+    window.open(f.link)
   }
 }
 </script>
