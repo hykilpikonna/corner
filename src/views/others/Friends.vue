@@ -2,11 +2,11 @@
   <div id="Friends" class="general-page">
     <div class="title">
       <h2>朋友们</h2>
-      <div class="subtitle">是小桂桂的朋友们</div>
+      <div class="subtitle">是小桂桂的朋友们（欢迎补充</div>
     </div>
 
     <div class="friends" v-if="friends">
-      <div class="friend card clickable" v-for="f in friends" :key="f.name" @click="click(f)">
+      <div class="friend card clickable" v-for="f in friends" :key="f.name">
         <div class="banner" :style="bgStyle(f)"></div>
         <img class="avatar" :src="f.avatar" alt="">
         <div class="info">
@@ -15,6 +15,7 @@
           <div class="links">
             <a v-if="f.twitter" :href="`https://twitter.com/${f.twitter}`"><i class="fab fa-twitter"></i></a>
             <a v-if="f.github" :href="`https://github.com/${f.github}`"><i class="fab fa-github"></i></a>
+            <a v-if="f.blog" :href="f.blog"><i class="fas fa-book"></i></a>
           </div>
         </div>
       </div>
@@ -28,7 +29,6 @@ import {hosts} from "@/scripts/constants";
 
 export interface Friend {
   name: string
-  link: string
   avatar: string
   banner: string
 
@@ -55,11 +55,6 @@ export default class Friends extends Vue
     })
   }
 
-  click(f: Friend)
-  {
-    window.open(f.link)
-  }
-
   bgStyle(f: Friend)
   {
     if (f.banner) return {'background-image': `url(${f.banner})`}
@@ -72,14 +67,18 @@ export default class Friends extends Vue
 @import "src/css/colors"
 @import "src/css/responsive"
 
-.friends
-  display: grid
+$card-min-width: 335px
+
+//.friends
+//  display: grid
+//  grid-template-columns: repeat(auto-fit, minmax($card-min-width, 1fr))
 
 .friend
   display: flex
   position: relative
+  min-width: $card-min-width
 
-  $top: 80px
+  $top: 100px
   $img: 80px
 
   .banner
@@ -115,6 +114,7 @@ export default class Friends extends Vue
 
     a
       color: $color-text-main
+      margin-left: 10px
 
   .avatar
     margin-top: calc(#{$top} - #{$img} / 2 - 20px)
