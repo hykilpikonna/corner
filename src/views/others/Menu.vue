@@ -1,5 +1,5 @@
 <template>
-  <div id="Menu">
+  <div id="Menu" class="general-page">
     <div class="title">
       <h2>小桂桂的私房菜 菜单</h2>
       <div class="subtitle">在桂桂家里可以吃到这些哦</div>
@@ -177,23 +177,7 @@ export default class Menu extends Vue
 
 <style lang="sass" scoped>
 @import "src/css/colors"
-
-$width: 600px
-
-#Menu
-  text-align: left
-  width: $width
-  margin: 2em auto 0
-
-.title
-  margin-bottom: 2em
-
-  h2
-    margin-bottom: 0
-
-  .subtitle
-    color: $color-text-light
-
+@import "src/css/responsive"
 
 .columns
   display: flex
@@ -233,14 +217,4 @@ $width: 600px
     border-radius: 5px
     padding: 0 5px
     margin-left: 10px
-
-
-// Phone layout
-@media screen and (max-width: $width + 40px)
-  #Menu
-    margin: 2em 20px 0
-    width: unset
-
-  .columns
-    //justify-content: space-around
 </style>

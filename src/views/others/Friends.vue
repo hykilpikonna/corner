@@ -1,6 +1,9 @@
 <template>
-  <div id="Friends">
-    Meow
+  <div id="Friends" class="general-page">
+    <div class="title">
+      <h2>朋友们</h2>
+      <div class="subtitle">和他们的博客链接</div>
+    </div>
   </div>
 </template>
 
@@ -14,4 +17,6 @@ export default class Friends extends Vue
 </script>
 
 <style lang="sass" scoped>
+@import "src/css/colors"
+@import "src/css/responsive"
 </style>

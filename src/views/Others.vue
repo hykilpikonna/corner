@@ -14,7 +14,6 @@ import Collapse from "@/components/Collapse.vue";
 export default class Others extends Vue
 {
 
-
 }
 </script>
 
