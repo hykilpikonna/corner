@@ -2,6 +2,7 @@
   <div id="Others">
     <h2>更多链接</h2>
     <router-link class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</router-link>
+    <router-link class="rlink" to="/friends">🎎 朋友们</router-link>
   </div>
 </template>
 
@@ -28,4 +29,5 @@ export default class Others extends Vue
 a
   color: $color-text-main
   display: block
+  margin-bottom: 0.5em
 </style>

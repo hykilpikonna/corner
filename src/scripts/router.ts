@@ -49,6 +49,12 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('../views/others/Menu.vue')
     },
     {
+        path: '/friends',
+        name: 'Friends',
+        meta: {title: '朋友们', navBookmark: 'Others'},
+        component: () => import('../views/others/Friends.vue')
+    },
+    {
         path: '/color',
         name: 'ColorPicker',
         meta: {title: 'Color Picker'},
