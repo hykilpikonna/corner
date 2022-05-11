@@ -18,9 +18,6 @@ const routes: Array<RouteRecordRaw> = [
         path: '/about',
         name: 'About',
         meta: {title: '关于', nav: true},
-        // route level code-splitting
-        // this generates a separate chunk (about.[hash].js) for this route
-        // which is lazy-loaded when the route is visited.
         component: () => import('../views/About.vue')
     },
     {
@@ -53,6 +50,12 @@ const routes: Array<RouteRecordRaw> = [
         name: 'Friends',
         meta: {title: '朋友们', navBookmark: 'Others'},
         component: () => import('../views/others/Friends.vue')
+    },
+    {
+        path: '/projects',
+        name: 'Projects',
+        meta: {title: '我做的', navBookmark: 'Others'},
+        component: () => import('../views/others/Projects.vue')
     },
     {
         path: '/color',
