@@ -7,11 +7,15 @@
 
     <div class="friends" v-if="friends">
       <div class="friend card clickable" v-for="f in friends" :key="f.name" @click="click(f)">
-<!--           :style="{'background-image': `url(${f.banner})`}">-->
         <div class="banner" :style="bgStyle(f)"></div>
         <img class="avatar" :src="f.avatar" alt="">
         <div class="info">
           <div class="name">{{ f.name }}</div>
+          <div class="space"></div>
+          <div class="links">
+            <a v-if="f.twitter" :href="`https://twitter.com/${f.twitter}`"><i class="fab fa-twitter"></i></a>
+            <a v-if="f.github" :href="`https://github.com/${f.github}`"><i class="fab fa-github"></i></a>
+          </div>
         </div>
       </div>
     </div>
@@ -29,6 +33,10 @@ export interface Friend {
   banner: string
 
   desc?: string
+
+  twitter?: string
+  github?: string
+  blog?: string
 }
 
 @Options({components: {}})
@@ -96,11 +104,17 @@ export default class Friends extends Vue
   .info
     z-index: 10
     display: flex
-    flex-direction: column
-    justify-content: end
+    align-items: end
+    width: 100%
 
     .name
       font-size: 1.2em
+
+    .space
+      flex-grow: 1
+
+    a
+      color: $color-text-main
 
   .avatar
     margin-top: calc(#{$top} - #{$img} / 2 - 20px)
