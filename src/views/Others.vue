@@ -1,6 +1,9 @@
 <template>
   <div id="Others" class="general-page">
-    <div class="title"><h2>更多链接</h2></div>
+    <div class="title">
+      <h2>更多链接</h2>
+      <div class="subtitle">欢迎点进来看看</div>
+    </div>
     <div class="links">
       <router-link class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</router-link>
       <router-link class="rlink" to="/friends">🎎 朋友们</router-link>
