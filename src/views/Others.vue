@@ -1,6 +1,6 @@
 <template>
-  <div id="Others">
-    <h2>更多链接</h2>
+  <div id="Others" class="general-page">
+    <div class="title"><h2>更多链接</h2></div>
     <router-link class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</router-link>
     <router-link class="rlink" to="/friends">🎎 朋友们</router-link>
   </div>
@@ -8,9 +8,8 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import Collapse from "@/components/Collapse.vue";
 
-@Options({components: {Collapse}})
+@Options({})
 export default class Others extends Vue
 {
 
@@ -19,11 +18,7 @@ export default class Others extends Vue
 
 <style lang="sass" scoped>
 @import "src/css/colors"
-
-#Others
-  text-align: left
-  width: 600px
-  margin: 2em auto 0
+@import "src/css/responsive"
 
 a
   color: $color-text-main
