@@ -120,6 +120,17 @@ export function parseExtensions(raw: string): string
         i++;
     }
 
+    // If I don't call these functions somewhere, they will be deleted by vite build, and it will
+    // raise an error when the functions are called in eval(). So I put function calls in an
+    // impossible condition to prevent deletion.
+    if (raw == 'STOP DELETING MY UNUSED FUNCTIONS!!!')
+    {
+        hideSection()
+        hideLines(0)
+        add('')
+        collapseSection()
+    }
+
     console.log(lines.join('\n'))
     return lines.join('\n')
 }
