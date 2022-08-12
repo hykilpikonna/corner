@@ -57,7 +57,7 @@ export default class Friends extends Vue
 
   bgStyle(f: Friend)
   {
-    if (f.banner) return {'background-image': `url(${f.banner})`}
+    if (f.banner) return {'background-image': `url("${f.banner}")`}
     else return {}
   }
 }
