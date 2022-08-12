@@ -38,7 +38,7 @@ export default class PostView extends Vue
         return linkifyUrls(this.p.text)
     }
 
-    getImageStyle(post: Post, i: Image): unknown
+    getImageStyle(post: Post, i: Image): object
     {
         if (post.img_group_style)
         {
