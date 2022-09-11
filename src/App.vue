@@ -114,7 +114,7 @@ export default class App extends Vue
 #nav
     position: fixed
     left: 0
-    height: 100vh
+    height: 100%
     font-size: 1.4em
     align-items: flex-start
 
