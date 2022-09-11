@@ -26,52 +26,14 @@ export default class BlogIndexLinks extends Vue
     clickCat(e: MouseEvent, cat: [string, number]): void
     {
         e.stopPropagation()
-
-        const c = cat[0]
-        const q: { [id: string]: string | null } = {category: c}
-
-        // Check if the currently selected post is in this category
-        // const url_name = this.$route.query.post
-        // if (url_name)
-        // {
-        //     const posts = staticMeta.posts.filter(it => it.url_name == url_name)
-        //     if (posts && posts[0].category != c)
-        //     {
-        //         // Doesn't include tag, remove post selection
-        //         q.post = null
-        //     }
-        // }
-
-        // Clear tag selection
-        q.tag = null
-
-        pushQuery(q)
+        pushQuery({category: cat[0], tag: null})
     }
 
 
     clickTag(e: MouseEvent, tag: [string, number]): void
     {
         e.stopPropagation()
-
-        const t = tag[0]
-        const q: { [id: string]: string | null } = {tag: t}
-
-        // Check if the currently selected post is in this tag
-        // const url_name = this.$route.query.post
-        // if (url_name)
-        // {
-        //     const posts = staticMeta.posts.filter(it => it.url_name == url_name)
-        //     if (posts && !posts[0].tags.includes(t))
-        //     {
-        //         // Doesn't include tag, remove post selection
-        //         q.post = null
-        //     }
-        // }
-
-        // Clear category selection
-        q.category = null
-
-        pushQuery(q)
+        pushQuery({tag: tag[0], category: null})
     }
 }
 </script>
