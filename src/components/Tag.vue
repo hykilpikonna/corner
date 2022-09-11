@@ -1,5 +1,5 @@
 <template>
-    <div class="tag-wrap unselectable clickable" @click="e => clickTag(e)">
+    <div class="tag-wrap unselectable clickable">
         <div class="tag fbox-vcenter" :class="direction">
             <div ref="el"><slot></slot></div>
             <div class="after"></div>
@@ -20,28 +20,6 @@ export default class Tag extends Vue
     @Prop() tagName?: string
 
     @Ref() readonly el!: HTMLDivElement
-
-    clickTag(e: MouseEvent): void
-    {
-        e.stopPropagation()
-
-        const t = this.tagName ?? this.el.innerText
-        const q: {[id: string]: string | null} = {tag: t}
-
-        // Check if the currently selected post is in this tag
-        const url_name = this.$route.query.post
-        if (url_name)
-        {
-            const posts = staticMeta.posts.filter(it => it.url_name == url_name)
-            if (posts && !posts[0].tags.includes(t))
-            {
-                // Doesn't include tag, remove post selection
-                q.post = null
-            }
-        }
-
-        pushQuery(q)
-    }
 }
 </script>
 
