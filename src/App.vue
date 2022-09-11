@@ -117,7 +117,9 @@ export default class App extends Vue
     height: 100vh
     font-size: 1.4em
     align-items: flex-start
+
     z-index: 2
+    pointer-events: none
 
     font-family: "Microsoft YaHei UI", $font
 
@@ -128,7 +130,9 @@ export default class App extends Vue
         border-radius: 10px
         text-shadow: -1px -1px 1px rgba(255,255,255,.1), 1px 1px 1px rgba(0,0,0,.5)
         filter: drop-shadow(0 0 30px rgb(255, 255, 255))
+
         z-index: 100
+        pointer-events: auto
 
         opacity: 0
 
@@ -150,7 +154,9 @@ export default class App extends Vue
     .router-link
         color: rgba(128, 112, 92, 0.71)
         position: relative
+
         z-index: 100
+        pointer-events: auto
 
     .dot
         content: '·'
@@ -173,12 +179,15 @@ export default class App extends Vue
         //$nav-bg-color: rgb(255, 230, 214)
         border-left: 20px solid $nav-bg-color
         background: linear-gradient(to right, $nav-bg-color, transparent)
+
         z-index: 4
         pointer-events: none
 
     #meru
         height: 160px
+
         z-index: 100
+        pointer-events: auto
 
     svg
         display: inline-block
