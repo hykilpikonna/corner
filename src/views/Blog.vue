@@ -71,7 +71,7 @@ $width: 600px
 
 #Blog
     width: $width
-    margin: 20px auto
+    margin: 50px auto 20px
 
     #breadcrumb
         color: $color-text-light
@@ -86,6 +86,10 @@ $width: 600px
 // Phone layout
 @media screen and (max-width: $width + 40px)
     #Blog
-        margin: 10px
+        margin: 20px 10px
         width: unset
+
+        #breadcrumb
+            margin-left: 50px
+
 </style>
