@@ -1,5 +1,5 @@
 <template>
-    <div id="Blog">
+    <div id="Blog" v-if="meta">
         <div id="breadcrumb">
             <span class="clickable" @click="() => $router.push({query: {}})">Blog</span>
             <span v-if="tag">🏷️{{tag}}</span>
@@ -8,6 +8,7 @@
         </div>
         <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m" :active="m === activePost"/>
     </div>
+    <Loading v-else></Loading>
 </template>
 
 <script lang="ts">
@@ -15,6 +16,7 @@ import {Options, Vue} from 'vue-class-component';
 import BlogPostPreview, {BlogPost} from "@/components/BlogPost.vue";
 import {hosts} from "@/scripts/constants";
 import {Prop} from "vue-property-decorator";
+import Loading from "@/components/Loading.vue";
 
 export interface BlogMeta
 {
@@ -27,7 +29,7 @@ export interface BlogMeta
 
 export let staticMeta: BlogMeta = {tags: [], categories: [], posts: []}
 
-@Options({components: {BlogPostPreview}})
+@Options({components: {Loading, BlogPostPreview}})
 export default class Blog extends Vue
 {
     @Prop() post?: string
