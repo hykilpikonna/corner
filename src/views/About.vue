@@ -1,11 +1,12 @@
 <template>
-    <div id="About" class="markdown-content">
+    <div id="About" class="markdown-content" v-if="html">
         <Dynamic :template="html"></Dynamic>
 
-        <Collapse title="<span class='emoji'>🎓</span> Published papers">
+        <Collapse title="<span class='emoji'>🎓</span> Research papers">
             <ZoteroPublication v-for="item in publications" :key="item.key" :item="item"/>
         </Collapse>
     </div>
+    <Loading v-else></Loading>
 </template>
 
 <script lang="ts">
@@ -15,8 +16,9 @@ import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
 import ZoteroPublication, {ZoteroAttachment, ZoteroItem} from "@/components/ZoteroPublication.vue";
 import {hosts} from "@/scripts/constants";
+import Loading from "@/components/Loading.vue";
 
-@Options({components: {ZoteroPublication}})
+@Options({components: {Loading, ZoteroPublication}})
 export default class About extends Vue
 {
     html = ""
