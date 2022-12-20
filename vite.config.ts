@@ -32,6 +32,7 @@ export default defineConfig({
     alias: {
       ...tsconfigPathAliases,
       vue: "vue/dist/vue.esm-bundler.js"
-    }
+    },
+    dedupe: ['vue'],
   }
 });
