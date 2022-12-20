@@ -8,14 +8,15 @@
         "build": "vue-tsc --noEmit && vite build"
     },
     "dependencies": {
-        "@fortawesome/fontawesome-free": "^5.15.4",
+        "@fortawesome/fontawesome-free": "^6.2.1",
         "animsition": "^4.0.2",
         "core-js": "^3.24.1",
         "emoji-regex": "^10.0.0",
         "linkify-urls": "^4.0.0",
-        "marked": "^4.0.18",
+        "marked": "^4.2.3",
         "meshline": "^2.0.3",
         "moment": "^2.29.4",
+        "tg-blog": "^1.0.1",
         "three": "^0.143.0",
         "vue": "3.2.33",
         "vue-i18n": "^9.2.2",
@@ -25,7 +26,7 @@
     "devDependencies": {
         "@types/jquery": "^3.5.11",
         "@types/jqueryui": "^1.12.16",
-        "@types/marked": "^4.0.1",
+        "@types/marked": "^4.0.7",
         "@types/three": "^0.143.0",
         "@typescript-eslint/eslint-plugin": "^5.33.0",
         "@typescript-eslint/parser": "^5.33.0",
