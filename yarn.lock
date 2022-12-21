@@ -149,6 +149,11 @@
   resolved "https://registry.yarnpkg.com/@types/marked/-/marked-4.0.8.tgz#b316887ab3499d0a8f4c70b7bd8508f92d477955"
   integrity sha512-HVNzMT5QlWCOdeuBsgXP8EZzKUf0+AXzN+sLmjvaB3ZlLqO+e4u0uXrdw9ub69wBKFs+c6/pA4r9sy6cCDvImw==
 
+"@types/node@^18.11.17":
+  version "18.11.17"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.11.17.tgz#5c009e1d9c38f4a2a9d45c0b0c493fe6cdb4bcb5"
+  integrity sha512-HJSUJmni4BeDHhfzn6nF0sVmd1SMezP7/4F0Lq+aXzmp2xm9O7WXrUtHW/CHlYVtZUbByEvWidHqRtcJXGF2Ng==
+
 "@types/sizzle@*":
   version "2.3.3"
   resolved "https://registry.yarnpkg.com/@types/sizzle/-/sizzle-2.3.3.tgz#ff5e2f1902969d305225a047c8a0fd5c915cebef"
@@ -1070,6 +1075,16 @@ is-plain-object@5.0.0, is-plain-object@^5.0.0:
   resolved "https://registry.yarnpkg.com/is-plain-object/-/is-plain-object-5.0.0.tgz#4427f50ab3429e9025ea7d52e9043a9ef4159344"
   integrity sha512-VRSzKkbMm5jMDoKLbltAkFQ5Qr7VDiTFGXxYFXXowVj387GeGNOCsOH6Msy00SGZ3Fp84b1Naa1psqgcCIEP5Q==
 
+js-file-download@^0.4.12:
+  version "0.4.12"
+  resolved "https://registry.yarnpkg.com/js-file-download/-/js-file-download-0.4.12.tgz#10c70ef362559a5b23cdbdc3bd6f399c3d91d821"
+  integrity sha512-rML+NkoD08p5Dllpjo0ffy4jRHeY6Zsapvr/W86N7E0yuzAO6qa5X9+xog6zQNlH102J7IXljNY2FtS6Lj3ucg==
+
+keycode-js@^3.1.0:
+  version "3.1.0"
+  resolved "https://registry.yarnpkg.com/keycode-js/-/keycode-js-3.1.0.tgz#9938d5488f9415ae243c4de6d6e827af293c7d75"
+  integrity sha512-aAa8PVW7kBDyG14ifGOseaVBjsT1LI953060yRSzzf3G0beKKEuwHVvFGcCI+AofY68NUkPxbLqrkfWPjXySCw==
+
 leaflet@^1.9.3:
   version "1.9.3"
   resolved "https://registry.yarnpkg.com/leaflet/-/leaflet-1.9.3.tgz#52ec436954964e2d3d39e0d433da4b2500d74414"
@@ -1333,14 +1348,16 @@ supports-preserve-symlinks-flag@^1.0.0:
   resolved "https://registry.yarnpkg.com/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz#6eda4bd344a3c94aea376d4cc31bc77311039e09"
   integrity sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==
 
-tg-blog@^1.0.3:
-  version "1.0.3"
-  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.3.tgz#a67ef2920c8e8c31e3e2000af86b235672003ac1"
-  integrity sha512-PUCWhBE+nbw4eUmKfXRMJTMHbco3jkisysYRAWsGqkY+9StuUuUrreGG8U0fIXTV1oaRUiKPoDwJGbHa/m6CFA==
+tg-blog@^1.0.4:
+  version "1.0.4"
+  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.4.tgz#c8b4aa14e604fab744e9ca677b6aa9ee22295b14"
+  integrity sha512-CTTyYceUPqzRsOr6lKh4D/OvyKexjZ0EEznw9dZWrlI0qZGcUkZYMRYJAhXlnUtj0MZMG3LW1GviIv5mQ8GySA==
   dependencies:
     "@fortawesome/fontawesome-free" "^6.2.1"
     "@vue-leaflet/vue-leaflet" "^0.7.0"
     element-plus "^2.2.26"
+    js-file-download "^0.4.12"
+    keycode-js "^3.1.0"
     leaflet "^1.9.3"
     linkify-urls "^4.0.0"
     marked "^4.2.3"
