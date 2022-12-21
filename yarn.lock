@@ -1348,10 +1348,10 @@ supports-preserve-symlinks-flag@^1.0.0:
   resolved "https://registry.yarnpkg.com/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz#6eda4bd344a3c94aea376d4cc31bc77311039e09"
   integrity sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==
 
-tg-blog@^1.0.4:
-  version "1.0.4"
-  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.4.tgz#c8b4aa14e604fab744e9ca677b6aa9ee22295b14"
-  integrity sha512-CTTyYceUPqzRsOr6lKh4D/OvyKexjZ0EEznw9dZWrlI0qZGcUkZYMRYJAhXlnUtj0MZMG3LW1GviIv5mQ8GySA==
+tg-blog@^1.0.5:
+  version "1.0.5"
+  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.5.tgz#bc3bb0a97ad8e96ad04d136eeae0f21da786e73b"
+  integrity sha512-RYFcRJedACVThurfAqALjKWvl+ldyQTtI01qm0b+MLw0yI/8Oej2Z65ZB/G36yRTVOnBQHV/J509NzRTCRsBRg==
   dependencies:
     "@fortawesome/fontawesome-free" "^6.2.1"
     "@vue-leaflet/vue-leaflet" "^0.7.0"
