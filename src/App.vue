@@ -78,13 +78,13 @@ export default class App extends Vue
         window.addEventListener('resize', this.calculateBookmarkCss, true);
 
         // Update every second
-        this.bookmarkUpdateIntervalId = setInterval(this.calculateBookmarkCss, 1000)
+        this.bookmarkUpdateIntervalId = window.setInterval(this.calculateBookmarkCss, 1000)
     }
 
     unmounted(): void
     {
         window.removeEventListener('resize', this.calculateBookmarkCss)
-        clearInterval(this.bookmarkUpdateIntervalId)
+        window.clearInterval(this.bookmarkUpdateIntervalId)
     }
 
     calculateBookmarkCss(): void
