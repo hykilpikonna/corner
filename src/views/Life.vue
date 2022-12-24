@@ -1,5 +1,5 @@
 <template>
-    <div id="Life">
+    <TgBlog postsUrl="https://profile-api.hydev.org/exports/hykilp/posts.json">
         <div id="header">
             <p>欢迎！</p>
             <p>
@@ -9,8 +9,7 @@
                 这里是我记录生活的地方，没有固定格式内容，更新也会比较频繁。
             </p>
         </div>
-        <TgBlog postsUrl="https://profile-api.hydev.org/exports/hykilp/posts.json"></TgBlog>
-    </div>
+    </TgBlog>
 </template>
 
 <script lang="ts">
@@ -29,18 +28,10 @@ export default class Blog extends Vue
 <style lang="sass" scoped>
 @import "src/css/colors"
 
-#Life
-    margin: 20px auto
-    //font-size: 0.92em
-    width: min(450px, 80vw)
-
-    #header
-        color: $color-text-light
-        margin-bottom: 30px
-
-// Phone layout
-@media screen and (max-width: 570px)
-    #Life
-        margin: 20px 20px 0
-        width: unset
+#header
+    margin-top: 50px
+    color: $color-text-light
+    text-align: left
+    font-size: 0.9em
+    margin-bottom: 30px
 </style>
