@@ -1348,10 +1348,10 @@ supports-preserve-symlinks-flag@^1.0.0:
   resolved "https://registry.yarnpkg.com/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz#6eda4bd344a3c94aea376d4cc31bc77311039e09"
   integrity sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==
 
-tg-blog@^1.0.7:
-  version "1.0.7"
-  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.7.tgz#ed0c3a1ba2247d70a84313ff1c2de1c07e24f93a"
-  integrity sha512-Fi2icI2eprFwBK06vi69l9msaGEaoqidNZ+ThLUsXJnAunPk/7xWT/NWCqBMfPiXSFR4uLFRMRPVJDm1eQLYUg==
+tg-blog@^1.0.8:
+  version "1.0.8"
+  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.0.8.tgz#38471185d74bea63abff68877d0d7a7faea63eae"
+  integrity sha512-/gTLRLnJALu9b2PiyPJADndnpoISqyI4OWiLaJrltv5oWHAtltcSLiPyCWEKh1UQgphMbKQZJ076jrUXet/c4Q==
   dependencies:
     "@vue-leaflet/vue-leaflet" "^0.7.0"
     element-plus "^2.2.26"
