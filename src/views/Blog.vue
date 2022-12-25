@@ -1,7 +1,11 @@
 <template>
-    <div id="Blog" v-if="meta">
+    <div id="Blog" class="general-page" v-if="meta">
+        <div class="title">
+            <h2>记事本</h2>
+            <div class="subtitle">一些值得留下来的文字</div>
+        </div>
         <div id="breadcrumb">
-            <span class="clickable" @click="() => $router.push({query: {}})">Blog</span>
+            <span class="clickable" @click="() => $router.push({query: {}})">索引</span>
             <span v-if="tag">🏷️{{tag}}</span>
             <span v-if="category">📂{{category}}</span>
             <span class="no-after" v-if="post && activePost">{{activePost.title}}</span>
@@ -68,30 +72,14 @@ export default class Blog extends Vue
 
 <style lang="sass" scoped>
 @import "src/css/colors"
+@import "src/css/responsive"
 
-$width: 600px
+#breadcrumb
+    color: $color-text-light
+    margin-bottom: 20px
 
-#Blog
-    width: $width
-    margin: 50px auto 20px
-
-    #breadcrumb
-        color: $color-text-light
-        margin-bottom: 20px
-        text-align: left
-
-        span:not(.no-after):after
-            content: ">"
-            margin: 0 10px
-
-
-// Phone layout
-@media screen and (max-width: $width + 40px)
-    #Blog
-        margin: 20px 10px
-        width: unset
-
-        #breadcrumb
-            margin-left: 50px
+    span:not(.no-after):after
+        content: ">"
+        margin: 0 10px
 
 </style>
