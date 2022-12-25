@@ -13,9 +13,7 @@
           <div class="name">{{ f.name }}</div>
           <div class="space"></div>
           <div class="links">
-            <a v-if="f.twitter" :href="`https://twitter.com/${f.twitter}`"><i class="fab fa-twitter"></i></a>
-            <a v-if="f.github" :href="`https://github.com/${f.github}`"><i class="fab fa-github"></i></a>
-            <a v-if="f.blog" :href="f.blog"><i class="fas fa-book"></i></a>
+            <a v-for="l in getFriendLinks(f)" :href="l.link"><i :class="l.icon"></i></a>
           </div>
         </div>
       </div>
@@ -25,7 +23,7 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {hosts} from "@/scripts/constants";
+import {fab, hosts} from "@/scripts/constants";
 
 export interface Friend {
   name: string
@@ -33,10 +31,11 @@ export interface Friend {
   banner: string
 
   desc?: string
+}
 
-  twitter?: string
-  github?: string
-  blog?: string
+const excludes = new Set(["name", "avatar", "banner", "desc"])
+const icons = {
+  blog: 'fas fa-book'
 }
 
 @Options({components: {}})
@@ -59,6 +58,15 @@ export default class Friends extends Vue
   {
     if (f.banner) return {'background-image': `url("${f.banner}")`}
     else return {}
+  }
+
+  getFriendLinks(f: Friend): { link: string, icon: string }[]
+  {
+    return Object.entries(f).filter(pair => !excludes.has(pair[0].toString()))
+        .map(pair => {
+          return { link: pair[1], icon: fab.includes(pair[0]) ? `fab fa-${pair[0]}` :
+                pair[0] in icons ? icons[pair[0]] : pair[0] }
+        })
   }
 }
 </script>
