@@ -10,8 +10,6 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {Prop, Ref} from "vue-property-decorator";
-import {pushQuery} from "@/scripts/router";
-import {staticMeta} from '@/views/Blog.vue'
 
 @Options({components: {}})
 export default class Tag extends Vue
