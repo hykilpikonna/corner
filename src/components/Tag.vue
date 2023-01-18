@@ -1,24 +1,17 @@
 <template>
     <div class="tag-wrap unselectable clickable">
         <div class="tag fbox-vcenter" :class="direction">
-            <div ref="el"><slot></slot></div>
+            <div><slot></slot></div>
             <div class="after"></div>
         </div>
     </div>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-import {Prop, Ref} from "vue-property-decorator";
-
-@Options({components: {}})
-export default class Tag extends Vue
-{
-    @Prop({default: 'left'}) direction: 'left' | 'right' = 'left'
-    @Prop() tagName?: string
-
-    @Ref() readonly el!: HTMLDivElement
-}
+<script setup lang="ts">
+const props = defineProps({
+    direction: { type: String, default: 'left' }, // 'left' | 'right'
+    tagName: String
+})
 </script>
 
 <style lang="sass" scoped>
