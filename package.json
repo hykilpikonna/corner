@@ -24,10 +24,10 @@
         "vue3-colorpicker": "2.1.2"
     },
     "devDependencies": {
-        "@types/jquery": "^3.5.11",
+        "@types/jquery": "^3.5.16",
         "@types/jqueryui": "^1.12.16",
         "@types/marked": "^4.0.7",
-        "@types/node": "^18.11.17",
+        "@types/node": "^18.11.18",
         "@types/three": "^0.148.0",
         "@typescript-eslint/eslint-plugin": "^5.48.2",
         "@typescript-eslint/parser": "^5.48.2",
@@ -37,6 +37,6 @@
         "vite": "^3.0.7",
         "vue-class-component": "^8.0.0-rc.1",
         "vue-property-decorator": "^10.0.0-rc.3",
-        "vue-tsc": "^0.40.1"
+        "vue-tsc": "^1.0.24"
     }
 }
