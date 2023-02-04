@@ -127,6 +127,8 @@ $card-min-width: 335px
   .avatar
     margin-top: calc(#{$top} - #{$img} / 2 - 20px)
     width: $img
+    height: $img
+    object-fit: contain
     border-radius: 100%
     margin-right: 20px
     z-index: 10
