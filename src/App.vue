@@ -118,7 +118,7 @@ export default class App extends Vue
     font-size: 1.4em
     align-items: flex-start
 
-    z-index: 2
+    z-index: 100
     pointer-events: none
 
     #menu
