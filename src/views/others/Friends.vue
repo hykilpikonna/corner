@@ -9,12 +9,11 @@
     </div>
 
     <div class="friends" v-if="friends">
-      <div class="friend card clickable" v-for="f in friends" :key="f.name">
+      <div class="friend card" v-for="f in friends" :key="f.name">
         <div class="banner" :style="bgStyle(f)"></div>
         <img class="avatar" :src="f.avatar" alt="">
         <div class="info">
-          <div class="name">{{ f.name }}</div>
-          <div class="space"></div>
+          <div class="name unselectable">{{ f.name }}</div>
           <div class="links">
             <a v-for="l in getFriendLinks(f)" :href="l.link"><i :class="l.icon"></i></a>
           </div>
@@ -80,11 +79,12 @@ export default class Friends extends Vue
 @import "src/css/colors"
 @import "src/css/responsive"
 
-$card-min-width: 335px
+$card-min-width: 320px
 
 //.friends
 //  display: grid
 //  grid-template-columns: repeat(auto-fit, minmax($card-min-width, 1fr))
+//  gap: 20px
 
 .friend
   display: flex
@@ -121,12 +121,14 @@ $card-min-width: 335px
 
     .name
       font-size: 1.2em
-
-    .space
-      flex-grow: 1
+      white-space: nowrap
+      overflow: hidden
+      flex: 1
 
     a
       color: $color-text-main
+
+    a + a
       margin-left: 10px
 
   .avatar
