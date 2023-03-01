@@ -2,7 +2,10 @@
   <div id="Friends" class="general-page">
     <div class="title">
       <h2>朋友们</h2>
-      <div class="subtitle">是小桂桂的朋友们（欢迎补充</div>
+      <div class="subtitle">
+        是小桂桂的朋友们（欢迎补充<br>
+        每次刷新都会打乱顺序！
+      </div>
     </div>
 
     <div class="friends" v-if="friends">
@@ -24,6 +27,7 @@
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
 import {fab, hosts} from "@/scripts/constants";
+import {shuffle} from "@/scripts/utils";
 
 export interface Friend {
   name: string
@@ -52,6 +56,7 @@ export default class Friends extends Vue
       if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
       if (f.banner && !f.banner.startsWith('http')) f.banner = `${hosts.content}/${f.banner}`
     })
+    this.friends = shuffle(this.friends)
   }
 
   bgStyle(f: Friend)
