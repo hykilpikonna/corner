@@ -91,7 +91,7 @@ $card-min-width: 320px
   position: relative
   min-width: $card-min-width
 
-  $top: 100px
+  $top: calc(100px + max(min(100vw, 600px), $card-min-width + 20px * 2) * 0.1 - $card-min-width * 0.1)
   $img: 80px
 
   .banner
