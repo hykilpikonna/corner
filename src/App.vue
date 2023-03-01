@@ -121,8 +121,6 @@ export default class App extends Vue
     z-index: 2
     pointer-events: none
 
-    font-family: "Microsoft YaHei UI", $font
-
     #menu
         padding: 5px 10px
         margin: 15px 10px
