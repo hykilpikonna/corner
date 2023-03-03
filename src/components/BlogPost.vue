@@ -3,12 +3,12 @@
         <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
 
         <div id="titles" class="unselectable clickable" @click="clickTitle">
-            <div id="date">{{date.format('YYYY-MM-DD')}}</div>
-            <div id="title">{{meta.title}}</div>
-            <div id="subtitle" v-if="meta.subtitle">{{meta.subtitle}}</div>
+            <div id="date">{{ date.format('YYYY-MM-DD') }}</div>
+            <div id="title">{{ meta.title }}</div>
+            <div id="subtitle" v-if="meta.subtitle">{{ meta.subtitle }}</div>
             <div class="tags">
                 <div v-if="tagOnTop" style="display: inline-block">
-                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{t}}</Tag>
+                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{ t }}</Tag>
                 </div>
                 <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
             </div>
@@ -20,111 +20,95 @@
                 <Dynamic :template="content"></Dynamic>
             </div>
             <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{t}}</Tag>
+                <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
             </div>
         </div>
     </div>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-import {Prop, Watch} from "vue-property-decorator";
+<script lang="ts" setup>
+import Tag from "@/components/Tag.vue";
+import {BlogPost} from "@/scripts/models";
+import {pushQuery} from "@/scripts/router";
 import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";
-import Tag from "@/components/Tag.vue";
-import moment from "moment";
-import {pushQuery} from "@/scripts/router";
+import moment from "moment/moment";
+import {computed, onMounted, watch} from 'vue';
 
-export interface BlogPost
+const p = withDefaults(defineProps<{
+    meta: BlogPost
+    imageOnTop?: boolean
+    tagOnTop?: boolean
+    active?: boolean
+}>(), {
+    imageOnTop: false,
+    tagOnTop: true,
+    active: false
+})
+
+const uid = (Math.random() + 1).toString(36).substring(7)
+
+let isActiveChangeDueToClickTitle = false
+
+function clickTitle(): void
 {
-    id: number
-    title: string
-    tags: string[]
-    file: string
-    date: string
-    url_name: string
+    console.log(`Blog Post: ClickTitle called on`, p.meta.title)
+    isActiveChangeDueToClickTitle = true
 
-    content: string
-
-    subtitle?: string
-    title_image?: string
-    category?: string
-    pinned?: number
+    // Change url
+    if (!p.active) pushQuery({post: p.meta.url_name})
+    else pushQuery({post: null})
 }
 
-@Options({components: {Tag}})
-export default class BlogPostPreview extends Vue
+onMounted(() => {
+    updateTitle()
+
+    // Create accordion
+    $(`.${uid}`).accordion({
+        collapsible: true, header: '#titles', heightStyle: 'content',
+        active: p.active ? 0 : false
+    })
+})
+
+/**
+ * Watch active status change, use this to change accordions' activation on history back/forward
+ *
+ * Also use this to change the title
+ */
+watch(() => p.active, (active, _) => {
+    updateTitle()
+
+    // Ignore active status changes due to clicking the title
+    console.log('Blog Post: onActiveChange Called on', p.meta.title)
+    if (isActiveChangeDueToClickTitle)
+    {
+        isActiveChangeDueToClickTitle = false
+        return
+    }
+
+    // Change accordion activation status
+    $(`.${uid}`).accordion('option', {active: active ? 0 : false});
+})
+
+function updateTitle(): void
 {
-    @Prop({required: true}) meta!: BlogPost
-    @Prop({default: false}) imageOnTop = false
-    @Prop({default: true}) tagOnTop = true
-    @Prop({default: false}) active = false
-
-    readonly uid = (Math.random() + 1).toString(36).substring(7)
-
-    isActiveChangeDueToClickTitle = false
-
-    clickTitle(): void
-    {
-        console.log(`Blog Post: ClickTitle called on`, this.meta.title)
-        this.isActiveChangeDueToClickTitle = true
-
-        // Change url
-        if (!this.active) pushQuery({post: this.meta.url_name})
-        else pushQuery({post: null})
-    }
-
-    mounted(): void
-    {
-        this.updateTitle()
-
-        // Create accordion
-        $(`.${this.uid}`).accordion({collapsible: true, header: '#titles', heightStyle: 'content',
-            active: this.active ? 0 : false})
-    }
-
-    /**
-     * Watch active status change, use this to change accordions' activation on history back/forward
-     *
-     * Also use this to change the title
-     */
-    @Watch('active')
-    onActiveChange(): void
-    {
-        this.updateTitle()
-
-        // Ignore active status changes due to clicking the title
-        console.log('Blog Post: onActiveChange Called on', this.meta.title)
-        if (this.isActiveChangeDueToClickTitle)
-        {
-            this.isActiveChangeDueToClickTitle = false
-            return
-        }
-
-        // Change accordion activation status
-        $(`.${this.uid}`).accordion('option', {active: this.active ? 0 : false});
-    }
-
-    updateTitle(): void
-    {
-        if (this.active) document.title = `Blog: ${this.meta.title}`
-    }
-
-    /**
-     * Element classes
-     */
-    get elClass(): string[]
-    {
-        let classes = [this.uid]
-        if (this.imageOnTop) classes.push('image-top')
-        if (this.tagOnTop) classes.push('tag-top')
-        return classes
-    }
-
-    get content(): string { return marked(this.meta.content.replaceAll('\n', '  \n')) }
-    get date(): moment.Moment { return moment(this.meta.date) }
-    get image(): string | null { return this.meta.title_image ? hosts.content + '/' + this.meta.title_image : null }
+    if (p.active) document.title = `Blog: ${p.meta.title}`
 }
+
+/**
+ * Element classes
+ */
+const elClass = computed(() =>
+{
+    let classes = [uid]
+    if (p.imageOnTop) classes.push('image-top')
+    if (p.tagOnTop) classes.push('tag-top')
+    return classes
+})
+
+const content = computed(() => marked(p.meta.content.replaceAll('\n', '  \n')))
+const date = moment(p.meta.date)
+const image = p.meta.title_image ? hosts.content + '/' + p.meta.title_image : null
 </script>
 
 <style lang="sass" scoped>
