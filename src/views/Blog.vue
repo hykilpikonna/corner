@@ -17,19 +17,11 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import BlogPostPreview, {BlogPost} from "@/components/BlogPost.vue";
+import BlogPostPreview from "@/components/BlogPost.vue";
 import {hosts} from "@/scripts/constants";
 import {Prop} from "vue-property-decorator";
 import Loading from "@/components/Loading.vue";
-
-export interface BlogMeta
-{
-    // tags[i] = [Tag Name, Number of Blog Posts]
-    tags: [string, number][]
-    // categories[i] = [Category Name, Number of Posts]
-    categories: [string, number][]
-    posts: BlogPost[]
-}
+import {BlogMeta, BlogPost} from "@/scripts/models";
 
 export let staticMeta: BlogMeta = {tags: [], categories: [], posts: []}
 
