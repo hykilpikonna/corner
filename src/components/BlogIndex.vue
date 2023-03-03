@@ -11,10 +11,11 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {BlogMeta, staticMeta} from '@/views/Blog.vue'
+import {staticMeta} from '@/views/Blog.vue'
 import Tag from "@/components/Tag.vue";
 import {Prop} from "vue-property-decorator";
 import {pushQuery} from "@/scripts/router";
+import {BlogMeta} from "@/scripts/models";
 
 @Options({components: {Tag}})
 export default class BlogIndexLinks extends Vue
