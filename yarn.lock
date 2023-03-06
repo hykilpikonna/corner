@@ -18,9 +18,9 @@
   integrity sha512-/Z3l6pXthq0JvMYdUFyX9j0MaCltlIn6mfh9jLyQwg5aPKxkyNa0PTHtU1AlFXLNk55ZuAeJRcpvq+tmLfKmaQ==
 
 "@element-plus/icons-vue@^2.0.6":
-  version "2.0.10"
-  resolved "https://registry.yarnpkg.com/@element-plus/icons-vue/-/icons-vue-2.0.10.tgz#60808d613c3dbdad025577022be8a972739ade21"
-  integrity sha512-ygEZ1mwPjcPo/OulhzLE7mtDrQBWI8vZzEWSNB2W/RNCRjoQGwbaK4N8lV4rid7Ts4qvySU3njMN7YCiSlSaTQ==
+  version "2.1.0"
+  resolved "https://registry.yarnpkg.com/@element-plus/icons-vue/-/icons-vue-2.1.0.tgz#7ad90d08a8c0d5fd3af31c4f73264ca89614397a"
+  integrity sha512-PSBn3elNoanENc1vnCfh+3WA9fimRC7n+fWkf3rE5jvv+aBohNHABC/KAR5KWPecxWxDTVT1ERpRbOMRcOV/vA==
 
 "@esbuild/android-arm64@0.16.17":
   version "0.16.17"
@@ -1567,9 +1567,9 @@ text-table@^0.2.0:
   integrity sha512-N+8UisAXDGk8PFXP4HAzVR9nbfmVJ3zYLAWiTIoqC5v5isinhr+r5uaO8+7r3BMfuNIufIsA7RdpVgacC2cSpw==
 
 tg-blog@^1.1.0:
-  version "1.1.2"
-  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.1.2.tgz#f6d8d1472b8606750c0bb6871d55f10c615ef463"
-  integrity sha512-pfsYEicPWhVg/6yrz/IWmnk11LawoIlE2++KFsmreBBeIKSA7AIn/D2iESk0/f6Q47E4s8td6DRI6nlOEXFyyg==
+  version "1.1.3"
+  resolved "https://registry.yarnpkg.com/tg-blog/-/tg-blog-1.1.3.tgz#84daac64ecf7ea2b6cabfea60c8ed75a1dee1a01"
+  integrity sha512-UvfK/LzIPXbDJzBe4m+q2GX7gOCHVBPxQfAJOV019Cjg4rWbOr7OA7vN3++qwXhzk0S9m/sytCOMJI52J4suiw==
   dependencies:
     "@vue-leaflet/vue-leaflet" "0.8.4"
     element-plus "^2.2.26"
