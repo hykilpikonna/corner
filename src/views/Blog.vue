@@ -10,7 +10,7 @@
             <span v-if="category">📂{{category}}</span>
             <span class="no-after" v-if="post && activePost">{{activePost.title}}</span>
         </div>
-        <BlogPostPreview v-for="m of filteredPosts" :key="m" :meta="m" :active="m === activePost"/>
+        <BlogPostPreview v-for="m of filteredPosts" :key="m.id" :meta="m" :active="m === activePost"/>
     </div>
     <Loading v-else></Loading>
 </template>
