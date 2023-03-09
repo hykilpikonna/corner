@@ -6,14 +6,20 @@ set -e
 # Build
 yarn run build
 
-# Navigate into the build output directory
-cd dist
+DEPL="/etc/nginx/hres/aza.moe"
 
-# Deploying to a custom domain
-echo 'profile.hydev.org' > CNAME
+# Update static files (since mv is way faster than cp, we use a tmp folder)
+if [ -d "$DEPL.tmp1" ]; then
+  sudo rm -rf "$DEPL.tmp1"
+fi
+cp -r dist "$DEPL.tmp1"
+if [ -d "$DEPL" ]; then
+  sudo mv "$DEPL" "$DEPL.del"
+fi
+sudo mv "$DEPL.tmp1" "$DEPL"
+if [ -d "$DEPL.del" ]; then
+  sudo rm -rf "$DEPL.del"
+fi
 
-git init
-git add -A
-git commit -m 'deploy'
-git push -f git@github.com:hykilpikonna/home-page.git master:gh-pages
-cd -
+# Reload nginx
+sudo nginx -t && sudo systemctl restart nginx
