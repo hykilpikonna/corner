@@ -51,12 +51,6 @@ const routes: Array<RouteRecordRaw> = [
         meta: {title: '我做的', navBookmark: 'Others'},
         component: () => import('../views/others/Projects.vue')
     },
-    {
-        path: '/color',
-        name: 'ColorPicker',
-        meta: {title: 'Color Picker'},
-        component: () => import('../components/color/ColorPickerTest.vue')
-    },
 ]
 
 export const router = createRouter({
