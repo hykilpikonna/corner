@@ -27,4 +27,9 @@ if [ -d "$DEPL.del" ]; then
 fi
 
 # Reload nginx
-sudo nginx -t && sudo systemctl reload nginx
+if sudo nginx -t; then
+  echo "Reloading nginx..."
+  sudo systemctl reload nginx
+else
+  echo "[!!!] Nginx config is invalid, not reloading."
+fi
