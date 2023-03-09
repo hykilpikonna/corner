@@ -14,17 +14,9 @@
     </TgBlog>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+<script lang="ts" setup>
 import { TgBlog } from "tg-blog";
 import 'tg-blog/dist/style.css'
-
-@Options({components: {
-    TgBlog
-}})
-export default class Blog extends Vue
-{
-}
 </script>
 
 <style lang="sass" scoped>

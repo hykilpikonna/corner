@@ -5,14 +5,6 @@
     </div>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-@Options({components: {}})
-export default class Loading extends Vue
-{
-}
-</script>
-
 <style lang="sass" scoped>
 #Loading
     width: 100%
@@ -21,8 +13,7 @@ export default class Loading extends Vue
     flex-direction: column
     align-items: center
     justify-content: center
-    //background: white
-    //opacity: 0.6
+
     img
         width: 150px
     .text
