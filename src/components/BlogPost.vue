@@ -106,7 +106,7 @@ const elClass = computed(() =>
     return classes
 })
 
-const content = computed(() => marked(p.meta.content.replaceAll('\n', '  \n')))
+const content = marked(p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content))
 const date = moment(p.meta.date)
 const image = p.meta.title_image ? hosts.content + '/' + p.meta.title_image : null
 </script>
