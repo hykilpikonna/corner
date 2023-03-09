@@ -9,12 +9,6 @@ const routes: Array<RouteRecordRaw> = [
         component: Home
     },
     {
-        path: '/new-home',
-        name: 'New Home',
-        meta: {title: 'Home'},
-        component: () => import('../views/NewHome.vue')
-    },
-    {
         path: '/about',
         name: 'About',
         meta: {title: '关于', nav: true},
