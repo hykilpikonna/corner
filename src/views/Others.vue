@@ -13,16 +13,6 @@
     </div>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-
-@Options({})
-export default class Others extends Vue
-{
-
-}
-</script>
-
 <style lang="sass" scoped>
 @import "src/css/global"
 @import "src/css/colors"

@@ -15,51 +15,45 @@
     <Loading v-else></Loading>
 </template>
 
-<script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+<script setup lang="ts">
 import BlogPostPreview from "@/components/BlogPost.vue";
-import {hosts} from "@/scripts/constants";
-import {Prop} from "vue-property-decorator";
 import Loading from "@/components/Loading.vue";
-import {BlogMeta, BlogPost} from "@/scripts/models";
+import {BlogMeta} from "@/scripts/models";
+import {Ref, ref, computed, onMounted} from "vue";
+import {hosts} from "@/scripts/constants";
+import {globals} from "@/scripts/global";
 
-export let staticMeta: BlogMeta = {tags: [], categories: [], posts: []}
+const p = defineProps<{
+    post?: string,
+    category?: string,
+    tag?: string
+}>()
 
-@Options({components: {Loading, BlogPostPreview}})
-export default class Blog extends Vue
-{
-    @Prop() post?: string
-    @Prop() category?: string
-    @Prop() tag?: string
+let meta: Ref<BlogMeta> = ref({tags: [], categories: [], posts: []})
 
-    meta: BlogMeta = {tags: [], categories: [], posts: []}
+onMounted(() => {
+    fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
+        meta.value = it
+        globals.staticMeta = it
+    })
+})
 
-    mounted(): void
-    {
-        fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
-            this.meta = it
-            staticMeta = it
-        })
-    }
+const filteredPosts = computed(() => {
+    const posts = meta.value.posts.filter(it => it.pinned || (p.tag ? it.tags.includes(p.tag) :
+        p.category ? it.category == p.category : true))
 
-    get activePost(): BlogPost | null
-    {
-        const p = this.filteredPosts
-        if (p.length == 0) return null
-        return this.post ? p.filter(it => it.url_name == this.post)[0] : p[0].pinned ? p[0] : null
-    }
+    // Put pinned posts on top
+    posts.sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0))
 
-    get filteredPosts(): BlogPost[]
-    {
-        const posts = this.meta.posts.filter(it => it.pinned || (this.tag ? it.tags.includes(this.tag) :
-            this.category ? it.category == this.category : true))
+    return posts
+})
 
-        // Put pinned posts on top
-        posts.sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0))
-
-        return posts
-    }
-}
+const activePost = computed(() => {
+    const posts = filteredPosts.value
+    if (posts.length == 0) return null
+    if (!p.post) return null
+    return p.post ? posts.filter(it => it.url_name == p.post)[0] : posts[0].pinned ? posts[0] : null
+})
 </script>
 
 <style lang="sass" scoped>

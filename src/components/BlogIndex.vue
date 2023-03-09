@@ -11,18 +11,18 @@
 
 <script lang="ts">
 import {Options, Vue} from 'vue-class-component';
-import {staticMeta} from '@/views/Blog.vue'
 import Tag from "@/components/Tag.vue";
 import {Prop} from "vue-property-decorator";
 import {pushQuery} from "@/scripts/router";
 import {BlogMeta} from "@/scripts/models";
+import {globals} from "@/scripts/global";
 
 @Options({components: {Tag}})
 export default class BlogIndexLinks extends Vue
 {
     @Prop({default: 'tags'}) mode: 'tags' | 'categories' = 'tags'
 
-    meta: BlogMeta = staticMeta
+    meta: BlogMeta = globals.staticMeta
 
     clickCat(e: MouseEvent, cat: [string, number]): void
     {
