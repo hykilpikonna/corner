@@ -1,4 +1,4 @@
-import {Vue} from "vue-class-component";
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 
 /**
  * Same as python's range
