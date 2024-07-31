@@ -24,7 +24,7 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 
 export enum Flavor
 {
@@ -141,7 +141,7 @@ export const menu: MenuCategory[] = [
   },
 ]
 
-@Options({components: {}})
+@Component
 export default class Menu extends Vue
 {
   max_cols = 2
@@ -191,6 +191,8 @@ export default class Menu extends Vue
     white-space: nowrap
 
 .category
+  margin-bottom: 1em
+
   .cat
     font-size: 1.2em
     font-weight: bold
@@ -199,8 +201,6 @@ export default class Menu extends Vue
     font-size: 0.8em
     margin-bottom: 0.5em
     color: $color-text-light
-
-  margin-bottom: 1em
 
 .items
   .sub

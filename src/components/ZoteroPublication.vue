@@ -24,8 +24,7 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-import {Prop} from "vue-property-decorator";
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
@@ -33,7 +32,7 @@ import linkifyUrls from "linkify-urls";
 import {$} from '@/scripts/constants';
 import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
-@Options({components: {MetaTable}})
+@Component({components: {MetaTable}})
 export default class ZoteroPublicationView extends Vue
 {
     @Prop({required: true}) item!: ZoteroItem
@@ -77,6 +76,7 @@ export default class ZoteroPublicationView extends Vue
 
     #details
         padding-left: calc(1.6em + 6px)
+        font-size: 0.8em
 
         > div
             margin-bottom: 1em
@@ -86,8 +86,6 @@ export default class ZoteroPublicationView extends Vue
 
         .label
             font-weight: bold
-
-        font-size: 0.8em
 
 .header
     align-items: center

@@ -24,7 +24,7 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 import {fab, hosts} from "@/scripts/constants";
 import {shuffle} from "@/scripts/utils";
 
@@ -41,7 +41,7 @@ const icons = {
   blog: 'fas fa-book'
 }
 
-@Options({components: {}})
+@Component
 export default class Friends extends Vue
 {
   friends: Friend[] = []
