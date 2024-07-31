@@ -8,14 +8,13 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
-import {Prop} from "vue-property-decorator";
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 import {$} from '@/scripts/constants';
 
-@Options({components: {}})
+@Component
 export default class Collapse extends Vue
 {
-    @Prop() title!: string
+    @Prop title!: string
     @Prop({default: false}) active = false
 
     show = false

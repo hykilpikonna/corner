@@ -10,14 +10,13 @@
 </template>
 
 <script lang="ts">
-import {Options, Vue} from 'vue-class-component';
+import { Component, Vue, Prop } from 'vue-facing-decorator'
 import Tag from "@/components/Tag.vue";
-import {Prop} from "vue-property-decorator";
 import {pushQuery} from "@/scripts/router";
 import {BlogMeta} from "@/scripts/models";
 import {globals} from "@/scripts/global";
 
-@Options({components: {Tag}})
+@Component({components: {Tag}})
 export default class BlogIndexLinks extends Vue
 {
     @Prop({default: 'tags'}) mode: 'tags' | 'categories' = 'tags'
