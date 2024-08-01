@@ -22,6 +22,9 @@ import {BlogMeta} from "@/scripts/models";
 import {Ref, ref, computed, onMounted} from "vue";
 import {hosts} from "@/scripts/constants";
 import {globals} from "@/scripts/global";
+import {Router} from "vue-router";
+
+let $router: Router
 
 const p = defineProps<{
     post?: string,

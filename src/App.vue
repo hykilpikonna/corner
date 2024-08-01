@@ -28,9 +28,11 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { ComponentPublicInstance } from 'vue';
+import { Component, Vue } from 'vue-facing-decorator'
 import router from "@/scripts/router";
-import {RouteLocationNormalized} from "vue-router";
+import { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router } from "vue-router";
+import { TranslateResult } from "vue-i18n";
 
 @Component
 export default class App extends Vue
@@ -42,6 +44,10 @@ export default class App extends Vue
     lastTop = 0
 
     menuOpen = false
+
+    declare $t: (arg: string) => TranslateResult
+    declare $route: RouteLocationNormalizedLoaded
+    declare $router: Router
 
     showMenu(): void
     {
@@ -90,7 +96,7 @@ export default class App extends Vue
     calculateBookmarkCss(): void
     {
         if (this.currentRoute in this.$refs)
-            this.currentLink = (this.$refs[this.currentRoute] as Vue).$el
+            this.currentLink = (this.$refs[this.currentRoute] as ComponentPublicInstance).$el
         else return
 
         // https://developer.mozilla.org/zh-CN/docs/Web/API/Element/getBoundingClientRect
