@@ -1,6 +1,6 @@
 <template>
     <div id="BlogPostPreview" class="card" :class="elClass">
-        <img class="title-image" :src="image" v-if="image && imageOnTop" alt="Title Image">
+        <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && imageOnTop" alt="Title Image">
 
         <div id="titles" class="unselectable clickable" @click="clickTitle">
             <div id="date">{{ date.format('YYYY-MM-DD') }}</div>
@@ -15,7 +15,7 @@
         </div>
 
         <div id="content">
-            <img class="title-image" :src="image" v-if="image && !imageOnTop" alt="Title Image">
+            <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && !imageOnTop" alt="Title Image">
             <div id="text" class="markdown-content">
                 <Dynamic :template="content"></Dynamic>
             </div>
@@ -108,7 +108,6 @@ const elClass = computed(() =>
 
 const content = marked(p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content))
 const date = moment(p.meta.date)
-const image = p.meta.title_image ? hosts.content + '/' + p.meta.title_image : null
 </script>
 
 <style lang="sass" scoped>
