@@ -13,18 +13,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2.1.5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
 
       - name: Cache node modules
         uses: actions/cache@v2
         with:
-          path: ~/node_modules
-          key: cache-${{ hashFiles('**/package-lock.json') }}
+          node-version: 20
+          cache: 'yarn'
 
       - name: Install and build
         run: |
-          yarn install
           # pass --base if CNAME is not used
           # npm run build -- --base=/${{ github.event.repository.name }}/
           yarn build
@@ -33,13 +32,13 @@ jobs:
           cd dist
           ln -s index.html 404.html
       - name: Deploy to github pages
-        uses: JamesIves/github-pages-deploy-action@4.1.0
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
           folder: dist
 
       - name: Publish deployed code 
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: published
           path: dist
