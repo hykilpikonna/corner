@@ -21,6 +21,7 @@ jobs:
 
       - name: Install and build
         run: |
+          yarn install
           # pass --base if CNAME is not used
           # npm run build -- --base=/${{ github.event.repository.name }}/
           yarn build
