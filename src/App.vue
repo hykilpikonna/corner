@@ -64,7 +64,7 @@ export default class App extends Vue
         // see: https://github.com/vuejs/vue-router/issues/914#issuecomment-384477609
         this.$nextTick(() => {
             if (to.name == 'Blog' && Object.keys(to.query).length != 0) return
-            document.title = to.meta.title ? `Hykilpikonna - ${to.meta.title}` : 'Hykilpikonna - Home';
+            document.title = to.meta.title ? `Aza - ${to.meta.title}` : 'Aza - Home';
         })
 
         console.log('AfterEach called', to)
