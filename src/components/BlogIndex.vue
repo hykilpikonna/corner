@@ -10,14 +10,14 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 import Tag from "@/components/Tag.vue";
 import {pushQuery} from "@/scripts/router";
 import {BlogMeta} from "@/scripts/models";
 import {globals} from "@/scripts/global";
 
 @Component({components: {Tag}})
-export default class BlogIndexLinks extends Vue
+class BlogIndexLinks extends Vue
 {
     @Prop({default: 'tags'}) mode: 'tags' | 'categories' = 'tags'
 
@@ -36,6 +36,8 @@ export default class BlogIndexLinks extends Vue
         pushQuery({tag: tag[0], category: null})
     }
 }
+
+export default toNative(BlogIndexLinks)
 </script>
 
 <style lang="sass" scoped>

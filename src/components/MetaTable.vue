@@ -8,10 +8,10 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 
 @Component
-export default class MetaTable extends Vue
+class MetaTable extends Vue
 {
     @Prop({required: true}) table!: {[id: string]: unknown}
 
@@ -32,6 +32,8 @@ export default class MetaTable extends Vue
         return t
     }
 }
+
+export default toNative(MetaTable)
 </script>
 
 <style lang="sass" scoped>

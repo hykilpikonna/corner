@@ -24,14 +24,7 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
-
-export enum Flavor
-{
-  light,
-  normal,
-  salty
-}
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 
 export interface MenuItem
 {
@@ -142,7 +135,7 @@ export const menu: MenuCategory[] = [
 ]
 
 @Component
-export default class Menu extends Vue
+class Menu extends Vue
 {
   max_cols = 2
   cols: MenuCategory[][] = new Array(this.max_cols)
@@ -173,6 +166,8 @@ export default class Menu extends Vue
     this.cols.forEach(col => col.forEach(cat => cat.items.forEach(it => it.id = id++)))
   }
 }
+
+export default toNative(Menu)
 </script>
 
 <style lang="sass" scoped>

@@ -24,7 +24,7 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
@@ -33,7 +33,7 @@ import {$} from '@/scripts/constants';
 import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
 @Component({components: {MetaTable}})
-export default class ZoteroPublicationView extends Vue
+class ZoteroPublicationView extends Vue
 {
     @Prop({required: true}) item!: ZoteroItem
 
@@ -60,6 +60,8 @@ export default class ZoteroPublicationView extends Vue
             heightStyle: "content"})
     }
 }
+
+export default toNative(ZoteroPublicationView)
 </script>
 
 <style lang="sass" scoped>

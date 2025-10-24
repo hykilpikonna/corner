@@ -29,13 +29,13 @@
 
 <script lang="ts">
 import { ComponentPublicInstance } from 'vue';
-import { Component, Vue } from 'vue-facing-decorator'
+import { Component, Vue, toNative } from 'vue-facing-decorator'
 import router from "@/scripts/router";
 import { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router } from "vue-router";
 import { TranslateResult } from "vue-i18n";
 
 @Component
-export default class App extends Vue
+class App extends Vue
 {
     currentRoute = ''
     currentLink: Element = null as never as Element
@@ -111,6 +111,8 @@ export default class App extends Vue
             `border-width: ${width}px 20px ${width}px 50px;`
     }
 }
+
+export default toNative(App)
 </script>
 
 <style lang="sass">
