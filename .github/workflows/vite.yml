@@ -18,7 +18,7 @@ jobs:
       - name: Install and build
         run: |
           bun install
-          bun build
+          bun run build
           
           # Enable Vue Router history mode with 404.html hack for Github Pages
           cd dist
