@@ -13,18 +13,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'yarn'
-
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
       - name: Install and build
         run: |
-          yarn install
-          # pass --base if CNAME is not used
-          # npm run build -- --base=/${{ github.event.repository.name }}/
-          yarn build
+          bun install
+          bun build
           
           # Enable Vue Router history mode with 404.html hack for Github Pages
           cd dist
@@ -34,9 +28,3 @@ jobs:
         with:
           branch: gh-pages
           folder: dist
-
-      - name: Publish deployed code 
-        uses: actions/upload-artifact@v4
-        with:
-          name: published
-          path: dist
