@@ -39,7 +39,7 @@ export default class BlogIndexLinks extends Vue
 </script>
 
 <style lang="sass" scoped>
-@import 'src/css/colors'
+@use '../css/colors'
 
 .index
     *
@@ -55,7 +55,7 @@ export default class BlogIndexLinks extends Vue
 
 .index-categories
     font-size: 0.8em
-    color: $color-text-special
+    color: colors.$color-text-special
 
     *
         text-decoration: underline

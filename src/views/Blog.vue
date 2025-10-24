@@ -60,11 +60,11 @@ const activePost = computed(() => {
 </script>
 
 <style lang="sass" scoped>
-@import "src/css/colors"
-@import "src/css/responsive"
+@use "../css/colors"
+@use "../css/responsive"
 
 #breadcrumb
-    color: $color-text-light
+    color: colors.$color-text-light
     margin-bottom: 20px
 
     span:not(.no-after):after

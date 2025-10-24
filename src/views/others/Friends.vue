@@ -76,8 +76,8 @@ export default class Friends extends Vue
 </script>
 
 <style lang="sass" scoped>
-@import "src/css/colors"
-@import "src/css/responsive"
+@use "../../css/colors"
+@use "../../css/responsive"
 
 $card-min-width: 320px
 
@@ -126,7 +126,7 @@ $card-min-width: 320px
       flex: 1
 
     a
-      color: $color-text-main
+      color: colors.$color-text-main
 
     a + a
       margin-left: 10px

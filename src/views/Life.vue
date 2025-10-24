@@ -20,8 +20,8 @@ import 'tg-blog/dist/style.css'
 </script>
 
 <style lang="sass" scoped>
-@import "src/css/colors"
-@import "src/css/responsive"
+@use "../css/colors"
+@use "../css/responsive"
 
 .title
     text-align: left

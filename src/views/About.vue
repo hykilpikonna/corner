@@ -51,7 +51,7 @@ export default class About extends Vue
 </script>
 
 <style lang="sass">
-@import "../css/colors"
+@use "../css/colors"
 
 #About
     width: min(600px, 80vw)
