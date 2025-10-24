@@ -176,8 +176,8 @@ export default class Menu extends Vue
 </script>
 
 <style lang="sass" scoped>
-@import "src/css/colors"
-@import "src/css/responsive"
+@use "../../css/colors"
+@use "../../css/responsive"
 
 .columns
   display: flex
@@ -200,14 +200,14 @@ export default class Menu extends Vue
   .subtitle
     font-size: 0.8em
     margin-bottom: 0.5em
-    color: $color-text-light
+    color: colors.$color-text-light
 
 .items
   .sub
     font-size: 0.7em
 
   .item.recommend
-    color: $color-text-special
+    color: colors.$color-text-special
 
   .item.original:after
     content: '原创'

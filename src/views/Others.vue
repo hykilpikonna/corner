@@ -14,9 +14,9 @@
 </template>
 
 <style lang="sass" scoped>
-@import "src/css/global"
-@import "src/css/colors"
-@import "src/css/responsive"
+@use "../css/global"
+@use "../css/colors"
+@use "../css/responsive"
 
 .links
     display: flex
@@ -28,7 +28,7 @@ a
     @extend .card
     @extend .clickable
 
-    color: $color-text-main
+    color: colors.$color-text-main
     text-decoration: none
 
 </style>

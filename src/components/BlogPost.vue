@@ -111,7 +111,7 @@ const date = moment(p.meta.date)
 </script>
 
 <style lang="sass" scoped>
-@import 'src/css/colors'
+@use '../css/colors'
 
 #BlogPostPreview
     text-align: left
@@ -121,7 +121,7 @@ const date = moment(p.meta.date)
 
     #date
         font-size: 0.7em
-        color: $color-text-light
+        color: colors.$color-text-light
 
     > * + *, #content > * + *
         padding-top: 10px
@@ -150,7 +150,7 @@ const date = moment(p.meta.date)
 
         #subtitle
             font-size: 0.8em
-            color: $color-text-light
+            color: colors.$color-text-light
 
     img
         $margin: 10px
@@ -171,7 +171,7 @@ const date = moment(p.meta.date)
     #expand
         font-size: 0.8em
         padding-top: 10px
-        color: $color-text-light
+        color: colors.$color-text-light
 
 // Put image on top
 #BlogPostPreview.image-top

@@ -15,11 +15,11 @@ const props = defineProps({
 </script>
 
 <style lang="sass" scoped>
-@import src/css/colors
+@use "../css/colors"
 
 $tag-height: 20px
-$tag-color: $color-bg-6
-$text-color: $color-text-light
+$tag-color: colors.$color-bg-6
+$text-color: colors.$color-text-light
 
 $padding: calc($tag-height / 2)
 $triangle-width: calc($tag-height / 2) * 0.8
