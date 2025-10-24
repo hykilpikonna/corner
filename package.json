@@ -12,7 +12,7 @@
         "animsition": "^4.0.2",
         "core-js": "^3.46.0",
         "emoji-regex": "^10.6.0",
-        "linkify-urls": "^4.1.0",
+        "linkify-urls": "^5.1.0",
         "lxgw-wenkai-webfont": "^1.7.0",
         "marked": "^4.3.0",
         "moment": "^2.30.1",
