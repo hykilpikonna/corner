@@ -1,0 +1,1 @@
+import{B as _,C as p,_ as l,c as d,o as f}from"./index-DOlE8Nod.js";var i=Object.getOwnPropertyDescriptor,u=(s,r,a,o)=>{for(var e=o>1?void 0:o?i(r,a):r,t=s.length-1,n;t>=0;t--)(n=s[t])&&(e=n(e)||e);return e};let c=class extends _{};c=u([p],c);const v={id:"Projects"};function P(s,r,a,o,e,t){return f(),d("div",v)}const $=l(c,[["render",P]]);export{$ as default};
