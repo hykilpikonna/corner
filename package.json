@@ -27,12 +27,12 @@
         "@types/jqueryui": "^1.12.23",
         "@types/marked": "^4.3.2",
         "@types/node": "^22.0.0",
-        "@vitejs/plugin-vue": "^5.1.1",
+        "@vitejs/plugin-vue": "^6.0.1",
         "eslint": "^9.8.0",
         "sass": "^1.77.8",
         "tslib": "^2.6.3",
         "typescript": "^5.5.4",
-        "vite": "^5.3.5",
+        "vite": "^7.1.12",
         "vue-tsc": "^2.0.29"
     },
     "packageManager": "yarn@4.3.1"
