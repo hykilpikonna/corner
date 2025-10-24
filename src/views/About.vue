@@ -10,7 +10,7 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
@@ -20,7 +20,7 @@ import Loading from "@/components/Loading.vue";
 import {ZoteroAttachment, ZoteroItem} from "@/scripts/zotero";
 
 @Component({components: {Loading, ZoteroPublication}})
-export default class About extends Vue
+class About extends Vue
 {
     html = ""
     publications: ZoteroItem[] = []
@@ -48,6 +48,8 @@ export default class About extends Vue
             })
     }
 }
+
+export default toNative(About)
 </script>
 
 <style lang="sass">

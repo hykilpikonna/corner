@@ -8,11 +8,11 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 import {$} from '@/scripts/constants';
 
 @Component
-export default class Collapse extends Vue
+class Collapse extends Vue
 {
     @Prop title!: string
     @Prop({default: false}) active = false
@@ -30,6 +30,7 @@ export default class Collapse extends Vue
             active: this.active})
     }
 }
+export default toNative(Collapse)
 </script>
 
 <style lang="sass">

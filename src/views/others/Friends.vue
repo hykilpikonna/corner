@@ -24,7 +24,7 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Prop } from 'vue-facing-decorator'
+import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
 import {fab, hosts} from "@/scripts/constants";
 import {shuffle} from "@/scripts/utils";
 
@@ -42,7 +42,7 @@ const icons = {
 }
 
 @Component
-export default class Friends extends Vue
+class Friends extends Vue
 {
   friends: Friend[] = []
 
@@ -73,6 +73,7 @@ export default class Friends extends Vue
         })
   }
 }
+export default toNative(Friends)
 </script>
 
 <style lang="sass" scoped>
