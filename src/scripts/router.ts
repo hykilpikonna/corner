@@ -28,6 +28,12 @@ const routes: Array<RouteRecordRaw> = [
         props: route => (route.query)
     },
     {
+        path: '/photo',
+        name: 'Photo',
+        meta: {title: '相册', nav: true},
+        component: () => import('../views/Photo.vue')
+    },
+    {
         path: '/others',
         name: 'Others',
         meta: {title: '更多', nav: true},
@@ -50,12 +56,6 @@ const routes: Array<RouteRecordRaw> = [
         name: 'Projects',
         meta: {title: '我做的', navBookmark: 'Others'},
         component: () => import('../views/others/Projects.vue')
-    },
-    {
-        path: '/photo',
-        name: 'Photo',
-        meta: {title: '摄影', navBookmark: 'Others'},
-        component: () => import('../views/Photo.vue')
     },
 ]
 

@@ -24,10 +24,10 @@ export default class Photos extends Vue {
 
   async created() {
     this.photos = await (await fetch('https://p.aza.moe/photos')).json()
-    this.photos.sort((a, b) => (b.upload_time < a.upload_time ? 1 : -1))
+    this.photos.sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
 
     let rowProbabilityTable = {
-      1: 0, 2: 0.5, 3: 0.5
+      1: 0, 2: 0.3, 3: 0.5
     }
 
     // Generate photo rows: there is a 10% chance that a photo will be the only photo in its row
@@ -65,7 +65,7 @@ export default class Photos extends Vue {
 <template>
   <div class="title">
     <div class="font-script-en bold">The Wandering Gallery</div>
-<!--    <div class="subtitle">Here I post pictures of the wonderful scenes I encounter during my trips.</div>-->
+    <div class="subtitle <sm:hidden">想要把旅行中用相机拍到好看照片时的喜悦分享给照片里出现的路人，所以买了便携照片打印机、搭了这个网页！</div>
   </div>
   <div class="outer-grid">
     <div v-for="row in photoRows" :key="row[0].id" flex justify-center :class="`grid-cols-${row.length}`">
@@ -96,7 +96,7 @@ export default class Photos extends Vue {
 
 .img-container
   filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))
-  margin: -15px
+  margin: -0.5rem
   max-width: 50%
 
 img.photo

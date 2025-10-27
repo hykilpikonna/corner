@@ -8,7 +8,8 @@ export const messages = {
             blog: '记事本',
             life: '生活',
             projects: 'Projects',
-            others: '更多'
+            others: '更多',
+            photo: '相册'
         }
     },
     zh: {
