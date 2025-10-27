@@ -6,6 +6,7 @@ import '@fortawesome/fontawesome-free/css/all.min.css'
 import Collapse from "@/components/Collapse.vue"
 import BlogIndex from "@/components/BlogIndex.vue";
 import Tag from "@/components/Tag.vue";
+import 'virtual:uno.css'
 
 const app = createApp(App).use(router).use(i18n)
     .component('Collapse', Collapse)
