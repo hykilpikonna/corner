@@ -34,6 +34,12 @@ const routes: Array<RouteRecordRaw> = [
         component: () => import('../views/Photo.vue')
     },
     {
+        path: '/photo/:id',
+        name: 'Photo ID',
+        meta: {title: '相册', navBookmark: 'Photo'},
+        component: () => import('../views/Photo.vue')
+    },
+    {
         path: '/others',
         name: 'Others',
         meta: {title: '更多', nav: true},

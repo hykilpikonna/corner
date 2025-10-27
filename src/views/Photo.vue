@@ -1,5 +1,6 @@
 <script lang="ts">
 import { Vue, Component, toNative } from 'vue-facing-decorator';
+import { RouteLocationNormalizedLoaded } from "vue-router";
 
 interface PhotoMetadata {
   id: string
@@ -17,10 +18,23 @@ function detRandom(seed: string): number {
   return Array.from(seed).reduce((acc, char) => (acc + char.charCodeAt(0) * 65535) % 22859, 0) / 22859
 }
 
+async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
+  return new Promise((resolve) => {
+    const check = () => {
+      let a = condition()
+      if (a) resolve(a)
+      else setTimeout(check, interval)
+    }
+    check()
+  })
+}
+
 @Component({})
 class Photos extends Vue {
   photos: PhotoMetadata[]
   photoRows: PhotoMetadata[][]
+
+  declare $route: RouteLocationNormalizedLoaded
 
   async created() {
     this.photos = await (await fetch('https://p.aza.moe/photos')).json()
@@ -48,6 +62,13 @@ class Photos extends Vue {
       }
     })
     if (currentRow.length > 0) this.photoRows.push(currentRow)
+  }
+
+  async mounted() {
+    if (this.$route.params.id) {
+      const photoEl = await waitTruthy(() => document.getElementById(`photo-${this.$route.params.id}`))
+      photoEl.click()
+    }
   }
 
   url(s: string): string {
@@ -88,7 +109,7 @@ export default toNative(Photos)
   <div class="outer-grid">
     <div v-for="row in photoRows" :key="row[0].id" flex justify-center :class="`grid-cols-${row.length}`">
       <div v-for="p in row" :key="p.id" @click.capture="async e => await clickPhoto(p, e)"
-           class="img-container" cursor-pointer>
+           class="img-container" cursor-pointer :id="`photo-${p.id}`">
         <img class="photo" w-full h-full object-contain opacity-0 :src="url(p.thumbnail_edited)" :alt="p.id"/>
         <div class="photo-abs-container" absolute inset-0 flex justify-center items-center>
           <div class="photo-wrapper" :style="{transform: randomRotation(p.id)}">
@@ -137,6 +158,7 @@ export default toNative(Photos)
 
   img.photo
     z-index: 3001
+    pointer-events: auto
 
 img.photo
   clip-path: inset(2.8% 1.8% 2.4%)
