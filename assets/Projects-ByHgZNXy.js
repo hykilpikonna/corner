@@ -1,0 +1,1 @@
+import{t as _,B as p,C as l,_ as f,c as i,o as d}from"./index-BjY1_Egx.js";var v=Object.getOwnPropertyDescriptor,u=(t,o,a,r)=>{for(var e=r>1?void 0:r?v(o,a):o,s=t.length-1,n;s>=0;s--)(n=t[s])&&(e=n(e)||e);return e};let c=class extends p{};c=u([l],c);const P=_(c),j={id:"Projects"};function m(t,o,a,r,e,s){return d(),i("div",j)}const x=f(P,[["render",m]]);export{x as default};
