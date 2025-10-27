@@ -16,7 +16,7 @@
             <div id="attachments" v-if="item.attachments.length !== 0">
                 <div class="label">Attachments</div>
                 <div class="content" v-for="a of item.attachments" :key="a.data.key">
-                    <a :href="a.links['enclosure'].href">{{a.data.title}}</a>
+                    <a :href="a.links['enclosure']?.href">{{a.data.title}}</a>
                 </div>
             </div>
         </div>

@@ -96,7 +96,6 @@ class App extends Vue
 
     calculateBookmarkCss(): void
     {
-      console.log('CalculateBookmarkCss called', this.currentRoute, this.$refs)
         if (this.currentRoute in this.$refs)
             this.currentLink = (this.$refs[this.currentRoute] as ComponentPublicInstance).$el
         else return
