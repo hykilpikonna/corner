@@ -59,6 +59,23 @@ export default class Photos extends Vue {
     const angle = (detRandom(s) * 20) - 10 // -10 to +10 degrees
     return `rotate(${angle}deg)`
   }
+
+  async clickPhoto(p: PhotoMetadata, e: MouseEvent) {
+    console.log("Clicked photo:", p.id)
+    const dom = e.currentTarget as HTMLDivElement
+    const photoEl = dom.querySelector('.photo-abs-container') as HTMLDivElement
+
+    photoEl.style.viewTransitionName = `photo-${p.id}`
+
+    const transition = document.startViewTransition(() => {
+      // Toggle .active on dom
+      dom.classList.toggle('active')
+
+    })
+
+    await transition.finished
+    photoEl.style.viewTransitionName = ''
+  }
 }
 </script>
 
@@ -69,11 +86,15 @@ export default class Photos extends Vue {
   </div>
   <div class="outer-grid">
     <div v-for="row in photoRows" :key="row[0].id" flex justify-center :class="`grid-cols-${row.length}`">
-      <div v-for="p in row" :style="{transform: randomRotation(p.id)}" :key="p.id"
-           class="img-container" relative>
-        <img class="photo" w-full h-full object-contain :src="url(p.thumbnail_edited)" :alt="p.id"/>
+      <div v-for="p in row" :key="p.id" @click.capture="async e => await clickPhoto(p, e)"
+           class="img-container" cursor-pointer>
+        <img class="photo" w-full h-full object-contain opacity-0 :src="url(p.thumbnail_edited)" :alt="p.id"/>
+        <div class="photo-abs-container" absolute inset-0 flex justify-center align-center :style="{transform: randomRotation(p.id)}">
+          <img class="photo" w-full h-full object-contain :src="url(p.thumbnail_edited)" :alt="p.id" />
+        </div>
+        <div class="blur"></div>
         <div flex w-full justify-center absolute position-top-none>
-          <img class="pin" src="/thumb%20tack%202%20plain.png" />
+          <img class="pin" src="/thumb%20tack%202%20plain.png"  alt=""/>
         </div>
       </div>
     </div>
@@ -95,15 +116,46 @@ export default class Photos extends Vue {
   gap: 0
 
 .img-container
-  filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))
   margin: -0.5rem
   max-width: 50%
+  position: relative
+
+  .blur
+    display: none
+
+.img-container.active
+  position: unset
+
+  .blur
+    position: fixed
+    inset: 0
+    backdrop-filter: blur(5px)
+    z-index: 2000
+    display: block
+  img.pin
+    display: none
+  .photo-abs-container
+    position: fixed
+    z-index: 3000
+    //transform: scale(1.5)
+    transform: rotate(0deg) !important
+
+  img.photo
+    z-index: 3001
 
 img.photo
-  clip-path: inset(3.2% 1.8%)
+  //clip-path: inset(4.3% 1.8%)
   pointer-events: none
+
+div.photo-abs-container
+  position: absolute
+  inset: 0
+  z-index: 1000
+  filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))
+
 
 img.pin
   width: 40px
   height: 40px
+  z-index: 2000
 </style>
