@@ -116,9 +116,9 @@ export default toNative(Photos)
             <img class="photo" w-full object-contain :src="url(p.thumbnail_edited)" :alt="p.id" />
           </div>
         </div>
-        <div flex w-full justify-center absolute position-top-none>
-          <img class="pin" src="/thumb%20tack%202%20plain.png"  alt=""/>
-        </div>
+<!--        <div flex w-full justify-center absolute position-top-none>-->
+<!--          <img class="pin" src="/thumb%20tack%202%20plain.png"  alt=""/>-->
+<!--        </div>-->
       </div>
     </div>
   </div>
