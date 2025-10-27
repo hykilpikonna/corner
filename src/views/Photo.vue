@@ -1,5 +1,5 @@
 <script lang="ts">
-import { Vue, Component } from 'vue-facing-decorator';
+import { Vue, Component, toNative } from 'vue-facing-decorator';
 
 interface PhotoMetadata {
   id: string
@@ -18,7 +18,7 @@ function detRandom(seed: string): number {
 }
 
 @Component({})
-export default class Photos extends Vue {
+class Photos extends Vue {
   photos: PhotoMetadata[]
   photoRows: PhotoMetadata[][]
 
@@ -76,6 +76,8 @@ export default class Photos extends Vue {
     photoEl.style.viewTransitionName = ''
   }
 }
+
+export default toNative(Photos)
 </script>
 
 <template>
