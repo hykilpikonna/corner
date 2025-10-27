@@ -104,7 +104,7 @@ export default toNative(Photos)
 <template>
   <div class="title">
     <div class="font-script-en bold">The Wandering Gallery</div>
-    <div class="subtitle <sm:hidden">想要把旅行中用相机拍到好看照片时的喜悦分享给照片里出现的路人，所以买了便携照片打印机、搭了这个网页！</div>
+    <div class="subtitle <sm:hidden">想要把旅行中用相机拍到好看照片时的喜悦分享给幸运的路人，所以买了便携照片打印机、搭了这个网页！</div>
   </div>
   <div class="outer-grid">
     <div v-for="row in photoRows" :key="row[0].id" flex justify-center :class="`grid-cols-${row.length}`">
