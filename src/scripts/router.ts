@@ -51,6 +51,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: {title: '我做的', navBookmark: 'Others'},
         component: () => import('../views/others/Projects.vue')
     },
+    {
+        path: '/photo',
+        name: 'Photo',
+        meta: {title: '摄影', navBookmark: 'Others'},
+        component: () => import('../views/Photo.vue')
+    },
 ]
 
 export const router = createRouter({
