@@ -20,8 +20,8 @@ function detRandom(seed: string): number {
 async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
   return new Promise((resolve) => {
     const check = () => {
-      const a = condition()
-      if (a) resolve(a)
+      const value = condition()
+      if (value) resolve(value)
       else setTimeout(check, interval)
     }
     check()

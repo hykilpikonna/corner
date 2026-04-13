@@ -39,7 +39,7 @@ export function minMax(val: number, min: number, max: number): number
 export type Keybinds = {[id: string]: (e: KeyboardEvent) => unknown}
 
 /**
- * Key handler helper class
+ * Key handler standalone helper class (not a Vue mixin)
  */
 export class KeyHandler
 {
