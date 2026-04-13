@@ -9,8 +9,8 @@
     <Loading v-else></Loading>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {onMounted, ref} from 'vue'
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
@@ -19,37 +19,24 @@ import {hosts} from "@/scripts/constants";
 import Loading from "@/components/Loading.vue";
 import {ZoteroAttachment, ZoteroItem} from "@/scripts/zotero";
 
-@Component({components: {Loading, ZoteroPublication}})
-class About extends Vue
-{
-    html = ""
-    publications: ZoteroItem[] = []
+const html = ref("")
+const publications = ref<ZoteroItem[]>([])
 
-    mounted(): void
-    {
-        // Fetch readme
-        fetch(`${hosts.content}/README.md`).then(it => it.text())
-            .then(it => this.html = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
-                return `<span class="emoji">${emoji}</span>`
-            }))))
+onMounted((): void => {
+    fetch(`${hosts.content}/README.md`).then(it => it.text())
+        .then(it => html.value = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
+            return `<span class="emoji">${emoji}</span>`
+        }))))
 
-        // Fetch publications from zotero
-        fetch(`${hosts.api}/zotero.json`)
-            .then(it => it.json()).then(it =>
-            {
-                // Filter out publications and attachments
-                this.publications = it
-                let files: ZoteroAttachment[] = it
-                files = files.filter(it => it.data.itemType === 'attachment')
-                this.publications = this.publications.filter(it => it.data.itemType !== 'attachment')
-
-                // Add attachments to
-                this.publications.forEach(it => it.attachments = files.filter(a => a.data.parentItem == it.key))
-            })
-    }
-}
-
-export default toNative(About)
+    fetch(`${hosts.api}/zotero.json`)
+        .then(it => it.json()).then((it: ZoteroItem[]) => {
+            publications.value = it
+            let files: ZoteroAttachment[] = it as unknown as ZoteroAttachment[]
+            files = files.filter(file => file.data.itemType === 'attachment')
+            publications.value = publications.value.filter(pub => pub.data.itemType !== 'attachment')
+            publications.value.forEach(pub => pub.attachments = files.filter(a => a.data.parentItem == pub.key))
+        })
+})
 </script>
 
 <style lang="sass">

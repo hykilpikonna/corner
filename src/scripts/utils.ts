@@ -1,5 +1,3 @@
-import { Component, Vue, Prop } from 'vue-facing-decorator'
-
 /**
  * Same as python's range
  *
@@ -41,9 +39,9 @@ export function minMax(val: number, min: number, max: number): number
 export type Keybinds = {[id: string]: (e: KeyboardEvent) => unknown}
 
 /**
- * Key handler mixin
+ * Key handler helper class
  */
-export class KeyHandler extends Vue
+export class KeyHandler
 {
     keybinds: Keybinds = {}
     _keybinds: Keybinds = {}

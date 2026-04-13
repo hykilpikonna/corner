@@ -23,30 +23,26 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {ref} from 'vue'
 
-export interface MenuItem
-{
+interface MenuItem {
   name: string
   sub?: string
   img?: string
   recommend?: boolean
   original?: boolean
-
   id?: number
 }
 
-export interface MenuCategory
-{
+interface MenuCategory {
   cat: string
   subtitle?: string
   items: MenuItem[]
-
   column?: number
 }
 
-export const menu: MenuCategory[] = [
+const menu: MenuCategory[] = [
   {
     cat: '🍖 猪肉',
     items: [
@@ -134,40 +130,25 @@ export const menu: MenuCategory[] = [
   },
 ]
 
-@Component
-class Menu extends Vue
-{
-  max_cols = 2
-  cols: MenuCategory[][] = new Array(this.max_cols)
+const maxCols = 2
+const cols = ref<MenuCategory[][]>(Array.from({length: maxCols}, () => []))
 
-  created()
-  {
-    // Calculate menu layout
-    const tmp = Array.from(menu)
-    tmp.sort((a, b) => b.items.length - a.items.length)
+const tmp = Array.from(menu)
+tmp.sort((a, b) => b.items.length - a.items.length)
 
-    // Two columns
-    let col_counts = new Array(this.max_cols).fill(0)
-    for (const cat of tmp)
-    {
-      // Get column index with minimal item count
-      let col = col_counts.indexOf(Math.min(...col_counts))
-
-      cat.column = col
-      col_counts[col] += cat.items.length
-    }
-
-    // Separate arrays by column
-    for (let i = 0; i < this.max_cols; i++)
-      this.cols[i] = menu.filter(it => it.column == i)
-
-    // Assign ID to each item
-    let id = 0
-    this.cols.forEach(col => col.forEach(cat => cat.items.forEach(it => it.id = id++)))
-  }
+const colCounts = new Array(maxCols).fill(0)
+for (const cat of tmp) {
+  const col = colCounts.indexOf(Math.min(...colCounts))
+  cat.column = col
+  colCounts[col] += cat.items.length
 }
 
-export default toNative(Menu)
+for (let i = 0; i < maxCols; i++) {
+  cols.value[i] = menu.filter(it => it.column == i)
+}
+
+let id = 0
+cols.value.forEach(col => col.forEach(cat => cat.items.forEach(it => it.id = id++)))
 </script>
 
 <style lang="sass" scoped>

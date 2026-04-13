@@ -23,57 +23,49 @@
   </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {onMounted, ref} from 'vue'
 import {fab, hosts} from "@/scripts/constants";
 import {shuffle} from "@/scripts/utils";
 
-export interface Friend {
+interface Friend {
   name: string
   avatar: string
   banner: string
-
   desc?: string
+  [id: string]: string | undefined
 }
 
 const excludes = new Set(["name", "avatar", "banner", "desc"])
-const icons = {
+const icons: {[id: string]: string} = {
   blog: 'fas fa-book'
 }
 
-@Component
-class Friends extends Vue
-{
-  friends: Friend[] = []
+const friends = ref<Friend[]>([])
 
-  async created()
-  {
-    this.friends = await (await fetch(`${hosts.content}/content/generated/friends/friends.json`)).json()
-
-    // Fix avatar relative url
-    this.friends.forEach(f => {
-      if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
-      if (f.banner && !f.banner.startsWith('http')) f.banner = `${hosts.content}/${f.banner}`
-    })
-    this.friends = shuffle(this.friends)
-  }
-
-  bgStyle(f: Friend)
-  {
-    if (f.banner) return {'background-image': `url("${f.banner}")`}
-    else return {}
-  }
-
-  getFriendLinks(f: Friend): { link: string, icon: string }[]
-  {
-    return Object.entries(f).filter(pair => !excludes.has(pair[0].toString()))
-        .map(pair => {
-          return { link: pair[1], icon: fab.includes(pair[0]) ? `fab fa-${pair[0]}` :
-                pair[0] in icons ? icons[pair[0]] : pair[0] }
-        })
-  }
+const bgStyle = (f: Friend) => {
+  if (f.banner) return {'background-image': `url("${f.banner}")`}
+  return {}
 }
-export default toNative(Friends)
+
+const getFriendLinks = (f: Friend): { link: string, icon: string }[] => {
+  return Object.entries(f)
+    .filter(([key, value]) => !excludes.has(key) && typeof value === 'string')
+    .map(([key, value]) => ({
+      link: value,
+      icon: fab.includes(key) ? `fab fa-${key}` : (key in icons ? icons[key] : key)
+    }))
+}
+
+onMounted(async () => {
+  friends.value = await (await fetch(`${hosts.content}/content/generated/friends/friends.json`)).json()
+
+  friends.value.forEach(f => {
+    if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
+    if (f.banner && !f.banner.startsWith('http')) f.banner = `${hosts.content}/${f.banner}`
+  })
+  friends.value = shuffle(friends.value)
+})
 </script>
 
 <style lang="sass" scoped>
