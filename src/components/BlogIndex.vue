@@ -1,6 +1,6 @@
 <template>
     <div class="index index-tags" v-if="mode === 'tags'">
-        <Tag v-for="t in meta.tags" :key="t[0]" :tag-name="t[0]" direction="right"
+        <Tag v-for="t in meta.tags" :key="`-`" :tag-name="t[0]" direction="right"
              @click="e => clickTag(e, t)">{{ t[0] }} ({{ t[1] }})</Tag>
     </div>
     <div class="index index-categories" v-else>
