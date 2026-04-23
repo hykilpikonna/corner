@@ -23,8 +23,8 @@
     </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {computed, onMounted} from 'vue'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
@@ -32,36 +32,32 @@ import linkifyUrls from "linkify-urls";
 import {$} from '@/scripts/constants';
 import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
-@Component({components: {MetaTable}})
-class ZoteroPublicationView extends Vue
-{
-    @Prop({required: true}) item!: ZoteroItem
+const props = defineProps<{ item: ZoteroItem }>()
 
-    get d(): ZoteroData { return this.item.data }
-    get date(): moment.Moment { return moment(this.item.meta.parsedDate) }
-    get authors(): string { return this.d.creators.map(it => it.firstName + ' ' + it.lastName).join(' & ') }
+const d = computed((): ZoteroData => props.item.data)
+const date = computed((): moment.Moment => moment(props.item.meta.parsedDate))
+const authors = computed((): string => d.value.creators.map(it => it.firstName + ' ' + it.lastName).join(' & '))
 
-    get tableData(): {[id: string]: unknown}
-    {
-        const t: {[id: string]: unknown} = {...this.d}
-        t.creators = this.authors
-        delete t.key
-        delete t.version
-        delete t.title
-        delete t.abstractNote
-        if (t.itemType) t.itemType = capitalize(t.itemType as string)
-        if (t.url) t.url = linkifyUrls(t.url as string)
-        return t
-    }
+const tableData = computed((): {[id: string]: unknown} => {
+    const t: {[id: string]: unknown} = {...d.value}
+    t.creators = authors.value
+    delete t.key
+    delete t.version
+    delete t.title
+    delete t.abstractNote
+    if (t.itemType) t.itemType = capitalize(t.itemType as string)
+    if (t.url) t.url = linkifyUrls(t.url as string)
+    return t
+})
 
-    mounted(): void
-    {
-        $('.publication').accordion({collapsible: true, header: 'div.header', active: false,
-            heightStyle: "content"})
-    }
-}
-
-export default toNative(ZoteroPublicationView)
+onMounted((): void => {
+    $('.publication').accordion({
+        collapsible: true,
+        header: 'div.header',
+        active: false,
+        heightStyle: 'content'
+    })
+})
 </script>
 
 <style lang="sass" scoped>

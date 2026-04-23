@@ -1,6 +1,6 @@
 <template>
     <div class="index index-tags" v-if="mode === 'tags'">
-        <Tag v-for="t in meta.tags" :key="t" :tag-name="t[0]" direction="right"
+        <Tag v-for="t in meta.tags" :key="`${t[0]}-${t[1]}`" :tag-name="t[0]" direction="right"
              @click="e => clickTag(e, t)">{{ t[0] }} ({{ t[1] }})</Tag>
     </div>
     <div class="index index-categories" v-else>
@@ -9,35 +9,27 @@
     </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
 import Tag from "@/components/Tag.vue";
 import {pushQuery} from "@/scripts/router";
 import {BlogMeta} from "@/scripts/models";
 import {globals} from "@/scripts/global";
 
-@Component({components: {Tag}})
-class BlogIndexLinks extends Vue
-{
-    @Prop({default: 'tags'}) mode: 'tags' | 'categories' = 'tags'
+withDefaults(defineProps<{ mode?: 'tags' | 'categories' }>(), {
+    mode: 'tags'
+})
 
-    meta: BlogMeta = globals.staticMeta
+const meta: BlogMeta = globals.staticMeta
 
-    clickCat(e: MouseEvent, cat: [string, number]): void
-    {
-        e.stopPropagation()
-        pushQuery({category: cat[0], tag: null})
-    }
-
-
-    clickTag(e: MouseEvent, tag: [string, number]): void
-    {
-        e.stopPropagation()
-        pushQuery({tag: tag[0], category: null})
-    }
+const clickCat = (e: MouseEvent, cat: [string, number]): void => {
+    e.stopPropagation()
+    pushQuery({category: cat[0], tag: null})
 }
 
-export default toNative(BlogIndexLinks)
+const clickTag = (e: MouseEvent, tag: [string, number]): void => {
+    e.stopPropagation()
+    pushQuery({tag: tag[0], category: null})
+}
 </script>
 
 <style lang="sass" scoped>

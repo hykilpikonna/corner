@@ -7,33 +7,24 @@
     </table>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {computed} from 'vue'
 
-@Component
-class MetaTable extends Vue
-{
-    @Prop({required: true}) table!: {[id: string]: unknown}
+const props = defineProps<{ table: {[id: string]: unknown} }>()
 
-    get filteredTable(): {[id: string]: unknown}
-    {
-        const t: {[id: string]: unknown} = {}
+const filteredTable = computed((): {[id: string]: unknown} => {
+    const t: {[id: string]: unknown} = {}
 
-        Object.keys(this.table).forEach(k => {
-            // Ignore empty
-            if (!this.table[k]) return
+    Object.keys(props.table).forEach(k => {
+        if (!props.table[k]) return
 
-            // Convert to sentence case (https://stackoverflow.com/a/7225450/7346633)
-            let newK = k.replace(/([A-Z])/g, " $1")
-            newK = newK.charAt(0).toUpperCase() + newK.slice(1)
-            t[newK] = this.table[k]
-        })
+        let newK = k.replace(/([A-Z])/g, " $1")
+        newK = newK.charAt(0).toUpperCase() + newK.slice(1)
+        t[newK] = props.table[k]
+    })
 
-        return t
-    }
-}
-
-export default toNative(MetaTable)
+    return t
+})
 </script>
 
 <style lang="sass" scoped>

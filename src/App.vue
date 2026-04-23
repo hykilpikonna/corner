@@ -1,21 +1,21 @@
 <template>
     <div id="nav" class="fbox-v"
          :class="(currentRoute) + ' ' + (menuOpen ? 'open' : '')"
-          v-if="currentRoute !== 'colorpicker'">
+         v-if="currentRoute !== 'colorpicker'">
         <div id="menu" @click="showMenu"><i class="fas fa-bars"></i></div>
 
         <div id="items" class="fbox-v">
-            <router-link class="router-link" ref="others" to="/others">{{ $t('nav.others') }}</router-link>
+            <router-link class="router-link" :ref="setNavRef('others')" to="/others">{{ $t('nav.others') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="photo" to="/photo">{{ $t('nav.photo') }}</router-link>
+            <router-link class="router-link" :ref="setNavRef('photo')" to="/photo">{{ $t('nav.photo') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="blog" to="/blog">{{ $t('nav.blog') }}</router-link>
+            <router-link class="router-link" :ref="setNavRef('blog')" to="/blog">{{ $t('nav.blog') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="life" to="/life">{{ $t('nav.life') }}</router-link>
+            <router-link class="router-link" :ref="setNavRef('life')" to="/life">{{ $t('nav.life') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="about" to="/about">{{ $t('nav.about') }}</router-link>
+            <router-link class="router-link" :ref="setNavRef('about')" to="/about">{{ $t('nav.about') }}</router-link>
             <div class="dot">·</div>
-            <router-link class="router-link" ref="home" to="/">
+            <router-link class="router-link" :ref="setNavRef('home')" to="/">
               <svg focusable="false" data-prefix="fal" data-icon="house-night" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512" class="svg-inline--fa fa-house-night fa-w-20"><path fill="currentColor" d="M112,224a111.5,111.5,0,0,0,87-41.45,20.51,20.51,0,0,0-19.75-33.08A59.2,59.2,0,0,1,138.84,39.85a20.3,20.3,0,0,0,10.07-21.27,20.26,20.26,0,0,0-16.47-16.7A136,136,0,0,0,112,0a112,112,0,0,0,0,224ZM97.78,33.27a91.21,91.21,0,0,0,54.47,147.9A80,80,0,1,1,97.78,33.27Zm97.15,35.51,39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L317,68.78a5.33,5.33,0,0,0,0-9.54L277.32,42.68,260.76,3a5.33,5.33,0,0,0-9.55,0L234.65,42.68,194.93,59.24a5.34,5.34,0,0,0,0,9.54ZM157,379.24l-39.72-16.57L100.76,323a5.34,5.34,0,0,0-9.55,0L74.65,362.67,34.93,379.24a5.34,5.34,0,0,0,0,9.54l39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L157,388.78a5.33,5.33,0,0,0,0-9.54Zm179-101.9v85.33A21.39,21.39,0,0,0,357.36,384h85.31A21.39,21.39,0,0,0,464,362.67V277.34A21.4,21.4,0,0,0,442.67,256H357.36A21.4,21.4,0,0,0,336,277.34ZM368,288H432v64H368Zm266.49,8L576,244.75V144a16,16,0,0,0-32,0v72.75L410.53,100a16,16,0,0,0-21.07,0l-224,196a16,16,0,0,0,21.07,24.09L224,287.28V464a48.05,48.05,0,0,0,48,48H528a48.06,48.06,0,0,0,48-48V287.28l37.46,32.78A16,16,0,0,0,634.53,296ZM544,464a16,16,0,0,1-16,16H272a16,16,0,0,1-16-16V264a15.94,15.94,0,0,0-.81-4L400,133.27l144,126Z" class=""></path></svg></router-link>
         </div>
 
@@ -28,92 +28,88 @@
     <router-view/>
 </template>
 
-<script lang="ts">
-import { ComponentPublicInstance } from 'vue';
-import { Component, Vue, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {nextTick, onMounted, onUnmounted, ref, ComponentPublicInstance} from 'vue';
 import router from "@/scripts/router";
-import { RouteLocationNormalized, RouteLocationNormalizedLoaded, Router } from "vue-router";
-import { TranslateResult } from "vue-i18n";
+import {RouteLocationNormalized, RouteLocationRaw, useRoute} from "vue-router";
 
-@Component
-class App extends Vue
-{
-    currentRoute = ''
-    currentLink: Element = null as never as Element
-    bookmarkCss = ""
-    bookmarkUpdateIntervalId!: number
-    lastTop = 0
+const route = useRoute()
 
-    menuOpen = false
+const currentRoute = ref('')
+const bookmarkCss = ref('')
+const lastTop = ref(0)
+const menuOpen = ref(false)
+const bookmarkUpdateIntervalId = ref<number | null>(null)
+const removeAfterEach = ref<(() => void) | null>(null)
 
-    declare $t: (arg: string) => TranslateResult
-    declare $route: RouteLocationNormalizedLoaded
-    declare $router: Router
+const navRefs = ref<Record<string, Element | ComponentPublicInstance | null>>({})
 
-    showMenu(): void
-    {
-        this.menuOpen = !this.menuOpen
+const showMenu = (): void => {
+    menuOpen.value = !menuOpen.value
 
-        // Auto close
-        if (this.menuOpen) setTimeout(() => this.menuOpen = false, 2000)
-    }
-
-    updateBookmark(to: RouteLocationNormalized): void
-    {
-        // Update title
-        // Use next tick to handle router history correctly
-        // see: https://github.com/vuejs/vue-router/issues/914#issuecomment-384477609
-        this.$nextTick(() => {
-            if (to.name == 'Blog' && Object.keys(to.query).length != 0) return
-            document.title = to.meta.title ? `Aza - ${to.meta.title}` : 'Aza - Home';
-        })
-
-        console.log('AfterEach called', to)
-        this.currentRoute = ((to.meta?.navBookmark ?? to.name) as string).toLowerCase()
-
-        this.calculateBookmarkCss()
-        this.menuOpen = false
-    }
-
-    mounted(): void
-    {
-        console.log('Mounted called', this.$route)
-        router.afterEach(this.updateBookmark)
-        if (this.$route.name) this.currentRoute = ((this.$route.meta?.navBookmark ?? this.$route.name) as string).toLowerCase()
-
-        // Resize listener
-        window.addEventListener('resize', this.calculateBookmarkCss, true);
-
-        // Update every second
-        this.bookmarkUpdateIntervalId = window.setInterval(this.calculateBookmarkCss, 1000)
-    }
-
-    unmounted(): void
-    {
-        window.removeEventListener('resize', this.calculateBookmarkCss)
-        window.clearInterval(this.bookmarkUpdateIntervalId)
-    }
-
-    calculateBookmarkCss(): void
-    {
-        if (this.currentRoute in this.$refs)
-            this.currentLink = (this.$refs[this.currentRoute] as ComponentPublicInstance).$el
-        else return
-
-        // https://developer.mozilla.org/zh-CN/docs/Web/API/Element/getBoundingClientRect
-        let box = this.currentLink.getBoundingClientRect()
-        if (box.top == this.lastTop) return
-        this.lastTop = box.top
-
-        let h = box.bottom - box.top
-        let width = Math.round(h / 2) + 8
-
-        this.bookmarkCss = `top: ${box.top - 8}px;` +
-            `border-width: ${width}px 20px ${width}px 50px;`
-    }
+    if (menuOpen.value) setTimeout(() => menuOpen.value = false, 2000)
 }
 
-export default toNative(App)
+const setNavRef = (name: string) => (el: Element | ComponentPublicInstance | null) => {
+    navRefs.value[name] = el
+}
+
+const resolveNavElement = (target: Element | ComponentPublicInstance | null | undefined): Element | null => {
+    if (!target) return null
+    if (target instanceof Element) return target
+    return (target.$el as Element | undefined) ?? null
+}
+
+const calculateBookmarkCss = (): void => {
+    const currentLink = resolveNavElement(navRefs.value[currentRoute.value])
+    if (!currentLink) return
+
+    const box = currentLink.getBoundingClientRect()
+    if (box.top === lastTop.value) return
+    lastTop.value = box.top
+
+    const h = box.bottom - box.top
+    const width = Math.round(h / 2) + 8
+
+    bookmarkCss.value = `top: ${box.top - 8}px;` +
+        `border-width: ${width}px 20px ${width}px 50px;`
+}
+
+const getRouteBookmark = (to: RouteLocationNormalized): string => {
+    return ((to.meta?.navBookmark ?? to.name) as string).toLowerCase()
+}
+
+const updateBookmark = (to: RouteLocationNormalized): void => {
+    nextTick(() => {
+        if (to.name == 'Blog' && Object.keys(to.query).length != 0) return
+        document.title = to.meta.title ? `Aza - ${to.meta.title}` : 'Aza - Home';
+    })
+
+    console.log('AfterEach called', to)
+    currentRoute.value = getRouteBookmark(to)
+
+    calculateBookmarkCss()
+    menuOpen.value = false
+}
+
+onMounted(() => {
+    console.log('Mounted called', route)
+    removeAfterEach.value = router.afterEach(updateBookmark)
+    if (route.name) {
+        currentRoute.value = getRouteBookmark(route as unknown as RouteLocationNormalized)
+    }
+
+    window.addEventListener('resize', calculateBookmarkCss, true)
+    bookmarkUpdateIntervalId.value = window.setInterval(calculateBookmarkCss, 1000)
+})
+
+onUnmounted(() => {
+    removeAfterEach.value?.()
+    window.removeEventListener('resize', calculateBookmarkCss, true)
+    if (bookmarkUpdateIntervalId.value !== null) {
+        window.clearInterval(bookmarkUpdateIntervalId.value)
+    }
+})
 </script>
 
 <style lang="sass">

@@ -1,10 +1,10 @@
-<script lang="ts">
-import { Vue, Component, toNative } from 'vue-facing-decorator';
-import { RouteLocationNormalizedLoaded } from "vue-router";
+<script setup lang="ts">
+import {onMounted, ref} from 'vue'
+import {useRoute} from "vue-router";
 
 interface PhotoMetadata {
   id: string
-  owner_key: string // This will be filtered out for public requests
+  owner_key: string
   upload_time: string
   original_photo: string
   edited_photo: string
@@ -13,7 +13,6 @@ interface PhotoMetadata {
   exif: {[id: string]: string}
 }
 
-// Take in a string, use its hash to produce a number from 0 to 1
 function detRandom(seed: string): number {
   return Array.from(seed).reduce((acc, char) => (acc + char.charCodeAt(0) * 65535) % 22859, 0) / 22859
 }
@@ -21,84 +20,83 @@ function detRandom(seed: string): number {
 async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
   return new Promise((resolve) => {
     const check = () => {
-      let a = condition()
-      if (a) resolve(a)
+      const value = condition()
+      if (value) resolve(value)
       else setTimeout(check, interval)
     }
     check()
   })
 }
 
-@Component({})
-class Photos extends Vue {
-  photos: PhotoMetadata[]
-  photoRows: PhotoMetadata[][]
+const route = useRoute()
+const photos = ref<PhotoMetadata[]>([])
+const photoRows = ref<PhotoMetadata[][]>([])
 
-  declare $route: RouteLocationNormalizedLoaded
-
-  async created() {
-    this.photos = await (await fetch('https://p.aza.moe/photos')).json()
-    this.photos.sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
-
-    let rowProbabilityTable = {
-      1: 0, 2: 0.3, 3: 0.5
-    }
-
-    // Generate photo rows: there is a 10% chance that a photo will be the only photo in its row
-    this.photoRows = []
-    let currentRow: PhotoMetadata[] = []
-    this.photos.forEach((p) => {
-      if (currentRow.length === 0) currentRow.push(p)
-      else if (currentRow.length >= 3) {
-        this.photoRows.push(currentRow)
-        currentRow = [ p ]
-      }
-      else {
-        const singleChance = detRandom(p.original_photo)
-        if (singleChance < rowProbabilityTable[currentRow.length]) {
-          this.photoRows.push(currentRow)
-          currentRow = [ p ]
-        } else currentRow.push(p)
-      }
-    })
-    if (currentRow.length > 0) this.photoRows.push(currentRow)
-  }
-
-  async mounted() {
-    if (this.$route.params.id) {
-      const photoEl = await waitTruthy(() => document.getElementById(`photo-${this.$route.params.id}`))
-      photoEl.click()
-    }
-  }
-
-  url(s: string): string {
-    s = s.replace('data/photos', 'static').replace('./', '')
-    return `https://p.aza.moe/${s}`
-  }
-
-  randomRotation(s: string): string {
-    const angle = (detRandom(s) * 20) - 10 // -10 to +10 degrees
-    return `rotate(${angle}deg)`
-  }
-
-  async clickPhoto(p: PhotoMetadata, e: MouseEvent) {
-    console.log("Clicked photo:", p.id)
-    const dom = e.currentTarget as HTMLDivElement
-    const photoEl = dom.querySelector('.photo-wrapper') as HTMLDivElement
-
-    photoEl.style.viewTransitionName = `photo-${p.id}`
-
-    const transition = document.startViewTransition(() => {
-      dom.classList.toggle('active')
-      document.getElementsByClassName('blur')[0].toggleAttribute('hidden')
-    })
-
-    await transition.finished
-    photoEl.style.viewTransitionName = ''
-  }
+const rowProbabilityTable: Record<number, number> = {
+  1: 0,
+  2: 0.3,
+  3: 0.5
 }
 
-export default toNative(Photos)
+const initPhotos = async () => {
+  photos.value = await (await fetch('https://p.aza.moe/photos')).json()
+  photos.value.sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
+
+  const rows: PhotoMetadata[][] = []
+  let currentRow: PhotoMetadata[] = []
+
+  photos.value.forEach((p) => {
+    if (currentRow.length === 0) currentRow.push(p)
+    else if (currentRow.length >= 3) {
+      rows.push(currentRow)
+      currentRow = [p]
+    } else {
+      const singleChance = detRandom(p.original_photo)
+      if (singleChance < rowProbabilityTable[currentRow.length]) {
+        rows.push(currentRow)
+        currentRow = [p]
+      } else currentRow.push(p)
+    }
+  })
+
+  if (currentRow.length > 0) rows.push(currentRow)
+  photoRows.value = rows
+}
+
+const url = (s: string): string => {
+  s = s.replace('data/photos', 'static').replace('./', '')
+  return `https://p.aza.moe/${s}`
+}
+
+const randomRotation = (s: string): string => {
+  const angle = (detRandom(s) * 20) - 10
+  return `rotate(${angle}deg)`
+}
+
+const clickPhoto = async (p: PhotoMetadata, e: MouseEvent) => {
+  console.log("Clicked photo:", p.id)
+  const dom = e.currentTarget as HTMLDivElement
+  const photoEl = dom.querySelector('.photo-wrapper') as HTMLDivElement
+
+  photoEl.style.viewTransitionName = `photo-${p.id}`
+
+  const transition = document.startViewTransition(() => {
+    dom.classList.toggle('active')
+    document.getElementsByClassName('blur')[0].toggleAttribute('hidden')
+  })
+
+  await transition.finished
+  photoEl.style.viewTransitionName = ''
+}
+
+onMounted(async () => {
+  await initPhotos()
+
+  if (route.params.id) {
+    const photoEl = await waitTruthy(() => document.getElementById(`photo-${route.params.id}`))
+    photoEl.click()
+  }
+})
 </script>
 
 <template>
