@@ -12,7 +12,7 @@
 <script setup lang="ts">
 import Tag from "@/components/Tag.vue";
 import {pushQuery} from "@/scripts/router";
-import {BlogMeta} from "@/scripts/models";
+import type {BlogMeta} from "@/scripts/models";
 import {globals} from "@/scripts/global";
 
 withDefaults(defineProps<{ mode?: 'tags' | 'categories' }>(), {

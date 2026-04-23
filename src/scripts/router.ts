@@ -1,4 +1,5 @@
-import {NavigationFailure, useRoute, useRouter} from 'vue-router'
+import {useRoute, useRouter} from 'vue-router'
+import type {NavigationFailure} from 'vue-router'
 
 export function pushQuery(query: {[id: string]: string | null}): Promise<void | NavigationFailure | undefined> {
   const route = useRoute()

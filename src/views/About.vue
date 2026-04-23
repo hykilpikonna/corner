@@ -17,7 +17,7 @@ import {parseExtensions} from '@/scripts/extended_markdown'
 import ZoteroPublication from "@/components/ZoteroPublication.vue";
 import {hosts} from "@/scripts/constants";
 import Loading from "@/components/Loading.vue";
-import {ZoteroAttachment, ZoteroItem} from "@/scripts/zotero";
+import type {ZoteroAttachment, ZoteroItem} from "@/scripts/zotero";
 
 const html = ref("")
 const publications = ref<ZoteroItem[]>([])

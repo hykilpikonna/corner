@@ -18,8 +18,9 @@
 <script setup lang="ts">
 import BlogPostPreview from "@/components/BlogPost.vue";
 import Loading from "@/components/Loading.vue";
-import {BlogMeta} from "@/scripts/models";
-import {Ref, ref, computed, onMounted} from "vue";
+import type {BlogMeta} from "@/scripts/models";
+import {ref, computed, onMounted} from "vue";
+import type {Ref} from "vue";
 import {hosts} from "@/scripts/constants";
 import {globals} from "@/scripts/global";
 

@@ -30,7 +30,7 @@ import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
 import linkifyUrls from "linkify-urls";
 import {$} from '@/scripts/constants';
-import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
+import type {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
 const props = defineProps<{ item: ZoteroItem }>()
 

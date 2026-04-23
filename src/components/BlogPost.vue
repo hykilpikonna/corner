@@ -28,7 +28,7 @@
 
 <script lang="ts" setup>
 import Tag from "@/components/Tag.vue";
-import {BlogPost} from "@/scripts/models";
+import type {BlogPost} from "@/scripts/models";
 import {pushQuery} from "@/scripts/router";
 import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";

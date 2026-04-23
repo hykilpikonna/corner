@@ -28,7 +28,8 @@
 </template>
 
 <script setup lang="ts">
-import {nextTick, onMounted, onUnmounted, ref, ComponentPublicInstance, watch} from 'vue';
+import {nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
+import type {ComponentPublicInstance} from 'vue'
 
 const route = useRoute()
 
