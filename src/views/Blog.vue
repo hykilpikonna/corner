@@ -40,7 +40,7 @@ const post = computed(() => typeof route.query.post === 'string' ? route.query.p
 const category = computed(() => typeof route.query.category === 'string' ? route.query.category : undefined)
 const tag = computed(() => typeof route.query.tag === 'string' ? route.query.tag : undefined)
 
-const clearQuery = (): Promise<void> => router.push({query: {}})
+const clearQuery = () => router.push({query: {}})
 
 const filteredPosts = computed(() => {
   const posts = meta.value.posts.filter(it => it.pinned || (tag.value ? it.tags.includes(tag.value) :

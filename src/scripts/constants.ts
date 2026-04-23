@@ -5,8 +5,8 @@ export const hosts = {
   content: production ? 'https://profile-content.hydev.org' : 'http://localhost:8082'
 }
 
-export const $ = (...args: any[]) => {
-  const jquery = (globalThis as any).jQuery
+export const $ = (...args: unknown[]): unknown => {
+  const jquery = (globalThis as { jQuery?: ((...innerArgs: unknown[]) => unknown) }).jQuery
   if (!jquery) throw new Error('jQuery is not available')
   return jquery(...args)
 }
