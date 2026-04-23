@@ -1,7 +1,9 @@
 .DS_Store
 node_modules
 /dist
-
+/.nuxt
+/.output
+/.nitro
 
 # local env files
 .env.local
