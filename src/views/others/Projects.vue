@@ -4,16 +4,7 @@
     </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
-
-@Component
-class Projects extends Vue
-{
-
-}
-
-export default toNative(Projects)
+<script setup lang="ts">
 </script>
 
 <style lang="sass" scoped>

@@ -7,30 +7,24 @@
     </div>
 </template>
 
-<script lang="ts">
-import { Component, Vue, Prop, toNative } from 'vue-facing-decorator'
+<script setup lang="ts">
+import {computed, onMounted} from 'vue'
 import {$} from '@/scripts/constants';
 
-@Component
-class Collapse extends Vue
-{
-    @Prop title!: string
-    @Prop({default: false}) active = false
+const props = withDefaults(defineProps<{ title: string, active?: boolean }>(), {
+    active: false
+})
 
-    show = false
+const displayTitle = computed((): string => decodeURIComponent(props.title))
 
-    get displayTitle(): string
-    {
-        return decodeURIComponent(this.title)
-    }
-
-    mounted(): void
-    {
-        $('.collapse').accordion({collapsible: true, header: 'h3', heightStyle: 'content',
-            active: this.active})
-    }
-}
-export default toNative(Collapse)
+onMounted((): void => {
+    $('.collapse').accordion({
+        collapsible: true,
+        header: 'h3',
+        heightStyle: 'content',
+        active: props.active
+    })
+})
 </script>
 
 <style lang="sass">
