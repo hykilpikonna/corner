@@ -1,5 +1,6 @@
-import {BlogMeta} from "@/scripts/models";
+import { reactive } from 'vue';
+import { BlogMeta } from "@/scripts/models";
 
-export let globals = {
-  staticMeta: {tags: [], categories: [], posts: []} as BlogMeta,
-}
+export const globals = reactive({
+  staticMeta: { tags: [], categories: [], posts: [] } as BlogMeta,
+});

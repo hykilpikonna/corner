@@ -1,5 +1,5 @@
 <template>
-    <div class="collapse">
+    <div class="collapse" ref="root">
         <h3 v-html="displayTitle" class="clickable"></h3>
         <div class="content">
             <slot></slot>
@@ -8,22 +8,25 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted} from 'vue'
+import {computed, onMounted, ref} from 'vue'
 import {$} from '@/scripts/constants';
 
 const props = withDefaults(defineProps<{ title: string, active?: boolean }>(), {
     active: false
 })
 
+const root = ref<HTMLElement | null>(null)
 const displayTitle = computed((): string => decodeURIComponent(props.title))
 
 onMounted((): void => {
-    $('.collapse').accordion({
-        collapsible: true,
-        header: 'h3',
-        heightStyle: 'content',
-        active: props.active
-    })
+    if (root.value) {
+        $(root.value).accordion({
+            collapsible: true,
+            header: 'h3',
+            heightStyle: 'content',
+            active: props.active
+        })
+    }
 })
 </script>
 

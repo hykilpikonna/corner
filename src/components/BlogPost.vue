@@ -4,23 +4,22 @@
 
         <div id="titles" class="unselectable clickable" @click="clickTitle">
             <div id="date">{{ date.format('YYYY-MM-DD') }}</div>
-            <div id="title">{{ meta.title }}</div>
-            <div id="subtitle" v-if="meta.subtitle">{{ meta.subtitle }}</div>
+            <div id="title">{{ p.meta.title }}</div>
+            <div id="subtitle" v-if="p.meta.subtitle">{{ p.meta.subtitle }}</div>
             <div class="tags">
                 <div v-if="tagOnTop" style="display: inline-block">
-                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{ t }}</Tag>
+                    <Tag v-for="t in p.meta.tags" :key="t" direction="left">{{ t }}</Tag>
                 </div>
-                <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
+                <i id="pin" class="fas fa-thumbtack" v-if="p.meta.pinned"></i>
             </div>
         </div>
 
         <div id="content">
             <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && !imageOnTop" alt="Title Image">
-            <div id="text" class="markdown-content">
-                <Dynamic :template="content"></Dynamic>
+            <div id="text" class="markdown-content" v-html="content" ref="textRef">
             </div>
             <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
+                <Tag v-for="t in p.meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
             </div>
         </div>
     </div>
@@ -32,8 +31,9 @@ import {BlogPost} from "@/scripts/models";
 import {pushQuery} from "@/scripts/router";
 import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";
-import moment from "moment/moment";
-import {computed, onMounted, watch} from 'vue';
+import moment from "moment";
+import {computed, onMounted, watch, ref, nextTick, createApp} from 'vue';
+import BlogIndex from './BlogIndex.vue';
 
 const p = withDefaults(defineProps<{
     meta: BlogPost
@@ -46,7 +46,8 @@ const p = withDefaults(defineProps<{
     active: false
 })
 
-const uid = (Math.random() + 1).toString(36).substring(7)
+const uid = 'bp-' + p.meta.url_name.replace(/[^a-z0-9]/gi, '-')
+const textRef = ref<HTMLElement | null>(null)
 
 let isActiveChangeDueToClickTitle = false
 
@@ -60,6 +61,23 @@ function clickTitle(): void
     else pushQuery({post: null})
 }
 
+const mountComponents = () => {
+    if (!textRef.value) return
+    
+    // Handle BlogIndex
+    textRef.value.querySelectorAll('blogindex').forEach(el => {
+        const mode = el.getAttribute('mode') as any || 'tags'
+        const app = createApp(BlogIndex, { mode })
+        app.mount(el)
+    })
+
+    // Fix image heights from attributes
+    textRef.value.querySelectorAll('img[height]').forEach(img => {
+        const h = img.getAttribute('height');
+        if (h) (img as HTMLElement).style.height = h.includes('px') ? h : h + 'px';
+    });
+}
+
 onMounted(() => {
     updateTitle()
 
@@ -68,26 +86,19 @@ onMounted(() => {
         collapsible: true, header: '#titles', heightStyle: 'content',
         active: p.active ? 0 : false
     })
+    
+    mountComponents()
 })
 
-/**
- * Watch active status change, use this to change accordions' activation on history back/forward
- *
- * Also use this to change the title
- */
 watch(() => p.active, (active, _) => {
     updateTitle()
 
-    // Ignore active status changes due to clicking the title
-    console.log('Blog Post: onActiveChange Called on', p.meta.title)
-    if (isActiveChangeDueToClickTitle)
-    {
-        isActiveChangeDueToClickTitle = false
-        return
-    }
-
-    // Change accordion activation status
+    console.log('Blog Post: onActiveChange Called on', p.meta.title, 'active:', active)
     $(`.${uid}`).accordion('option', {active: active ? 0 : false});
+})
+
+watch(() => p.meta.content, () => {
+    nextTick(mountComponents)
 })
 
 function updateTitle(): void
@@ -95,9 +106,6 @@ function updateTitle(): void
     if (p.active) document.title = `Blog: ${p.meta.title}`
 }
 
-/**
- * Element classes
- */
 const elClass = computed(() =>
 {
     let classes = [uid]
@@ -106,8 +114,23 @@ const elClass = computed(() =>
     return classes
 })
 
-const content = marked(p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content))
-const date = moment(p.meta.date)
+const content = computed(() => {
+    let raw = p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content)
+    let html = marked.parse(raw) as string
+    
+    // Handle Obsidian-style images ![[url|caption]]
+    html = html.replace(/!\[\[(.*?)\]\]/g, (match, content) => {
+        const [url, caption] = content.split('|')
+        const fullUrl = url.startsWith('http') ? url : `${hosts.content}/posts/${url}`
+        if (caption) {
+            return `<figure class="image-wrap"><img src="${fullUrl}" alt="${caption}"><caption class="caption">${caption}</caption></figure>`
+        }
+        return `<img src="${fullUrl}">`
+    })
+
+    return html
+})
+const date = computed(() => moment(p.meta.date))
 </script>
 
 <style lang="sass" scoped>
@@ -125,6 +148,27 @@ const date = moment(p.meta.date)
 
     > * + *, #content > * + *
         padding-top: 10px
+
+    .image-wrap
+        margin: 1em 0
+        display: flex
+        flex-direction: column
+        align-items: center
+
+        img
+            margin-left: 0
+            margin-right: 0
+            width: 100%
+
+    .caption, caption
+        display: block
+        width: 100%
+        text-align: center
+        margin-top: 0.5em
+        font-size: 1.1em
+        color: colors.$color-text-light
+        font-family: 'Caveat', 'Shadows Into Light', cursive
+        opacity: 0.8
 
     .tags
         font-size: 0.7em

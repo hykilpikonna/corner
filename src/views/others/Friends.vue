@@ -41,7 +41,9 @@ const icons: {[id: string]: string} = {
   blog: 'fas fa-book'
 }
 
-const friends = ref<Friend[]>([])
+import friendsJson from "@/data/friends.json";
+
+const friends = ref<Friend[]>(friendsJson as Friend[])
 
 const bgStyle = (f: Friend) => {
   if (f.banner) return {'background-image': `url("${f.banner}")`}
@@ -52,14 +54,12 @@ const getFriendLinks = (f: Friend): { link: string, icon: string }[] => {
   return Object.entries(f)
     .filter(([key, value]) => !excludes.has(key) && typeof value === 'string')
     .map(([key, value]) => ({
-      link: value,
+      link: value as string,
       icon: fab.includes(key) ? `fab fa-${key}` : (key in icons ? icons[key] : key)
     }))
 }
 
 onMounted(async () => {
-  friends.value = await (await fetch(`${hosts.content}/content/generated/friends/friends.json`)).json()
-
   friends.value.forEach(f => {
     if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
     if (f.banner && !f.banner.startsWith('http')) f.banner = `${hosts.content}/${f.banner}`

@@ -1,0 +1,18 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import PhotoView from '@/views/Photo.vue';
+
+export async function getStaticPaths() {
+  const photos = await fetch('https://p.aza.moe/photos').then(res => res.json());
+  return [
+    { params: { id: undefined } }, // /photo
+    ...photos.map((p: any) => ({ params: { id: p.id } })) // /photo/:id
+  ];
+}
+
+const { id } = Astro.params;
+---
+
+<Layout title="相册" routeName="Photo">
+    <PhotoView client:only="vue" id={id} />
+</Layout>

@@ -1,0 +1,8 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import FriendsView from '@/views/others/Friends.vue';
+---
+
+<Layout title="朋友们" routeName="Friends" navBookmark="Others">
+    <FriendsView client:load />
+</Layout>

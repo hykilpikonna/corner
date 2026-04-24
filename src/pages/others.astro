@@ -1,0 +1,37 @@
+---
+import Layout from '@/layouts/Layout.astro';
+---
+
+<Layout title="更多" routeName="Others">
+    <div id="Others" class="general-page">
+        <div class="title">
+            <h2>更多链接</h2>
+            <div class="subtitle">欢迎点进来看看</div>
+        </div>
+        <div class="links">
+            <a class="rlink" href="/kitchen-menu">🍳 小桂桂的私房菜 菜单</a>
+            <a class="rlink" href="/friends">🎎 朋友们</a>
+            <a href="https://cast.hydev.org">📹 公开直播间</a>
+            <a href="https://status.hydev.org/">🔌 看看服务器们过得怎么样</a>
+        </div>
+    </div>
+</Layout>
+
+<style lang="sass">
+@use "../css/global"
+@use "../css/colors"
+@use "../css/responsive"
+
+.links
+    display: flex
+    gap: 10px
+    flex-direction: column
+    align-items: flex-start
+
+a
+    @extend .card
+    @extend .clickable
+
+    color: colors.$color-text-main
+    text-decoration: none
+</style>

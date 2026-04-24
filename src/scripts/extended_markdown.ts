@@ -95,16 +95,14 @@ export function parseExtensions(raw: string): string
     function collapseSection()
     {
         const e = findSectionEnd()
-        const title = lines[i].substring(lines[i].indexOf(' ') + 1).replace(re.command, '')
-        lines[i] = `<Collapse title="${encodeURIComponent(title)}">`
-        lines.splice(e, 0, '</Collapse>\n')
+        const title = lines[i].replace(re.hashes, '').replace(re.command, '').trim()
+        lines[i] = `<div class="collapse-block"><h3 class="collapse-header clickable">${title}</h3><div class="collapse-content">`
+        lines.splice(e, 0, '</div></div>\n')
     }
 
     // Run all commands in markdown
     while (i < lines.length)
     {
-        console.log(`Line ${i}`)
-
         // Find commands
         const r = re.command.find(lines[i])
         if (r)
@@ -113,7 +111,6 @@ export function parseExtensions(raw: string): string
             cmd = cmd.substring(5, cmd.length - 5).trim()
 
             // Run cmd
-            console.log(`Running command`, cmd)
             eval(cmd)
         }
 
@@ -131,6 +128,5 @@ export function parseExtensions(raw: string): string
         collapseSection()
     }
 
-    console.log(lines.join('\n'))
     return lines.join('\n')
 }

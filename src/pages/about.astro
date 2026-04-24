@@ -1,0 +1,8 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import AboutView from '@/views/About.vue';
+---
+
+<Layout title="关于" routeName="About">
+    <AboutView client:load />
+</Layout>

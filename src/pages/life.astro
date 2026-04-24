@@ -1,0 +1,8 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import LifeView from '@/views/Life.vue';
+---
+
+<Layout title="生活" routeName="Life">
+    <LifeView client:only="vue" />
+</Layout>

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import {onMounted, ref} from 'vue'
-import {useRoute} from "vue-router";
+
+const props = defineProps<{
+  id?: string
+}>()
 
 interface PhotoMetadata {
   id: string
@@ -28,7 +31,7 @@ async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
   })
 }
 
-const route = useRoute()
+
 const photos = ref<PhotoMetadata[]>([])
 const photoRows = ref<PhotoMetadata[][]>([])
 
@@ -92,8 +95,8 @@ const clickPhoto = async (p: PhotoMetadata, e: MouseEvent) => {
 onMounted(async () => {
   await initPhotos()
 
-  if (route.params.id) {
-    const photoEl = await waitTruthy(() => document.getElementById(`photo-${route.params.id}`))
+  if (props.id) {
+    const photoEl = await waitTruthy(() => document.getElementById(`photo-${props.id}`))
     photoEl.click()
   }
 })

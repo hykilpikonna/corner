@@ -20,7 +20,7 @@ import BlogPostPreview from "@/components/BlogPost.vue";
 import Loading from "@/components/Loading.vue";
 import {BlogMeta} from "@/scripts/models";
 import {Ref, ref, computed, onMounted} from "vue";
-import {hosts} from "@/scripts/constants";
+import metasJson from "@/data/blog/metas.json";
 import {globals} from "@/scripts/global";
 import {Router} from "vue-router";
 
@@ -32,18 +32,33 @@ const p = defineProps<{
     tag?: string
 }>()
 
-let meta: Ref<BlogMeta> = ref({tags: [], categories: [], posts: []})
+let meta: Ref<BlogMeta> = ref(metasJson as unknown as BlogMeta)
+
+const query = ref({
+    post: p.post,
+    category: p.category,
+    tag: p.tag
+})
 
 onMounted(() => {
-    fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
-        meta.value = it
-        globals.staticMeta = it
-    })
+    globals.staticMeta = meta.value
+    
+    const initQuery = () => {
+        const url = new URL(window.location.href);
+        query.value = {
+            post: url.searchParams.get('post') || undefined,
+            category: url.searchParams.get('category') || undefined,
+            tag: url.searchParams.get('tag') || undefined
+        }
+    }
+    
+    initQuery()
+    window.addEventListener('popstate', initQuery)
 })
 
 const filteredPosts = computed(() => {
-    const posts = meta.value.posts.filter(it => it.pinned || (p.tag ? it.tags.includes(p.tag) :
-        p.category ? it.category == p.category : true))
+    const posts = meta.value.posts.filter(it => it.pinned || (query.value.tag ? it.tags.includes(query.value.tag) :
+        query.value.category ? it.category == query.value.category : true))
 
     // Put pinned posts on top
     posts.sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0))
@@ -54,8 +69,8 @@ const filteredPosts = computed(() => {
 const activePost = computed(() => {
     const posts = filteredPosts.value
     if (posts.length == 0) return null
-    if (!p.post) return null
-    return p.post ? posts.filter(it => it.url_name == p.post)[0] : posts[0].pinned ? posts[0] : null
+    if (!query.value.post) return null
+    return posts.filter(it => it.url_name == query.value.post)[0]
 })
 </script>
 

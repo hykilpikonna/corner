@@ -1,10 +1,10 @@
 <template>
     <div class="index index-tags" v-if="mode === 'tags'">
-        <Tag v-for="t in meta.tags" :key="`${t[0]}-${t[1]}`" :tag-name="t[0]" direction="right"
+        <Tag v-for="t in globals.staticMeta.tags" :key="`${t[0]}-${t[1]}`" :tag-name="t[0]" direction="right"
              @click="e => clickTag(e, t)">{{ t[0] }} ({{ t[1] }})</Tag>
     </div>
     <div class="index index-categories" v-else>
-        <span v-for="c in meta.categories" :key="c[0]" class="clickable unselectable"
+        <span v-for="c in globals.staticMeta.categories" :key="c[0]" class="clickable unselectable"
               @click="e => clickCat(e, c)">{{ c[0] }} ({{ c[1] }})</span>
     </div>
 </template>
@@ -12,14 +12,11 @@
 <script setup lang="ts">
 import Tag from "@/components/Tag.vue";
 import {pushQuery} from "@/scripts/router";
-import {BlogMeta} from "@/scripts/models";
 import {globals} from "@/scripts/global";
 
 withDefaults(defineProps<{ mode?: 'tags' | 'categories' }>(), {
     mode: 'tags'
 })
-
-const meta: BlogMeta = globals.staticMeta
 
 const clickCat = (e: MouseEvent, cat: [string, number]): void => {
     e.stopPropagation()

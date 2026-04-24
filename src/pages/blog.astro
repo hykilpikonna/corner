@@ -1,0 +1,12 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import BlogView from '@/views/Blog.vue';
+
+const post = Astro.url.searchParams.get('post');
+const category = Astro.url.searchParams.get('category');
+const tag = Astro.url.searchParams.get('tag');
+---
+
+<Layout title="记事本" routeName="Blog">
+    <BlogView client:load post={post} category={category} tag={tag} />
+</Layout>
