@@ -1,0 +1,1 @@
+function e(e){return e.charAt(0).toUpperCase()+e.slice(1)}function t(e){let t=e.length,n;for(;t!=0;)n=Math.floor(Math.random()*t),t--,[e[t],e[n]]=[e[n],e[t]];return e}export{t as n,e as t};
