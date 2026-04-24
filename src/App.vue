@@ -123,7 +123,7 @@ onUnmounted(() => {
     font-size: 1.4em
     align-items: flex-start
 
-    z-index: 100
+    z-index: 4000
     pointer-events: none
 
     #menu
