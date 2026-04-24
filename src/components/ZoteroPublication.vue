@@ -28,7 +28,7 @@ import {computed, onMounted} from 'vue'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
-import linkifyUrls from "linkify-urls";
+import {linkifyUrlsToHtml} from "linkify-urls";
 import {$} from '@/scripts/constants';
 import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
@@ -46,7 +46,7 @@ const tableData = computed((): {[id: string]: unknown} => {
     delete t.title
     delete t.abstractNote
     if (t.itemType) t.itemType = capitalize(t.itemType as string)
-    if (t.url) t.url = linkifyUrls(t.url as string)
+    if (t.url) t.url = linkifyUrlsToHtml(t.url as string)
     return t
 })
 

@@ -24,7 +24,7 @@ const publications = ref<ZoteroItem[]>([])
 
 onMounted((): void => {
     fetch(`${hosts.content}/README.md`).then(it => it.text())
-        .then(it => html.value = marked(parseExtensions(it.replace(emojiRegex(), (emoji) => {
+        .then(async it => html.value = await marked.parse(parseExtensions(it.replace(emojiRegex(), (emoji) => {
             return `<span class="emoji">${emoji}</span>`
         }))))
 
