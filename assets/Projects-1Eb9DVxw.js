@@ -1,1 +1,0 @@
-import{A as e,_ as t,c as n}from"./index-CmmgvCHH.js";var r={},i={id:`Projects`};function a(n,r){return e(),t(`div`,i)}var o=n(r,[[`render`,a]]);export{o as default};

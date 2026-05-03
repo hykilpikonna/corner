@@ -1,0 +1,1 @@
+import{A as e,_ as t,c as n}from"./index-HVdHQ9Gs.js";var r={},i={id:`Projects`};function a(n,r){return e(),t(`div`,i)}var o=n(r,[[`render`,a]]);export{o as default};
