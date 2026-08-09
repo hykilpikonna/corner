@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import {onMounted, ref} from 'vue'
+import {onMounted} from 'vue'
 import {fab, hosts} from "@/scripts/constants";
 import {shuffle} from "@/scripts/utils";
 
@@ -41,7 +41,17 @@ const icons: {[id: string]: string} = {
   blog: 'fas fa-book'
 }
 
-const friends = ref<Friend[]>([])
+const {data: friends, refresh: refreshFriends} = await useFetch<Friend[]>(`${hosts.content}/content/generated/friends/friends.json`, {
+  key: 'friends',
+  default: () => [],
+  transform: (items) => items.map(friend => ({
+    ...friend,
+    avatar: friend.avatar.startsWith('http') ? friend.avatar : `${hosts.content}/${friend.avatar}`,
+    banner: !friend.banner || friend.banner.startsWith('http')
+      ? friend.banner
+      : `${hosts.content}/${friend.banner}`,
+  })),
+})
 
 const bgStyle = (f: Friend) => {
   if (f.banner) return {'background-image': `url("${f.banner}")`}
@@ -58,13 +68,8 @@ const getFriendLinks = (f: Friend): { link: string, icon: string }[] => {
 }
 
 onMounted(async () => {
-  friends.value = await (await fetch(`${hosts.content}/content/generated/friends/friends.json`)).json()
-
-  friends.value.forEach(f => {
-    if (!f.avatar.startsWith('http')) f.avatar = `${hosts.content}/${f.avatar}`
-    if (f.banner && !f.banner.startsWith('http')) f.banner = `${hosts.content}/${f.banner}`
-  })
-  friends.value = shuffle(friends.value)
+  await refreshFriends()
+  friends.value = shuffle([...friends.value])
 })
 </script>
 

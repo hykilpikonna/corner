@@ -1,5 +1,5 @@
 <template>
-    <div class="publication">
+    <div ref="publicationElement" class="publication">
         <div class="header fbox-h">
             <i class="icon fas fa-caret-right"></i>
             <div class="fbox-v">
@@ -24,15 +24,16 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted} from 'vue'
+import {computed, onMounted, ref} from 'vue'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
 import {capitalize} from "@/scripts/utils";
 import {linkifyUrlsToHtml} from "linkify-urls";
 import {$} from '@/scripts/constants';
-import {ZoteroData, ZoteroItem} from "@/scripts/zotero";
+import type {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
 const props = defineProps<{ item: ZoteroItem }>()
+const publicationElement = ref<HTMLElement | null>(null)
 
 const d = computed((): ZoteroData => props.item.data)
 const date = computed((): moment.Moment => moment(props.item.meta.parsedDate))
@@ -51,7 +52,7 @@ const tableData = computed((): {[id: string]: unknown} => {
 })
 
 onMounted((): void => {
-    $('.publication').accordion({
+    $(publicationElement.value).accordion({
         collapsible: true,
         header: 'div.header',
         active: false,

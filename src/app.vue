@@ -1,22 +1,23 @@
 <template>
+  <div id="app">
     <div id="nav" class="fbox-v"
          :class="(currentRoute) + ' ' + (menuOpen ? 'open' : '')"
          v-if="currentRoute !== 'colorpicker'">
         <div id="menu" @click="showMenu"><i class="fas fa-bars"></i></div>
 
         <div id="items" class="fbox-v">
-            <router-link class="router-link" :ref="setNavRef('others')" to="/others">{{ $t('nav.others') }}</router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('others')" to="/others">{{ t('nav.others') }}</NuxtLink>
             <div class="dot">·</div>
-            <router-link class="router-link" :ref="setNavRef('photo')" to="/photo">{{ $t('nav.photo') }}</router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('photo')" to="/photo">{{ t('nav.photo') }}</NuxtLink>
             <div class="dot">·</div>
-            <router-link class="router-link" :ref="setNavRef('blog')" to="/blog">{{ $t('nav.blog') }}</router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('blog')" to="/blog">{{ t('nav.blog') }}</NuxtLink>
             <div class="dot">·</div>
-            <router-link class="router-link" :ref="setNavRef('life')" to="/life">{{ $t('nav.life') }}</router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('life')" to="/life">{{ t('nav.life') }}</NuxtLink>
             <div class="dot">·</div>
-            <router-link class="router-link" :ref="setNavRef('about')" to="/about">{{ $t('nav.about') }}</router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('about')" to="/about">{{ t('nav.about') }}</NuxtLink>
             <div class="dot">·</div>
-            <router-link class="router-link" :ref="setNavRef('home')" to="/">
-              <svg focusable="false" data-prefix="fal" data-icon="house-night" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512" class="svg-inline--fa fa-house-night fa-w-20"><path fill="currentColor" d="M112,224a111.5,111.5,0,0,0,87-41.45,20.51,20.51,0,0,0-19.75-33.08A59.2,59.2,0,0,1,138.84,39.85a20.3,20.3,0,0,0,10.07-21.27,20.26,20.26,0,0,0-16.47-16.7A136,136,0,0,0,112,0a112,112,0,0,0,0,224ZM97.78,33.27a91.21,91.21,0,0,0,54.47,147.9A80,80,0,1,1,97.78,33.27Zm97.15,35.51,39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L317,68.78a5.33,5.33,0,0,0,0-9.54L277.32,42.68,260.76,3a5.33,5.33,0,0,0-9.55,0L234.65,42.68,194.93,59.24a5.34,5.34,0,0,0,0,9.54ZM157,379.24l-39.72-16.57L100.76,323a5.34,5.34,0,0,0-9.55,0L74.65,362.67,34.93,379.24a5.34,5.34,0,0,0,0,9.54l39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L157,388.78a5.33,5.33,0,0,0,0-9.54Zm179-101.9v85.33A21.39,21.39,0,0,0,357.36,384h85.31A21.39,21.39,0,0,0,464,362.67V277.34A21.4,21.4,0,0,0,442.67,256H357.36A21.4,21.4,0,0,0,336,277.34ZM368,288H432v64H368Zm266.49,8L576,244.75V144a16,16,0,0,0-32,0v72.75L410.53,100a16,16,0,0,0-21.07,0l-224,196a16,16,0,0,0,21.07,24.09L224,287.28V464a48.05,48.05,0,0,0,48,48H528a48.06,48.06,0,0,0,48-48V287.28l37.46,32.78A16,16,0,0,0,634.53,296ZM544,464a16,16,0,0,1-16,16H272a16,16,0,0,1-16-16V264a15.94,15.94,0,0,0-.81-4L400,133.27l144,126Z" class=""></path></svg></router-link>
+            <NuxtLink class="router-link" :ref="setNavRef('home')" to="/">
+              <svg focusable="false" data-prefix="fal" data-icon="house-night" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512" class="svg-inline--fa fa-house-night fa-w-20"><path fill="currentColor" d="M112,224a111.5,111.5,0,0,0,87-41.45,20.51,20.51,0,0,0-19.75-33.08A59.2,59.2,0,0,1,138.84,39.85a20.3,20.3,0,0,0,10.07-21.27,20.26,20.26,0,0,0-16.47-16.7A136,136,0,0,0,112,0a112,112,0,0,0,0,224ZM97.78,33.27a91.21,91.21,0,0,0,54.47,147.9A80,80,0,1,1,97.78,33.27Zm97.15,35.51,39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L317,68.78a5.33,5.33,0,0,0,0-9.54L277.32,42.68,260.76,3a5.33,5.33,0,0,0-9.55,0L234.65,42.68,194.93,59.24a5.34,5.34,0,0,0,0,9.54ZM157,379.24l-39.72-16.57L100.76,323a5.34,5.34,0,0,0-9.55,0L74.65,362.67,34.93,379.24a5.34,5.34,0,0,0,0,9.54l39.72,16.56,16.56,39.72a5.33,5.33,0,0,0,9.55,0l16.56-39.72L157,388.78a5.33,5.33,0,0,0,0-9.54Zm179-101.9v85.33A21.39,21.39,0,0,0,357.36,384h85.31A21.39,21.39,0,0,0,464,362.67V277.34A21.4,21.4,0,0,0,442.67,256H357.36A21.4,21.4,0,0,0,336,277.34ZM368,288H432v64H368Zm266.49,8L576,244.75V144a16,16,0,0,0-32,0v72.75L410.53,100a16,16,0,0,0-21.07,0l-224,196a16,16,0,0,0,21.07,24.09L224,287.28V464a48.05,48.05,0,0,0,48,48H528a48.06,48.06,0,0,0,48-48V287.28l37.46,32.78A16,16,0,0,0,634.53,296ZM544,464a16,16,0,0,1-16,16H272a16,16,0,0,1-16-16V264a15.94,15.94,0,0,0-.81-4L400,133.27l144,126Z" class=""></path></svg></NuxtLink>
         </div>
 
         <div id="nav-bookmark" ref="bookmark" :style="bookmarkCss"></div>
@@ -25,22 +26,31 @@
         <img id="meru" src="/meru_256px.png" alt="">
     </div>
 
-    <router-view/>
+    <NuxtPage/>
+  </div>
 </template>
 
 <script setup lang="ts">
-import {nextTick, onMounted, onUnmounted, ref, ComponentPublicInstance} from 'vue';
-import router from "@/scripts/router";
-import {RouteLocationNormalized, RouteLocationRaw, useRoute} from "vue-router";
+import {nextTick, onMounted, onUnmounted, ref, watch} from 'vue'
+import type {ComponentPublicInstance} from 'vue'
+import {useI18n} from 'vue-i18n'
 
 const route = useRoute()
+const {t} = useI18n()
 
-const currentRoute = ref('')
+const getRouteBookmark = (to: typeof route): string => {
+    const bookmark = to.meta?.navBookmark
+    if (typeof bookmark === 'string') return bookmark.toLowerCase()
+    if (to.path.startsWith('/photo')) return 'photo'
+    if (['/others', '/kitchen-menu', '/friends', '/projects'].includes(to.path)) return 'others'
+    return to.path === '/' ? 'home' : to.path.split('/')[1].toLowerCase()
+}
+
+const currentRoute = ref(getRouteBookmark(route))
 const bookmarkCss = ref('')
 const lastTop = ref(0)
 const menuOpen = ref(false)
 const bookmarkUpdateIntervalId = ref<number | null>(null)
-const removeAfterEach = ref<(() => void) | null>(null)
 
 const navRefs = ref<Record<string, Element | ComponentPublicInstance | null>>({})
 
@@ -75,36 +85,25 @@ const calculateBookmarkCss = (): void => {
         `border-width: ${width}px 20px ${width}px 50px;`
 }
 
-const getRouteBookmark = (to: RouteLocationNormalized): string => {
-    return ((to.meta?.navBookmark ?? to.name) as string).toLowerCase()
-}
-
-const updateBookmark = (to: RouteLocationNormalized): void => {
-    nextTick(() => {
-        if (to.name == 'Blog' && Object.keys(to.query).length != 0) return
-        document.title = to.meta.title ? `Aza - ${to.meta.title}` : 'Aza - Home';
-    })
-
-    console.log('AfterEach called', to)
+const updateBookmark = (to: typeof route): void => {
     currentRoute.value = getRouteBookmark(to)
-
-    calculateBookmarkCss()
     menuOpen.value = false
+    nextTick(calculateBookmarkCss)
 }
+
+useHead(() => ({
+    title: route.meta.title ? `Aza - ${String(route.meta.title)}` : 'Aza - Home'
+}))
+
+watch(() => route.fullPath, () => updateBookmark(route))
 
 onMounted(() => {
-    console.log('Mounted called', route)
-    removeAfterEach.value = router.afterEach(updateBookmark)
-    if (route.name) {
-        currentRoute.value = getRouteBookmark(route as unknown as RouteLocationNormalized)
-    }
-
+    nextTick(calculateBookmarkCss)
     window.addEventListener('resize', calculateBookmarkCss, true)
     bookmarkUpdateIntervalId.value = window.setInterval(calculateBookmarkCss, 1000)
 })
 
 onUnmounted(() => {
-    removeAfterEach.value?.()
     window.removeEventListener('resize', calculateBookmarkCss, true)
     if (bookmarkUpdateIntervalId.value !== null) {
         window.clearInterval(bookmarkUpdateIntervalId.value)
@@ -115,6 +114,9 @@ onUnmounted(() => {
 <style lang="sass">
 @use "css/global"
 @use "css/animations"
+
+#nav *
+    transition: all .25s ease
 
 #nav
     position: fixed

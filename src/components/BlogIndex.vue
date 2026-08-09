@@ -11,15 +11,17 @@
 
 <script setup lang="ts">
 import Tag from "@/components/Tag.vue";
-import {pushQuery} from "@/scripts/router";
-import {BlogMeta} from "@/scripts/models";
-import {globals} from "@/scripts/global";
+import {useQueryNavigation} from "@/scripts/router";
+import type {BlogMeta} from "@/scripts/models";
+import {blogMetaKey, emptyBlogMeta} from "@/scripts/global";
+import {inject, ref} from 'vue'
 
 withDefaults(defineProps<{ mode?: 'tags' | 'categories' }>(), {
     mode: 'tags'
 })
 
-const meta: BlogMeta = globals.staticMeta
+const meta = inject(blogMetaKey, ref<BlogMeta>(emptyBlogMeta()))
+const {pushQuery} = useQueryNavigation()
 
 const clickCat = (e: MouseEvent, cat: [string, number]): void => {
     e.stopPropagation()

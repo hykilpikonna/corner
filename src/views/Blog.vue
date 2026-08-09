@@ -5,7 +5,7 @@
             <div class="subtitle">一些值得留下来的文字</div>
         </div>
         <div id="breadcrumb">
-            <span class="clickable" @click="() => $router.push({query: {}})">索引</span>
+            <span class="clickable" @click="clearQuery">索引</span>
             <span v-if="tag">🏷️{{tag}}</span>
             <span v-if="category">📂{{category}}</span>
             <span class="no-after" v-if="post && activePost">{{activePost.title}}</span>
@@ -18,32 +18,31 @@
 <script setup lang="ts">
 import BlogPostPreview from "@/components/BlogPost.vue";
 import Loading from "@/components/Loading.vue";
-import {BlogMeta} from "@/scripts/models";
-import {Ref, ref, computed, onMounted} from "vue";
+import {computed, onMounted, provide, watch} from "vue";
+import type {BlogMeta} from "@/scripts/models";
 import {hosts} from "@/scripts/constants";
-import {globals} from "@/scripts/global";
-import {Router} from "vue-router";
+import {blogMetaKey, emptyBlogMeta} from "@/scripts/global";
 
-let $router: Router
+const route = useRoute()
+const router = useRouter()
 
-const p = defineProps<{
-    post?: string,
-    category?: string,
-    tag?: string
-}>()
-
-let meta: Ref<BlogMeta> = ref({tags: [], categories: [], posts: []})
-
-onMounted(() => {
-    fetch(`${hosts.content}/content/generated/metas.json`).then(it => it.json()).then(it => {
-        meta.value = it
-        globals.staticMeta = it
-    })
+const {data: meta, refresh: refreshMeta} = await useFetch<BlogMeta>(`${hosts.content}/content/generated/metas.json`, {
+    key: 'blog-meta',
+    default: emptyBlogMeta,
 })
 
+provide(blogMetaKey, meta)
+onMounted(() => void refreshMeta())
+
+const post = computed(() => typeof route.query.post === 'string' ? route.query.post : undefined)
+const category = computed(() => typeof route.query.category === 'string' ? route.query.category : undefined)
+const tag = computed(() => typeof route.query.tag === 'string' ? route.query.tag : undefined)
+
+const clearQuery = () => router.push({query: {}})
+
 const filteredPosts = computed(() => {
-    const posts = meta.value.posts.filter(it => it.pinned || (p.tag ? it.tags.includes(p.tag) :
-        p.category ? it.category == p.category : true))
+    const posts = meta.value.posts.filter(it => it.pinned || (tag.value ? it.tags.includes(tag.value) :
+        category.value ? it.category == category.value : true))
 
     // Put pinned posts on top
     posts.sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0))
@@ -54,9 +53,15 @@ const filteredPosts = computed(() => {
 const activePost = computed(() => {
     const posts = filteredPosts.value
     if (posts.length == 0) return null
-    if (!p.post) return null
-    return p.post ? posts.filter(it => it.url_name == p.post)[0] : posts[0].pinned ? posts[0] : null
+    if (!post.value) return null
+    return posts.find(it => it.url_name === post.value) ?? null
 })
+
+watch(activePost, (active) => {
+    if (import.meta.client) {
+        document.title = active ? `Blog: ${active.title}` : 'Aza - 记事本'
+    }
+}, {flush: 'post'})
 </script>
 
 <style lang="sass" scoped>

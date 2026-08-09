@@ -1,5 +1,5 @@
 <template>
-    <div id="BlogPostPreview" class="card" :class="elClass">
+    <div id="BlogPostPreview" ref="postElement" class="card" :class="elClass">
         <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && imageOnTop" alt="Title Image">
 
         <div id="titles" class="unselectable clickable" @click="clickTitle">
@@ -17,7 +17,13 @@
         <div id="content">
             <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && !imageOnTop" alt="Title Image">
             <div id="text" class="markdown-content">
-                <Dynamic :template="content"></Dynamic>
+                <template v-if="p.meta.url_name === 'Index'">
+                    <p>按分类检索：</p>
+                    <BlogIndex />
+                    <p>按主题检索：</p>
+                    <BlogIndex mode="categories" />
+                </template>
+                <div v-else v-html="content"></div>
             </div>
             <div class="tags" v-if="!tagOnTop">
                 <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
@@ -28,12 +34,13 @@
 
 <script lang="ts" setup>
 import Tag from "@/components/Tag.vue";
-import {BlogPost} from "@/scripts/models";
-import {pushQuery} from "@/scripts/router";
+import BlogIndex from '@/components/BlogIndex.vue'
+import type {BlogPost} from "@/scripts/models";
+import {useQueryNavigation} from "@/scripts/router";
 import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import moment from "moment/moment";
-import {computed, onMounted, watch} from 'vue';
+import {computed, onMounted, ref, watch} from 'vue';
 
 const p = withDefaults(defineProps<{
     meta: BlogPost
@@ -46,7 +53,9 @@ const p = withDefaults(defineProps<{
     active: false
 })
 
-const uid = (Math.random() + 1).toString(36).substring(7)
+const {pushQuery} = useQueryNavigation()
+
+const postElement = ref<HTMLElement | null>(null)
 
 let isActiveChangeDueToClickTitle = false
 
@@ -64,7 +73,7 @@ onMounted(() => {
     updateTitle()
 
     // Create accordion
-    $(`.${uid}`).accordion({
+    $(postElement.value).accordion({
         collapsible: true, header: '#titles', heightStyle: 'content',
         active: p.active ? 0 : false
     })
@@ -87,7 +96,7 @@ watch(() => p.active, (active, _) => {
     }
 
     // Change accordion activation status
-    $(`.${uid}`).accordion('option', {active: active ? 0 : false});
+    $(postElement.value).accordion('option', {active: active ? 0 : false});
 })
 
 function updateTitle(): void
@@ -100,14 +109,17 @@ function updateTitle(): void
  */
 const elClass = computed(() =>
 {
-    let classes = [uid]
+    let classes: string[] = []
     if (p.imageOnTop) classes.push('image-top')
     if (p.tagOnTop) classes.push('tag-top')
     return classes
 })
 
-const content = marked(p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content))
-const date = moment(p.meta.date)
+const content = computed(() => marked.parse(
+    p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content),
+    {async: false},
+).replaceAll('<caption>', '<figcaption>').replaceAll('</caption>', '</figcaption>'))
+const date = computed(() => moment(p.meta.date))
 </script>
 
 <style lang="sass" scoped>

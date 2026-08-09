@@ -1,4 +1,4 @@
-name: Vite Deploy on Release
+name: Nuxt Static Deploy
 
 on:
 #   release:
@@ -15,16 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
-      - name: Install and build
+      - name: Install and generate
         run: |
-          bun install
+          bun install --frozen-lockfile
           bun run build
-          
-          # Enable Vue Router history mode with 404.html hack for Github Pages
-          cd dist
-          ln -s index.html 404.html
       - name: Deploy to github pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
-          folder: dist
+          folder: .output/public

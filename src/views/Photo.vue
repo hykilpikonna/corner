@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {onMounted, ref} from 'vue'
+import {computed, onMounted} from 'vue'
 import {useRoute} from "vue-router";
 
 interface PhotoMetadata {
@@ -29,8 +29,10 @@ async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
 }
 
 const route = useRoute()
-const photos = ref<PhotoMetadata[]>([])
-const photoRows = ref<PhotoMetadata[][]>([])
+const {data: photos, refresh: refreshPhotos} = await useFetch<PhotoMetadata[]>('https://p.aza.moe/photos', {
+  key: 'photos',
+  default: () => [],
+})
 
 const rowProbabilityTable: Record<number, number> = {
   1: 0,
@@ -38,14 +40,14 @@ const rowProbabilityTable: Record<number, number> = {
   3: 0.5
 }
 
-const initPhotos = async () => {
-  photos.value = await (await fetch('https://p.aza.moe/photos')).json()
-  photos.value.sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
-
+const photoRows = computed(() => {
   const rows: PhotoMetadata[][] = []
   let currentRow: PhotoMetadata[] = []
 
-  photos.value.forEach((p) => {
+  const sortedPhotos = [...photos.value]
+    .sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
+
+  sortedPhotos.forEach((p) => {
     if (currentRow.length === 0) currentRow.push(p)
     else if (currentRow.length >= 3) {
       rows.push(currentRow)
@@ -60,8 +62,8 @@ const initPhotos = async () => {
   })
 
   if (currentRow.length > 0) rows.push(currentRow)
-  photoRows.value = rows
-}
+  return rows
+})
 
 const url = (s: string): string => {
   s = s.replace('data/photos', 'static').replace('./', '')
@@ -90,7 +92,7 @@ const clickPhoto = async (p: PhotoMetadata, e: MouseEvent) => {
 }
 
 onMounted(async () => {
-  await initPhotos()
+  await refreshPhotos()
 
   if (route.params.id) {
     const photoEl = await waitTruthy(() => document.getElementById(`photo-${route.params.id}`))

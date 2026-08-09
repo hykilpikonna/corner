@@ -1,5 +1,6 @@
 <template>
-    <TgBlog postsUrl="https://profile-api.hydev.org/exports/hykilp/posts.json">
+    <ClientOnly>
+      <TgBlog postsUrl="https://profile-api.hydev.org/exports/hykilp/posts.json">
         <div class="title">
             <h2>生活</h2>
             <div class="subtitle">
@@ -11,7 +12,16 @@
                 </p>
             </div>
         </div>
-    </TgBlog>
+      </TgBlog>
+      <template #fallback>
+        <div class="title">
+          <h2>生活</h2>
+          <div class="subtitle">
+            <p>这里是我记录生活的地方，没有固定格式和内容，更新也会比较频繁。</p>
+          </div>
+        </div>
+      </template>
+    </ClientOnly>
 </template>
 
 <script lang="ts" setup>

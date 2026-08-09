@@ -5,8 +5,8 @@
             <div class="subtitle">欢迎点进来看看</div>
         </div>
         <div class="links">
-            <router-link class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</router-link>
-            <router-link class="rlink" to="/friends">🎎 朋友们</router-link>
+            <NuxtLink class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</NuxtLink>
+            <NuxtLink class="rlink" to="/friends">🎎 朋友们</NuxtLink>
             <a href="https://cast.hydev.org">📹 公开直播间</a>
             <a href="https://uptime.hydev.org/">🔌 看看服务器们过得怎么样</a>
         </div>
