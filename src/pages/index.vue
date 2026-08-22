@@ -1,9 +1,20 @@
 <template>
-  <HomeView />
+    <div id="Home" class="fbox-center f-grow1">
+        <div id="box">
+            <div class="font-script-en">Azalea's</div>
+            <div class="font-script-en bold">Road Less Traveled</div>
+        </div>
+    </div>
 </template>
 
 <script setup lang="ts">
-import HomeView from '@/views/Home.vue'
-
 definePageMeta({title: 'Home', navBookmark: 'home'})
 </script>
+
+<style lang="sass" scoped>
+#box
+    font-size: 3em
+
+#Home
+    text-align: left
+</style>
