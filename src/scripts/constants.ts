@@ -1,6 +1,10 @@
+// `import.meta.env` is statically replaced by Vite at build/dev time, so this is
+// safe at module scope (unlike useRuntimeConfig, which needs a Nuxt context).
+// Override with NUXT_PUBLIC_CONTENT_HOST=http://localhost:8082 bun run dev
+// for local content development.
 export const hosts = {
     api: 'https://profile-api.hydev.org',
-    content: import.meta.dev ? 'http://localhost:8082' : 'https://profile-content.hydev.org'
+    content: import.meta.env.NUXT_PUBLIC_CONTENT_HOST || 'https://profile-content.hydev.org'
 }
 
 export const $ = (...args: unknown[]): any => {
