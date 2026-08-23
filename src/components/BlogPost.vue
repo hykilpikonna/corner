@@ -36,7 +36,7 @@
 import Tag from "@/components/Tag.vue";
 import BlogIndex from '@/components/BlogIndex.vue'
 import type {BlogPost} from "@/scripts/models";
-import {useQueryNavigation} from "@/scripts/router";
+import {useQueryNavigation} from "@/composables/useQueryNavigation";
 import {$, hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import moment from "moment/moment";
@@ -70,8 +70,6 @@ function clickTitle(): void
 }
 
 onMounted(() => {
-    updateTitle()
-
     // Create accordion
     $(postElement.value).accordion({
         collapsible: true, header: '#titles', heightStyle: 'content',
@@ -81,12 +79,8 @@ onMounted(() => {
 
 /**
  * Watch active status change, use this to change accordions' activation on history back/forward
- *
- * Also use this to change the title
  */
 watch(() => p.active, (active, _) => {
-    updateTitle()
-
     // Ignore active status changes due to clicking the title
     console.log('Blog Post: onActiveChange Called on', p.meta.title)
     if (isActiveChangeDueToClickTitle)
@@ -98,11 +92,6 @@ watch(() => p.active, (active, _) => {
     // Change accordion activation status
     $(postElement.value).accordion('option', {active: active ? 0 : false});
 })
-
-function updateTitle(): void
-{
-    if (p.active) document.title = `Blog: ${p.meta.title}`
-}
 
 /**
  * Element classes

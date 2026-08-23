@@ -11,7 +11,7 @@
 
 <script setup lang="ts">
 import Tag from "@/components/Tag.vue";
-import {useQueryNavigation} from "@/scripts/router";
+import {useQueryNavigation} from "@/composables/useQueryNavigation";
 import type {BlogMeta} from "@/scripts/models";
 import {blogMetaKey, emptyBlogMeta} from "@/scripts/global";
 import {inject, ref} from 'vue'

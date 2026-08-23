@@ -1,8 +1,6 @@
-const production = true
-
 export const hosts = {
     api: 'https://profile-api.hydev.org',
-    content: production ? 'https://profile-content.hydev.org' : 'http://localhost:8082'
+    content: import.meta.dev ? 'http://localhost:8082' : 'https://profile-content.hydev.org'
 }
 
 export const $ = (...args: unknown[]): any => {

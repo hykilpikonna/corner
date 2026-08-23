@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed, onMounted} from 'vue'
-import {useRoute} from "vue-router";
+import {until} from '@vueuse/core'
 
 interface PhotoMetadata {
   id: string
@@ -17,11 +17,13 @@ function detRandom(seed: string): number {
   return Array.from(seed).reduce((acc, char) => (acc + char.charCodeAt(0) * 65535) % 22859, 0) / 22859
 }
 
-async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
+async function waitTruthy<T>(condition: () => T, timeoutMs = 10_000, interval = 100): Promise<T | undefined> {
   return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs
     const check = () => {
       const value = condition()
       if (value) resolve(value)
+      else if (Date.now() >= deadline) resolve(undefined)
       else setTimeout(check, interval)
     }
     check()
@@ -29,10 +31,21 @@ async function waitTruthy<T>(condition: () => T, interval = 100): Promise<T> {
 }
 
 const route = useRoute()
-const {data: photos, refresh: refreshPhotos} = await useFetch<PhotoMetadata[]>('https://p.aza.moe/photos', {
+
+const {data: photos} = await useFetch<PhotoMetadata[]>('https://p.aza.moe/photos', {
   key: 'photos',
   default: () => [],
 })
+
+// Reject unknown photo ids with a real 404 (photos added after the last deploy
+// are not prerendered, so this check runs client-side after hydration)
+if (route.params.id) {
+  const exists = computed(() => photos.value.some(p => p.id === route.params.id))
+  if (!exists.value) {
+    await until(photos).toMatch(list => list.length > 0, {timeout: 10_000, throwOnTimeout: false})
+    if (!exists.value) throw createError({statusCode: 404, statusMessage: 'Photo not found', fatal: true})
+  }
+}
 
 const rowProbabilityTable: Record<number, number> = {
   1: 0,
@@ -75,28 +88,34 @@ const randomRotation = (s: string): string => {
   return `rotate(${angle}deg)`
 }
 
+const setPhotoActive = (dom: HTMLDivElement): void => {
+  dom.classList.toggle('active')
+  document.getElementsByClassName('blur')[0].toggleAttribute('hidden')
+}
+
 const clickPhoto = async (p: PhotoMetadata, e: MouseEvent) => {
-  console.log("Clicked photo:", p.id)
   const dom = e.currentTarget as HTMLDivElement
   const photoEl = dom.querySelector('.photo-wrapper') as HTMLDivElement
 
+  // View transitions are Chromium-only; fall back to a plain toggle elsewhere
+  if (!document.startViewTransition) {
+    setPhotoActive(dom)
+    return
+  }
+
   photoEl.style.viewTransitionName = `photo-${p.id}`
 
-  const transition = document.startViewTransition(() => {
-    dom.classList.toggle('active')
-    document.getElementsByClassName('blur')[0].toggleAttribute('hidden')
-  })
+  const transition = document.startViewTransition(() => setPhotoActive(dom))
 
-  await transition.finished
+  // transition.finished rejects when the transition is skipped (e.g. rapid re-click)
+  await transition.finished.catch(() => {})
   photoEl.style.viewTransitionName = ''
 }
 
 onMounted(async () => {
-  await refreshPhotos()
-
   if (route.params.id) {
     const photoEl = await waitTruthy(() => document.getElementById(`photo-${route.params.id}`))
-    photoEl.click()
+    photoEl?.click()
   }
 })
 </script>

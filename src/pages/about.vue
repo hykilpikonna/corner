@@ -15,7 +15,6 @@
 </template>
 
 <script setup lang="ts">
-import {onMounted} from 'vue'
 import {marked} from 'marked';
 import emojiRegex from 'emoji-regex';
 import {parseExtensions} from '@/scripts/extended_markdown'
@@ -27,7 +26,7 @@ import type {ZoteroAttachment, ZoteroItem} from "@/scripts/zotero";
 
 definePageMeta({title: '关于', navBookmark: 'about'})
 
-const {data: blocks, refresh: refreshHtml} = await useAsyncData('about-html', async () => {
+const {data: blocks} = await useAsyncData('about-html', async () => {
     const markdown = await $fetch<string>(`${hosts.content}/README.md`)
     const parsed = parseExtensions(markdown.replace(emojiRegex(), (emoji) => {
         return `<span class="emoji">${emoji}</span>`
@@ -39,7 +38,7 @@ const {data: blocks, refresh: refreshHtml} = await useAsyncData('about-html', as
     }))
 }, {default: () => []})
 
-const {data: publications, refresh: refreshPublications} = await useAsyncData<ZoteroItem[]>('zotero-publications', async () => {
+const {data: publications} = await useAsyncData<ZoteroItem[]>('zotero-publications', async () => {
     const items = await $fetch<ZoteroItem[]>(`${hosts.api}/zotero.json`)
     const attachments = (items as unknown as ZoteroAttachment[])
         .filter(file => file.data.itemType === 'attachment')
@@ -52,10 +51,6 @@ const {data: publications, refresh: refreshPublications} = await useAsyncData<Zo
         }))
 }, {default: () => []})
 
-onMounted(() => {
-    void refreshHtml()
-    void refreshPublications()
-})
 </script>
 
 <style lang="sass">

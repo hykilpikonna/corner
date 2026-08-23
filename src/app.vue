@@ -1,8 +1,7 @@
 <template>
   <div id="app">
     <div id="nav" class="fbox-v"
-         :class="(currentRoute) + ' ' + (menuOpen ? 'open' : '')"
-         v-if="currentRoute !== 'colorpicker'">
+         :class="(currentRoute) + ' ' + (menuOpen ? 'open' : '')">
         <div id="menu" @click="showMenu"><i class="fas fa-bars"></i></div>
 
         <div id="items" class="fbox-v">

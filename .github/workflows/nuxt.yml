@@ -19,6 +19,10 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run build
+      - name: End-to-end tests
+        run: |
+          bunx playwright install --with-deps chromium
+          bun run test:e2e
       - name: Deploy to github pages
         uses: JamesIves/github-pages-deploy-action@v4
         with:

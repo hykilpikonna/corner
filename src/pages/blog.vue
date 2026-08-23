@@ -18,7 +18,7 @@
 <script setup lang="ts">
 import BlogPostPreview from "@/components/BlogPost.vue";
 import Loading from "@/components/Loading.vue";
-import {computed, onMounted, provide, watch} from "vue";
+import {computed, onMounted, provide} from "vue";
 import type {BlogMeta} from "@/scripts/models";
 import {hosts} from "@/scripts/constants";
 import {blogMetaKey, emptyBlogMeta} from "@/scripts/global";
@@ -59,11 +59,9 @@ const activePost = computed(() => {
     return posts.find(it => it.url_name === post.value) ?? null
 })
 
-watch(activePost, (active) => {
-    if (import.meta.client) {
-        document.title = active ? `Blog: ${active.title}` : 'Aza - 记事本'
-    }
-}, {flush: 'post'})
+useHead(() => ({
+    title: activePost.value ? `Blog: ${activePost.value.title}` : 'Aza - 记事本'
+}))
 </script>
 
 <style lang="sass" scoped>
