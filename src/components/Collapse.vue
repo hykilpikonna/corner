@@ -1,31 +1,46 @@
 <template>
-    <div ref="collapseElement" class="collapse">
-        <h3 v-html="displayTitle" class="clickable"></h3>
-        <div class="content">
+    <div class="collapse" :class="{active: isActive}">
+        <component :is="headerTag" v-if="title" v-html="displayTitle" class="clickable ui-accordion-header"
+                   :class="{'ui-accordion-header-active': isActive}" @click="toggle"></component>
+        <component :is="headerTag" v-else class="ui-accordion-header"
+                   :class="{'ui-accordion-header-active': isActive}" @click="toggle">
+            <slot name="header"></slot>
+        </component>
+        <div class="content" v-show="isActive">
             <slot></slot>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, ref} from 'vue'
-import {$} from '@/scripts/constants';
+import {computed, ref, watch} from 'vue'
 
-const props = withDefaults(defineProps<{ title: string, active?: boolean }>(), {
-    active: false
+const props = withDefaults(defineProps<{
+    title?: string
+    active?: boolean
+    headerTag?: string
+}>(), {
+    title: undefined,
+    active: false,
+    headerTag: 'h3'
 })
 
-const displayTitle = computed((): string => decodeURIComponent(props.title))
-const collapseElement = ref<HTMLElement | null>(null)
+const emit = defineEmits<{ toggle: [active: boolean] }>()
 
-onMounted((): void => {
-    $(collapseElement.value).accordion({
-        collapsible: true,
-        header: 'h3',
-        heightStyle: 'content',
-        active: props.active
-    })
+const displayTitle = computed((): string => decodeURIComponent(props.title ?? ''))
+
+const isActive = ref(props.active)
+
+// Controlled mode: parent drives active (e.g. BlogPost history back/forward).
+// Self-toggle still emits so the parent can sync its own state.
+watch(() => props.active, (value) => {
+    isActive.value = value
 })
+
+const toggle = (): void => {
+    isActive.value = !isActive.value
+    emit('toggle', isActive.value)
+}
 </script>
 
 <style lang="sass">

@@ -1,12 +1,14 @@
 <template>
-    <div ref="publicationElement" class="publication">
-        <div class="header fbox-h">
-            <i class="icon fas fa-caret-right"></i>
-            <div class="fbox-v">
-                <div id="title">{{d.title}}</div>
-                <div id="subtitle">By {{authors}}{{date.year() ? ', ' + date.year() : ''}}</div>
+    <Collapse class="publication">
+        <template #header>
+            <div class="header fbox-h">
+                <i class="icon fas fa-caret-right"></i>
+                <div class="fbox-v">
+                    <div id="title">{{d.title}}</div>
+                    <div id="subtitle">By {{authors}}{{date.year() ? ', ' + date.year() : ''}}</div>
+                </div>
             </div>
-        </div>
+        </template>
         <div id="details">
             <MetaTable id="table" :table="tableData"/>
             <div id="abstract" v-if="d.abstractNote">
@@ -20,20 +22,19 @@
                 </div>
             </div>
         </div>
-    </div>
+    </Collapse>
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, ref} from 'vue'
+import {computed} from 'vue'
 import moment from "moment";
 import MetaTable from "@/components/MetaTable.vue";
+import Collapse from "@/components/Collapse.vue";
 import {capitalize} from "@/scripts/utils";
 import {linkifyUrlsToHtml} from "linkify-urls";
-import {$} from '@/scripts/constants';
 import type {ZoteroData, ZoteroItem} from "@/scripts/zotero";
 
 const props = defineProps<{ item: ZoteroItem }>()
-const publicationElement = ref<HTMLElement | null>(null)
 
 const d = computed((): ZoteroData => props.item.data)
 const date = computed((): moment.Moment => moment(props.item.meta.parsedDate))
@@ -51,14 +52,6 @@ const tableData = computed((): {[id: string]: unknown} => {
     return t
 })
 
-onMounted((): void => {
-    $(publicationElement.value).accordion({
-        collapsible: true,
-        header: 'div.header',
-        active: false,
-        heightStyle: 'content'
-    })
-})
 </script>
 
 <style lang="sass" scoped>
@@ -93,7 +86,7 @@ onMounted((): void => {
         transition: all 0.25s ease
         padding: 0 0.8em
 
-.header.ui-accordion-header-active
+.ui-accordion-header.ui-accordion-header-active .header
     .icon
         transform: rotate(90deg)
 </style>

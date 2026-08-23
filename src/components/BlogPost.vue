@@ -1,18 +1,19 @@
 <template>
-    <div id="BlogPostPreview" ref="postElement" class="card" :class="elClass">
-        <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && imageOnTop" alt="Title Image">
-
-        <div id="titles" class="unselectable clickable" @click="clickTitle">
-            <div id="date">{{ date.format('YYYY-MM-DD') }}</div>
-            <div id="title">{{ meta.title }}</div>
-            <div id="subtitle" v-if="meta.subtitle">{{ meta.subtitle }}</div>
-            <div class="tags">
-                <div v-if="tagOnTop" style="display: inline-block">
-                    <Tag v-for="t in meta.tags" :key="t" direction="left">{{ t }}</Tag>
+    <Collapse id="BlogPostPreview" class="card" :class="elClass" header-tag="div"
+              :active="p.active" @toggle="onToggle">
+        <template #header>
+            <div id="titles" class="unselectable clickable">
+                <div id="date">{{ date.format('YYYY-MM-DD') }}</div>
+                <div id="title">{{ meta.title }}</div>
+                <div id="subtitle" v-if="meta.subtitle">{{ meta.subtitle }}</div>
+                <div class="tags">
+                    <div v-if="tagOnTop" style="display: inline-block">
+                        <Tag v-for="t in meta.tags" :key="t" direction="left">{{ t }}</Tag>
+                    </div>
+                    <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
                 </div>
-                <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
             </div>
-        </div>
+        </template>
 
         <div id="content">
             <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && !imageOnTop" alt="Title Image">
@@ -29,18 +30,19 @@
                 <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
             </div>
         </div>
-    </div>
+    </Collapse>
 </template>
 
 <script lang="ts" setup>
 import Tag from "@/components/Tag.vue";
 import BlogIndex from '@/components/BlogIndex.vue'
+import Collapse from '@/components/Collapse.vue'
 import type {BlogPost} from "@/scripts/models";
 import {useQueryNavigation} from "@/composables/useQueryNavigation";
-import {$, hosts} from "@/scripts/constants";
+import {hosts} from "@/scripts/constants";
 import {marked} from "marked";
 import moment from "moment/moment";
-import {computed, onMounted, ref, watch} from 'vue';
+import {computed} from 'vue';
 
 const p = withDefaults(defineProps<{
     meta: BlogPost
@@ -55,43 +57,13 @@ const p = withDefaults(defineProps<{
 
 const {pushQuery} = useQueryNavigation()
 
-const postElement = ref<HTMLElement | null>(null)
-
-let isActiveChangeDueToClickTitle = false
-
-function clickTitle(): void
+// Header click → update the ?post query; blog.vue recomputes `active`, which
+// flows back down through the prop. Collapse toggles optimistically so the UI
+// feels instant, and its active watch keeps it in sync on history back/forward.
+function onToggle(active: boolean): void
 {
-    console.log(`Blog Post: ClickTitle called on`, p.meta.title)
-    isActiveChangeDueToClickTitle = true
-
-    // Change url
-    if (!p.active) pushQuery({post: p.meta.url_name})
-    else pushQuery({post: null})
+    pushQuery({post: active ? p.meta.url_name : null})
 }
-
-onMounted(() => {
-    // Create accordion
-    $(postElement.value).accordion({
-        collapsible: true, header: '#titles', heightStyle: 'content',
-        active: p.active ? 0 : false
-    })
-})
-
-/**
- * Watch active status change, use this to change accordions' activation on history back/forward
- */
-watch(() => p.active, (active, _) => {
-    // Ignore active status changes due to clicking the title
-    console.log('Blog Post: onActiveChange Called on', p.meta.title)
-    if (isActiveChangeDueToClickTitle)
-    {
-        isActiveChangeDueToClickTitle = false
-        return
-    }
-
-    // Change accordion activation status
-    $(postElement.value).accordion('option', {active: active ? 0 : false});
-})
 
 /**
  * Element classes
