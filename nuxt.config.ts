@@ -40,6 +40,7 @@ export default defineNuxtConfig({
       crawlLinks: true,
       routes: [
         '/',
+        '/api/photos',
         '/about',
         '/life',
         '/blog',

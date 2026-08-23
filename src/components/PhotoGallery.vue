@@ -32,7 +32,7 @@ async function waitTruthy<T>(condition: () => T, timeoutMs = 10_000, interval = 
 
 const route = useRoute()
 
-const {data: photos} = await useFetch<PhotoMetadata[]>('https://p.aza.moe/photos', {
+const {data: photos} = await useFetch<PhotoMetadata[]>('/api/photos', {
   key: 'photos',
   default: () => [],
 })
