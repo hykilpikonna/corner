@@ -13,8 +13,21 @@ interface PhotoMetadata {
   exif: {[id: string]: string}
 }
 
+// Deterministic [0, 1) value from a seed string: FNV-1a hash → mulberry32 PRNG.
+// Unlike the old charCode accumulator, this avalanches — photos whose paths share
+// a prefix (e.g. same directory) get independent values instead of near-identical
+// ones, so renaming a file no longer reshuffles the whole gallery layout.
 function detRandom(seed: string): number {
-  return Array.from(seed).reduce((acc, char) => (acc + char.charCodeAt(0) * 65535) % 22859, 0) / 22859
+  let hash = 0x811c9dc5
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  let state = hash >>> 0
+  state = (state + 0x6D2B79F5) | 0
+  let t = Math.imul(state ^ (state >>> 15), 1 | state)
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
 }
 
 async function waitTruthy<T>(condition: () => T, timeoutMs = 10_000, interval = 100): Promise<T | undefined> {
