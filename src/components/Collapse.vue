@@ -1,14 +1,16 @@
 <template>
     <div class="collapse" :class="{active: isActive}">
-        <component :is="headerTag" v-if="title" v-html="displayTitle" class="clickable ui-accordion-header"
-                   :class="{'ui-accordion-header-active': isActive}" @click="toggle"></component>
+        <h3 v-if="title !== undefined" v-html="displayTitle" class="clickable ui-accordion-header"
+            :class="{'ui-accordion-header-active': isActive}" @click="toggle"></h3>
         <component :is="headerTag" v-else class="ui-accordion-header"
                    :class="{'ui-accordion-header-active': isActive}" @click="toggle">
             <slot name="header"></slot>
         </component>
-        <div class="content" v-show="isActive">
-            <slot></slot>
-        </div>
+        <Transition name="collapse">
+            <div class="content" v-show="isActive">
+                <slot></slot>
+            </div>
+        </Transition>
     </div>
 </template>
 
@@ -59,4 +61,14 @@ const toggle = (): void => {
 
     .content
         padding-bottom: 0.5em
+        overflow: hidden
+
+    // Slide transition approximating the old jQuery-ui accordion animation
+    .collapse-enter-active, .collapse-leave-active
+        transition: max-height 0.25s ease, opacity 0.25s ease
+        max-height: 500px
+
+    .collapse-enter-from, .collapse-leave-to
+        max-height: 0
+        opacity: 0
 </style>

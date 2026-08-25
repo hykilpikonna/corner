@@ -42,23 +42,22 @@ test('preserves SPA navigation and interactive transitions', async ({page}) => {
   await page.waitForURL('**/blog')
   const posts = page.locator('#BlogPostPreview')
   expect(await posts.count()).toBeGreaterThan(1)
-  await expect(posts.locator('#content:visible')).toHaveCount(0)
+  // The pinned post (Index) opens by default; exactly one post is expanded
+  await expect(posts.locator('.content:visible')).toHaveCount(1)
 
+  // The pinned post (Index) starts open; clicking another post switches to it
   const firstPost = posts.nth(0)
   const secondPost = posts.nth(1)
-  await firstPost.locator('#titles').click()
-  await page.waitForURL(/post=Index/)
-  await expect(firstPost.locator('#content')).toBeVisible()
+  await expect(firstPost.locator('.content')).toBeVisible()
 
   await secondPost.locator('#titles').click()
-  await page.waitForURL(/post=/)
-  await expect(secondPost.locator('#content')).toBeVisible()
-  await expect(firstPost.locator('#content')).toBeHidden()
+  await page.waitForURL(url => url.searchParams.get('post') !== 'Index' && url.searchParams.get('post') !== null)
+  await expect(secondPost.locator('.content')).toBeVisible()
+  await expect(firstPost.locator('.content')).toBeHidden()
 
   await page.goBack()
-  await page.waitForURL(/post=Index/)
-  await expect(firstPost.locator('#content')).toBeVisible()
-  await expect(secondPost.locator('#content')).toBeHidden()
+  await expect(firstPost.locator('.content')).toBeVisible()
+  await expect(secondPost.locator('.content')).toBeHidden()
 
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])

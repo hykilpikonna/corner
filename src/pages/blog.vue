@@ -55,7 +55,7 @@ const filteredPosts = computed(() => {
 const activePost = computed(() => {
     const posts = filteredPosts.value
     if (posts.length == 0) return null
-    if (!post.value) return null
+    if (!post.value) return posts[0].pinned ? posts[0] : null
     return posts.find(it => it.url_name === post.value) ?? null
 })
 
