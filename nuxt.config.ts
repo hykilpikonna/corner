@@ -26,7 +26,7 @@ export default defineNuxtConfig({
       crawlLinks: true,
       routes: [
         '/',
-        '/api/photos',
+        '/api/photos.json',
         '/about',
         '/life',
         '/blog',
@@ -40,18 +40,20 @@ export default defineNuxtConfig({
   },
 
   hooks: {
+    // Discover /photo/<id> routes from the live manifest so every photo gets
+    // prerendered. Failure is fatal: silently shipping a gallery whose new
+    // photos all 404 is worse than a red build.
     async 'nitro:config'(nitroConfig) {
       if (nitroConfig.dev) return
 
-      try {
-        const response = await fetch('https://p.aza.moe/photos')
-        const photos = await response.json() as Array<{id: string}>
-        nitroConfig.prerender ??= {}
-        nitroConfig.prerender.routes ??= []
-        nitroConfig.prerender.routes.push(...photos.map(photo => `/photo/${photo.id}`))
-      } catch (error) {
-        console.warn('Could not discover photo routes for prerendering:', error)
+      const response = await fetch('https://p.aza.moe/photos')
+      if (!response.ok) {
+        throw new Error(`Fetching photo manifest for prerendering failed: ${response.status} ${response.statusText}`)
       }
+      const photos = await response.json() as Array<{id: string}>
+      nitroConfig.prerender ??= {}
+      nitroConfig.prerender.routes ??= []
+      nitroConfig.prerender.routes.push(...photos.map(photo => `/photo/${photo.id}`))
     },
   },
 

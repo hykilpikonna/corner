@@ -1,13 +1,16 @@
 <template>
     <div class="collapse" :class="{active: isActive}">
-        <h3 v-if="title !== undefined" v-html="displayTitle" class="clickable ui-accordion-header"
-            :class="{'ui-accordion-header-active': isActive}" @click="toggle"></h3>
-        <component :is="headerTag" v-else class="ui-accordion-header"
-                   :class="{'ui-accordion-header-active': isActive}" @click="toggle">
-            <slot name="header"></slot>
+        <component :is="headerTag" :id="headerId" class="clickable ui-accordion-header"
+                   :class="{'ui-accordion-header-active': isActive}"
+                   role="button" tabindex="0"
+                   :aria-expanded="isActive" :aria-controls="contentId"
+                   @click="toggle" @keydown="onKeydown">
+            <slot name="header">
+                <span v-if="title !== undefined" v-html="displayTitle"></span>
+            </slot>
         </component>
         <Transition name="collapse">
-            <div class="content" v-show="isActive">
+            <div :id="contentId" class="content" role="region" :aria-labelledby="headerId" v-show="isActive">
                 <slot></slot>
             </div>
         </Transition>
@@ -15,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, watch} from 'vue'
+import {computed, ref, useId, watch} from 'vue'
 
 const props = withDefaults(defineProps<{
     title?: string
@@ -31,6 +34,10 @@ const emit = defineEmits<{ toggle: [active: boolean] }>()
 
 const displayTitle = computed((): string => decodeURIComponent(props.title ?? ''))
 
+const uid = useId()
+const headerId = `${uid}-header`
+const contentId = `${uid}-content`
+
 const isActive = ref(props.active)
 
 // Controlled mode: parent drives active (e.g. BlogPost history back/forward).
@@ -42,6 +49,25 @@ watch(() => props.active, (value) => {
 const toggle = (): void => {
     isActive.value = !isActive.value
     emit('toggle', isActive.value)
+}
+
+// Restores the old jQuery UI accordion keyboard behavior: Enter/Space activate,
+// Arrow Up/Down cycle focus across all accordion headers on the page.
+function onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        toggle()
+        return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+
+    event.preventDefault()
+    const headers = Array.from(document.querySelectorAll<HTMLElement>('.collapse .ui-accordion-header[role="button"]'))
+    const current = event.currentTarget as HTMLElement | null
+    const index = headers.indexOf(current!)
+    if (index === -1 || headers.length < 2) return
+    const step = event.key === 'ArrowDown' ? 1 : headers.length - 1
+    headers[(index + step) % headers.length]?.focus()
 }
 </script>
 

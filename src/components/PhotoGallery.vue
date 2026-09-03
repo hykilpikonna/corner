@@ -45,7 +45,7 @@ async function waitTruthy<T>(condition: () => T, timeoutMs = 10_000, interval = 
 
 const route = useRoute()
 
-const {data: photos} = await useFetch<PhotoMetadata[]>('/api/photos', {
+const {data: photos} = await useFetch<PhotoMetadata[]>('/api/photos.json', {
   key: 'photos',
   default: () => [],
 })
