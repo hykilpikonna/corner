@@ -148,9 +148,6 @@ onMounted(async () => {
             <img class="photo" w-full object-contain :src="url(p.thumbnail_edited)" :alt="p.id" />
           </div>
         </div>
-<!--        <div flex w-full justify-center absolute position-top-none>-->
-<!--          <img class="pin" src="/thumb%20tack%202%20plain.png"  alt=""/>-->
-<!--        </div>-->
       </div>
     </div>
   </div>
@@ -179,8 +176,6 @@ onMounted(async () => {
 .img-container.active
   position: unset
 
-  img.pin
-    display: none
   .photo-abs-container
     position: fixed
     z-index: 3000
@@ -203,9 +198,4 @@ div.photo-abs-container
 
 div.photo-wrapper
   filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))
-
-img.pin
-  width: 40px
-  height: 40px
-  z-index: 2000
 </style>

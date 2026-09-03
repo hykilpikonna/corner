@@ -8,9 +8,8 @@
 </template>
 
 <script lang="ts" setup>
-const props = defineProps({
+defineProps({
     direction: { type: String, default: 'left' }, // 'left' | 'right'
-    tagName: String
 })
 </script>
 

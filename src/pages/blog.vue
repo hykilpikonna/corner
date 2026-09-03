@@ -30,7 +30,7 @@ const router = useRouter()
 
 const {data: meta, refresh: refreshMeta} = await useFetch<BlogMeta>(`${hosts.content}/content/generated/metas.json`, {
     key: 'blog-meta',
-    default: emptyBlogMeta,
+    default: () => emptyBlogMeta(),
 })
 
 provide(blogMetaKey, meta)

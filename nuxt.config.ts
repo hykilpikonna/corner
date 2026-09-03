@@ -34,7 +34,6 @@ export default defineNuxtConfig({
         '/others',
         '/kitchen-menu',
         '/friends',
-        '/projects',
       ],
     },
   },

@@ -6,7 +6,8 @@
                    :aria-expanded="isActive" :aria-controls="contentId"
                    @click="toggle" @keydown="onKeydown">
             <slot name="header">
-                <span v-if="title !== undefined" v-html="displayTitle"></span>
+                <!-- v-html: titles may carry intentional markup (emoji <span>) -->
+                <span v-if="title !== undefined" v-html="title"></span>
             </slot>
         </component>
         <Transition name="collapse">
@@ -18,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, useId, watch} from 'vue'
+import {ref, useId, watch} from 'vue'
 
 const props = withDefaults(defineProps<{
     title?: string
@@ -31,8 +32,6 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{ toggle: [active: boolean] }>()
-
-const displayTitle = computed((): string => decodeURIComponent(props.title ?? ''))
 
 const uid = useId()
 const headerId = `${uid}-header`

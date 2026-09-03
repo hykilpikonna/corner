@@ -53,7 +53,9 @@ export function parseExtensions(raw: string): ExtendedMarkdownBlock[] {
             continue
         }
 
-        const command = match.slice(5, -5).trim()
+        // '<!--{' is 4 chars, '}-->' is 4; slice(5, -4) keeps the command between '{' and '}'.
+        // (slice(5, -5) silently breaks commands written without spaces: '<!--{hideSection()}-->'.)
+        const command = match.slice(5, -4).trim()
 
         if (command === 'collapseSection()') {
             flushPlainLines()

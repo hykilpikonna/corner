@@ -41,7 +41,7 @@ const getRouteBookmark = (to: typeof route): string => {
     const bookmark = to.meta?.navBookmark
     if (typeof bookmark === 'string') return bookmark.toLowerCase()
     if (to.path.startsWith('/photo')) return 'photo'
-    if (['/others', '/kitchen-menu', '/friends', '/projects'].includes(to.path)) return 'others'
+    if (['/others', '/kitchen-menu', '/friends'].includes(to.path)) return 'others'
     return to.path === '/' ? 'home' : to.path.split('/')[1].toLowerCase()
 }
 
@@ -49,14 +49,17 @@ const currentRoute = ref(getRouteBookmark(route))
 const bookmarkCss = ref('')
 const lastTop = ref(0)
 const menuOpen = ref(false)
-const bookmarkUpdateIntervalId = ref<number | null>(null)
 
 const navRefs = ref<Record<string, Element | ComponentPublicInstance | null>>({})
+
+let menuCloseTimer: ReturnType<typeof setTimeout> | undefined
 
 const showMenu = (): void => {
     menuOpen.value = !menuOpen.value
 
-    if (menuOpen.value) setTimeout(() => menuOpen.value = false, 2000)
+    // Retracking the auto-close so a quick close/reopen isn't killed by a stale timer
+    clearTimeout(menuCloseTimer)
+    if (menuOpen.value) menuCloseTimer = setTimeout(() => menuOpen.value = false, 2000)
 }
 
 const setNavRef = (name: string) => (el: Element | ComponentPublicInstance | null) => {
@@ -96,17 +99,23 @@ useHead(() => ({
 
 watch(() => route.fullPath, () => updateBookmark(route))
 
+let navResizeObserver: ResizeObserver | undefined
+
 onMounted(() => {
     nextTick(calculateBookmarkCss)
+    // ResizeObserver covers everything the old 1s poll caught (font loads,
+    // viewport changes) without waking the page every second.
+    const nav = document.getElementById('nav')
+    if (nav) {
+        navResizeObserver = new ResizeObserver(calculateBookmarkCss)
+        navResizeObserver.observe(nav)
+    }
     window.addEventListener('resize', calculateBookmarkCss, true)
-    bookmarkUpdateIntervalId.value = window.setInterval(calculateBookmarkCss, 1000)
 })
 
 onUnmounted(() => {
+    navResizeObserver?.disconnect()
     window.removeEventListener('resize', calculateBookmarkCss, true)
-    if (bookmarkUpdateIntervalId.value !== null) {
-        window.clearInterval(bookmarkUpdateIntervalId.value)
-    }
 })
 </script>
 

@@ -1,5 +1,5 @@
 <template>
-    <Collapse id="BlogPostPreview" class="card" :class="elClass" header-tag="div"
+    <Collapse id="BlogPostPreview" class="card tag-top" header-tag="div"
               :active="p.active" @toggle="onToggle">
         <template #header>
             <div id="titles" class="unselectable clickable">
@@ -7,7 +7,7 @@
                 <div id="title">{{ meta.title }}</div>
                 <div id="subtitle" v-if="meta.subtitle">{{ meta.subtitle }}</div>
                 <div class="tags">
-                    <div v-if="tagOnTop" style="display: inline-block">
+                    <div style="display: inline-block">
                         <Tag v-for="t in meta.tags" :key="t" direction="left">{{ t }}</Tag>
                     </div>
                     <i id="pin" class="fas fa-thumbtack" v-if="meta.pinned"></i>
@@ -16,7 +16,7 @@
         </template>
 
         <div id="content">
-            <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image && !imageOnTop" alt="Title Image">
+            <img class="title-image" :src="p.meta.title_image" v-if="p.meta.title_image" alt="Title Image">
             <div id="text" class="markdown-content">
                 <template v-if="p.meta.url_name === 'Index'">
                     <p>按分类检索：</p>
@@ -25,9 +25,6 @@
                     <BlogIndex mode="categories" />
                 </template>
                 <div v-else v-html="content"></div>
-            </div>
-            <div class="tags" v-if="!tagOnTop">
-                <Tag v-for="t in meta.tags" :key="t[0]" direction="right">{{ t }}</Tag>
             </div>
         </div>
     </Collapse>
@@ -46,12 +43,8 @@ import {computed} from 'vue';
 
 const p = withDefaults(defineProps<{
     meta: BlogPost
-    imageOnTop?: boolean
-    tagOnTop?: boolean
     active?: boolean
 }>(), {
-    imageOnTop: false,
-    tagOnTop: true,
     active: false
 })
 
@@ -64,17 +57,6 @@ function onToggle(active: boolean): void
 {
     pushQuery({post: active ? p.meta.url_name : null})
 }
-
-/**
- * Element classes
- */
-const elClass = computed(() =>
-{
-    let classes: string[] = []
-    if (p.imageOnTop) classes.push('image-top')
-    if (p.tagOnTop) classes.push('tag-top')
-    return classes
-})
 
 const content = computed(() => marked.parse(
     p.meta.content.replaceAll('\n', '  \n').replaceAll("{src}", hosts.content),
@@ -146,14 +128,7 @@ const date = computed(() => moment(p.meta.date))
         padding-top: 10px
         color: colors.$color-text-light
 
-// Put image on top
-#BlogPostPreview.image-top
-    .title-image
-        margin: -15px -20px 0px
-        max-width: calc(100% + 40px)
-        min-width: calc(100% + 40px)
-
-// Put tags on top
+// Tags positioned over the header
 #BlogPostPreview.tag-top
     .tags
         position: absolute

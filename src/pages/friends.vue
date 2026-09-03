@@ -43,7 +43,7 @@ const icons: {[id: string]: string} = {
   blog: 'fas fa-book'
 }
 
-const {data: friends, refresh: refreshFriends} = await useFetch<Friend[]>(`${hosts.content}/content/generated/friends/friends.json`, {
+const {data: friends} = await useFetch<Friend[]>(`${hosts.content}/content/generated/friends/friends.json`, {
   key: 'friends',
   default: () => [],
   transform: (items) => items.map(friend => ({
@@ -69,8 +69,9 @@ const getFriendLinks = (f: Friend): { link: string, icon: string }[] => {
     }))
 }
 
-onMounted(async () => {
-  await refreshFriends()
+// Shuffle on mount only: doing it during prerender would bake the order into the
+// static HTML and shuffle again on hydration, visibly rearranging the cards.
+onMounted(() => {
   friends.value = shuffle([...friends.value])
 })
 </script>

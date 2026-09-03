@@ -2,7 +2,7 @@
     <div id="About" class="markdown-content" v-if="blocks.length">
         <template v-for="(block, index) in blocks" :key="index">
             <div v-if="!block.title" class="markdown-intro" v-html="block.html"></div>
-            <Collapse v-else :title="encodeURIComponent(block.title)">
+            <Collapse v-else :title="block.title">
                 <div v-html="block.html"></div>
             </Collapse>
         </template>
