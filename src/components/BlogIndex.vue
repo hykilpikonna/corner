@@ -1,6 +1,6 @@
 <template>
     <div class="index index-tags" v-if="mode === 'tags'">
-        <Tag v-for="t in meta.tags" :key="`${t[0]}-${t[1]}`" :tag-name="t[0]" direction="right"
+        <Tag v-for="t in meta.tags" :key="`${t[0]}-${t[1]}`" direction="right"
              @click="e => clickTag(e, t)">{{ t[0] }} ({{ t[1] }})</Tag>
     </div>
     <div class="index index-categories" v-else>
@@ -11,15 +11,17 @@
 
 <script setup lang="ts">
 import Tag from "@/components/Tag.vue";
-import {pushQuery} from "@/scripts/router";
-import {BlogMeta} from "@/scripts/models";
-import {globals} from "@/scripts/global";
+import {useQueryNavigation} from "@/composables/useQueryNavigation";
+import type {BlogMeta} from "@/scripts/models";
+import {blogMetaKey, emptyBlogMeta} from "@/scripts/global";
+import {inject, ref} from 'vue'
 
 withDefaults(defineProps<{ mode?: 'tags' | 'categories' }>(), {
     mode: 'tags'
 })
 
-const meta: BlogMeta = globals.staticMeta
+const meta = inject(blogMetaKey, ref<BlogMeta>(emptyBlogMeta()))
+const {pushQuery} = useQueryNavigation()
 
 const clickCat = (e: MouseEvent, cat: [string, number]): void => {
     e.stopPropagation()

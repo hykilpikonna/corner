@@ -1,9 +1,11 @@
 <template>
     <table class="meta">
-        <tr v-for="(v, k) in filteredTable" :key="k">
-            <td>{{k}}</td>
-            <td v-html="v"></td>
-        </tr>
+        <tbody>
+            <tr v-for="(v, k) in filteredTable" :key="k">
+                <td>{{k}}</td>
+                <td v-html="v"></td>
+            </tr>
+        </tbody>
     </table>
 </template>
 

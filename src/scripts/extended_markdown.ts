@@ -1,136 +1,94 @@
-/* eslint-disable prefer-const */
-/**
- * Regex used in markdown extension parsing
- */
-const re = {
-    command: /<!--{.*?}-->/g,
-    hashes: /^#+/g,
+const commandPattern = /<!--{.*?}-->/g
+const headingPattern = /^#+/
+
+export interface ExtendedMarkdownBlock {
+    markdown: string
+    title?: string
 }
 
-declare global
-{
-    interface RegExp
-    {
-        find(s: string): RegExpExecArray | null;
-    }
+function decodeStringArgument(value: string): string {
+    const quote = value[0]
+    const body = value.slice(1, -1)
+
+    if (quote === '"') return JSON.parse(value)
+
+    return body.replace(/\\(['"\\n])/g, (_match, escaped: string) => {
+        return escaped === 'n' ? '\n' : escaped
+    })
 }
 
-/**
- * Make sure that regex find is consistent
- * https://stackoverflow.com/questions/11477415/why-does-javascripts-regex-exec-not-always-return-the-same-value
- */
-RegExp.prototype.find = function(s)
-{
-    const r = this.exec(s)
-    this.lastIndex = 0
-    return r
-}
+/** Parse the small command language used by the remote profile Markdown. */
+export function parseExtensions(raw: string): ExtendedMarkdownBlock[] {
+    const lines = raw.replaceAll('\r\n', '\n').split('\n')
+    const blocks: ExtendedMarkdownBlock[] = []
+    let plainLines: string[] = []
+    let index = 0
 
-/**
- * Parse markdown extensions
- *
- * @param raw Extended markdown
- * @return Parsed markdown
- */
-export function parseExtensions(raw: string): string
-{
-    // @ts-ignore
-    let lines = raw.replace('\r\n', '\n').split('\n')
-    let i = 0
-
-    /**
-     * Find the end index of a section or -1
-     */
-    function findSectionEnd(): number
-    {
-        const r = re.hashes.find(lines[i])
-        if (!r) return -1
-        const level = r[0].length
-
-        // Find next same-level or higher-level header's index
-        let j = i + 1
-        for (; j < lines.length; j++)
-        {
-            const r = re.hashes.find(lines[j])
-            if (r && r[0].length <= level) break
+    const flushPlainLines = () => {
+        if (plainLines.some(line => line.trim())) {
+            blocks.push({markdown: plainLines.join('\n')})
         }
-        return j
+        plainLines = []
     }
 
-    /**
-     * Hide an entire hn section
-     * Example:
-     *
-     * ### Header3 <!--{ hideSection() }-->
-     *
-     * ... Hidden items
-     *
-     * ### Next Header3
-     */
-    function hideSection()
-    {
-        const e = findSectionEnd()
-        if (e != -1) lines.splice(i, e - i)
-        i--
+    const findSectionEnd = (): number => {
+        const heading = lines[index].match(headingPattern)
+        if (!heading) return index + 1
+
+        const level = heading[0].length
+        let end = index + 1
+        for (; end < lines.length; end++) {
+            const nextHeading = lines[end].match(headingPattern)
+            if (nextHeading && nextHeading[0].length <= level) break
+        }
+        return end
     }
 
-    function hideLines(n: number)
-    {
-        lines.splice(i, n)
-        i--
-    }
-
-    /**
-     * Add something
-     * @param s String
-     */
-    function add(s: string)
-    {
-        lines[i] = lines[i].replace(re.command, s)
-    }
-
-    /**
-     * Collapse section
-     */
-    function collapseSection()
-    {
-        const e = findSectionEnd()
-        const title = lines[i].substring(lines[i].indexOf(' ') + 1).replace(re.command, '')
-        lines[i] = `<Collapse title="${encodeURIComponent(title)}">`
-        lines.splice(e, 0, '</Collapse>\n')
-    }
-
-    // Run all commands in markdown
-    while (i < lines.length)
-    {
-        console.log(`Line ${i}`)
-
-        // Find commands
-        const r = re.command.find(lines[i])
-        if (r)
-        {
-            let cmd = r[0]
-            cmd = cmd.substring(5, cmd.length - 5).trim()
-
-            // Run cmd
-            console.log(`Running command`, cmd)
-            eval(cmd)
+    while (index < lines.length) {
+        const line = lines[index]
+        const match = line.match(commandPattern)?.[0]
+        if (!match) {
+            plainLines.push(line)
+            index++
+            continue
         }
 
-        i++;
+        // '<!--{' is 4 chars, '}-->' is 4; slice(5, -4) keeps the command between '{' and '}'.
+        // (slice(5, -5) silently breaks commands written without spaces: '<!--{hideSection()}-->'.)
+        const command = match.slice(5, -4).trim()
+
+        if (command === 'collapseSection()') {
+            flushPlainLines()
+            const end = findSectionEnd()
+            blocks.push({
+                title: line.slice(line.indexOf(' ') + 1).replace(commandPattern, ''),
+                markdown: lines.slice(index + 1, end).join('\n'),
+            })
+            index = end
+            continue
+        }
+
+        if (command === 'hideSection()') {
+            index = findSectionEnd()
+            continue
+        }
+
+        const hideLines = command.match(/^hideLines\((\d+)\)$/)
+        if (hideLines) {
+            index += Number(hideLines[1])
+            continue
+        }
+
+        const add = command.match(/^add\(((?:"(?:\\.|[^"\\])*")|(?:'(?:\\.|[^'\\])*'))\)$/)
+        if (add) {
+            plainLines.push(line.replace(commandPattern, decodeStringArgument(add[1])))
+        } else {
+            console.warn(`Ignoring unsupported Markdown command: ${command}`)
+            plainLines.push(line.replace(match, ''))
+        }
+        index++
     }
 
-    // If I don't call these functions somewhere, they will be deleted by vite build, and it will
-    // raise an error when the functions are called in eval(). So I put function calls in an
-    // impossible condition to prevent deletion.
-    if (raw == 'STOP DELETING MY UNUSED FUNCTIONS!!!')
-    {
-        hideSection()
-        hideLines(0)
-        add('')
-        collapseSection()
-    }
-
-    console.log(lines.join('\n'))
-    return lines.join('\n')
+    flushPlainLines()
+    return blocks
 }

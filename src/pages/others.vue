@@ -1,0 +1,38 @@
+<template>
+    <div id="Others" class="general-page">
+        <div class="title">
+            <h2>更多链接</h2>
+            <div class="subtitle">欢迎点进来看看</div>
+        </div>
+        <div class="links">
+            <NuxtLink class="rlink" to="/kitchen-menu">🍳 小桂桂的私房菜 菜单</NuxtLink>
+            <NuxtLink class="rlink" to="/friends">🎎 朋友们</NuxtLink>
+            <a href="https://cast.hydev.org">📹 公开直播间</a>
+            <a href="https://uptime.hydev.org/">🔌 看看服务器们过得怎么样</a>
+        </div>
+    </div>
+</template>
+
+<script setup lang="ts">
+definePageMeta({title: '更多', navBookmark: 'others'})
+</script>
+
+<style lang="sass" scoped>
+@use "../css/global"
+@use "../css/colors"
+@use "../css/responsive"
+
+.links
+    display: flex
+    gap: 10px
+    flex-direction: column
+    align-items: flex-start
+
+a
+    @extend .card
+    @extend .clickable
+
+    color: colors.$color-text-main
+    text-decoration: none
+
+</style>

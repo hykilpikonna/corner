@@ -1,0 +1,30 @@
+name: Nuxt Static Deploy
+
+on:
+#   release:
+#     types: [published, created, edited, released, prereleased]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and deploy main
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - name: Install and generate
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      - name: End-to-end tests
+        run: |
+          bunx playwright install --with-deps chromium
+          bun run test:e2e
+      - name: Deploy to github pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: .output/public
