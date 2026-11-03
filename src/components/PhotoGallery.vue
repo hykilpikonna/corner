@@ -1,0 +1,201 @@
+<script setup lang="ts">
+import {computed, onMounted} from 'vue'
+import {until} from '@vueuse/core'
+
+interface PhotoMetadata {
+  id: string
+  owner_key: string
+  upload_time: string
+  original_photo: string
+  edited_photo: string
+  thumbnail: string
+  thumbnail_edited: string
+  exif: {[id: string]: string}
+}
+
+// Deterministic [0, 1) value from a seed string: FNV-1a hash → mulberry32 PRNG.
+// Unlike the old charCode accumulator, this avalanches — photos whose paths share
+// a prefix (e.g. same directory) get independent values instead of near-identical
+// ones, so renaming a file no longer reshuffles the whole gallery layout.
+function detRandom(seed: string): number {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  let state = hash >>> 0
+  state = (state + 0x6D2B79F5) | 0
+  let t = Math.imul(state ^ (state >>> 15), 1 | state)
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
+async function waitTruthy<T>(condition: () => T, timeoutMs = 10_000, interval = 100): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs
+    const check = () => {
+      const value = condition()
+      if (value) resolve(value)
+      else if (Date.now() >= deadline) resolve(undefined)
+      else setTimeout(check, interval)
+    }
+    check()
+  })
+}
+
+const route = useRoute()
+
+const {data: photos} = await useFetch<PhotoMetadata[]>('/api/photos.json', {
+  key: 'photos',
+  default: () => [],
+})
+
+// Reject unknown photo ids with a real 404 (photos added after the last deploy
+// are not prerendered, so this check runs client-side after hydration)
+if (route.params.id) {
+  const exists = computed(() => photos.value.some(p => p.id === route.params.id))
+  if (!exists.value) {
+    await until(photos).toMatch(list => list.length > 0, {timeout: 10_000, throwOnTimeout: false})
+    if (!exists.value) throw createError({statusCode: 404, statusMessage: 'Photo not found', fatal: true})
+  }
+}
+
+const rowProbabilityTable: Record<number, number> = {
+  1: 0,
+  2: 0.3,
+  3: 0.5
+}
+
+const photoRows = computed(() => {
+  const rows: PhotoMetadata[][] = []
+  let currentRow: PhotoMetadata[] = []
+
+  const sortedPhotos = [...photos.value]
+    .sort((a, b) => (a.exif.DateTime < b.exif.DateTime ? 1 : -1))
+
+  sortedPhotos.forEach((p) => {
+    if (currentRow.length === 0) currentRow.push(p)
+    else if (currentRow.length >= 3) {
+      rows.push(currentRow)
+      currentRow = [p]
+    } else {
+      const singleChance = detRandom(p.original_photo)
+      if (singleChance < rowProbabilityTable[currentRow.length]) {
+        rows.push(currentRow)
+        currentRow = [p]
+      } else currentRow.push(p)
+    }
+  })
+
+  if (currentRow.length > 0) rows.push(currentRow)
+  return rows
+})
+
+const url = (s: string): string => {
+  s = s.replace('data/photos', 'static').replace('./', '')
+  return `https://p.aza.moe/${s}`
+}
+
+const randomRotation = (s: string): string => {
+  const angle = (detRandom(s) * 20) - 10
+  return `rotate(${angle}deg)`
+}
+
+const setPhotoActive = (dom: HTMLDivElement): void => {
+  dom.classList.toggle('active')
+  document.getElementsByClassName('blur')[0].toggleAttribute('hidden')
+}
+
+const clickPhoto = async (p: PhotoMetadata, e: MouseEvent) => {
+  const dom = e.currentTarget as HTMLDivElement
+  const photoEl = dom.querySelector('.photo-wrapper') as HTMLDivElement
+
+  // View transitions are Chromium-only; fall back to a plain toggle elsewhere
+  if (!document.startViewTransition) {
+    setPhotoActive(dom)
+    return
+  }
+
+  photoEl.style.viewTransitionName = `photo-${p.id}`
+
+  const transition = document.startViewTransition(() => setPhotoActive(dom))
+
+  // transition.finished rejects when the transition is skipped (e.g. rapid re-click)
+  await transition.finished.catch(() => {})
+  photoEl.style.viewTransitionName = ''
+}
+
+onMounted(async () => {
+  if (route.params.id) {
+    const photoEl = await waitTruthy(() => document.getElementById(`photo-${route.params.id}`))
+    photoEl?.click()
+  }
+})
+</script>
+
+<template>
+  <div class="title">
+    <div class="font-script-en bold">The Wandering Gallery</div>
+    <div class="subtitle <sm:hidden">想要把旅行中用相机拍到好看照片时的喜悦分享给幸运的路人，所以买了便携照片打印机、搭了这个网页！</div>
+  </div>
+  <div class="outer-grid">
+    <div v-for="row in photoRows" :key="row[0].id" flex justify-center :class="`grid-cols-${row.length}`">
+      <div v-for="p in row" :key="p.id" @click.capture="async e => await clickPhoto(p, e)"
+           class="img-container" cursor-pointer :id="`photo-${p.id}`">
+        <img class="photo" w-full h-full object-contain opacity-0 :src="url(p.thumbnail_edited)" :alt="p.id"/>
+        <div class="photo-abs-container" absolute inset-0 flex justify-center items-center>
+          <div class="photo-wrapper" :style="{transform: randomRotation(p.id)}">
+            <img class="photo" w-full object-contain :src="url(p.thumbnail_edited)" :alt="p.id" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="blur" hidden pos-fixed inset-0 backdrop-blur-sm z-5></div>
+</template>
+
+<style scoped lang="sass">
+@use "../css/colors"
+@use "../css/responsive"
+
+.blur
+  z-index: 2500
+
+.title
+  margin-top: 8rem
+  margin-bottom: 6rem
+
+.bold
+  font-size: 3em
+
+.img-container
+  margin: -0.5rem
+  max-width: 50%
+  position: relative
+
+.img-container.active
+  position: unset
+
+  .photo-abs-container
+    position: fixed
+    z-index: 3000
+
+  .photo-wrapper
+    transform: rotate(0deg) !important
+
+  img.photo
+    z-index: 3001
+    pointer-events: auto
+
+img.photo
+  clip-path: inset(2.8% 1.8% 2.4%)
+  pointer-events: none
+
+div.photo-abs-container
+  position: absolute
+  inset: 0
+  z-index: 1000
+
+div.photo-wrapper
+  filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.3))
+</style>

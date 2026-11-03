@@ -1,5 +1,3 @@
-import {createI18n} from "vue-i18n";
-
 export const messages = {
     en: {
         nav: {
@@ -21,11 +19,3 @@ export const messages = {
         // }
     }
 }
-
-export const i18n = createI18n({
-    messages,
-    locale: navigator.language.split('-')[0],
-    fallbackLocale: 'en'
-})
-
-console.log(navigator.language)
