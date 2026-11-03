@@ -1,3 +1,39 @@
+import { execSync } from 'node:child_process'
+import type { Plugin } from 'vite'
+
+const buildTime = new Date().toISOString()
+let gitCommit = process.env.GITHUB_SHA?.slice(0, 7)
+if (!gitCommit) {
+  try {
+    gitCommit = execSync('git rev-parse --short HEAD').toString().trim()
+  } catch {
+    gitCommit = 'dev'
+  }
+}
+
+function stripTgBlogLogs(): Plugin {
+  return {
+    name: 'strip-tg-blog-logs',
+    enforce: 'pre',
+    transform(code, id) {
+      if (id.includes('tg-blog') && (id.endsWith('.js') || id.endsWith('.mjs'))) {
+        return {
+          code: code
+            .replace(/console\.log\(`Calculating dimensions for \${[^}]+}\.\.\.`\)/g, 'void 0')
+            .replace(/console\.log\("Spoilers initialized\."\)/g, 'void 0')
+            .replace(/console\.log\(`Spoiler clicked: \${[^}]+}`\)/g, 'void 0')
+            .replace(/console\.log\(v\.value\)/g, 'void 0')
+            .replace(/console\.log\(y\.value\)/g, 'void 0')
+            .replace(/console\.log\("Hash change",[^)]+\)/g, 'void 0')
+            .replace(/console\.log\(e\), te\.value = e;/g, 'te.value = e;')
+            .replace(/console\.log\(`Downloading file: \${[^}]+}`\)/g, 'void 0'),
+          map: null,
+        }
+      }
+    },
+  }
+}
+
 export default defineNuxtConfig({
   srcDir: 'src/',
   ssr: true,
@@ -26,14 +62,19 @@ export default defineNuxtConfig({
   },
 
   vite: {
+    plugins: [stripTgBlogLogs()],
     define: {
       __VUE_PROD_DEVTOOLS__: 'false',
+      __BUILD_TIME__: JSON.stringify(buildTime),
+      __GIT_COMMIT__: JSON.stringify(gitCommit),
     },
   },
 
   nitro: {
     replace: {
       __VUE_PROD_DEVTOOLS__: 'false',
+      __BUILD_TIME__: JSON.stringify(buildTime),
+      __GIT_COMMIT__: JSON.stringify(gitCommit),
     },
     prerender: {
       crawlLinks: true,
@@ -48,6 +89,16 @@ export default defineNuxtConfig({
         '/kitchen-menu',
         '/friends',
       ],
+    },
+    hooks: {
+      'prerender:generate'(route) {
+        if (route.contents && route.fileName?.endsWith('.html')) {
+          route.contents = route.contents.replace(
+            /<link rel="preload" as="fetch"[^>]*_payload\.json[^>]*>\s*/g,
+            '',
+          )
+        }
+      },
     },
   },
 
