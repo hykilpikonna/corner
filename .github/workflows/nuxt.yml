@@ -11,6 +11,9 @@ jobs:
   build:
     name: Build and deploy main
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
 
     steps:
       - uses: actions/checkout@v5
@@ -23,8 +26,9 @@ jobs:
         run: |
           bunx playwright install --with-deps chromium
           bun run test:e2e
-      - name: Deploy to github pages
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
         with:
-          branch: gh-pages
-          folder: .output/public
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .output/public --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME || secrets.CLOUDFLARE_PROJECT_NAME || 'corner' }}

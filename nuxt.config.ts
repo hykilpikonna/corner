@@ -21,7 +21,20 @@ export default defineNuxtConfig({
     },
   },
 
+  build: {
+    transpile: ['vue-i18n'],
+  },
+
+  vite: {
+    define: {
+      __VUE_PROD_DEVTOOLS__: 'false',
+    },
+  },
+
   nitro: {
+    replace: {
+      __VUE_PROD_DEVTOOLS__: 'false',
+    },
     prerender: {
       crawlLinks: true,
       routes: [
