@@ -11,9 +11,9 @@ if (!gitCommit) {
   }
 }
 
-function stripTgBlogLogs(): Plugin {
+function patchTgBlog(): Plugin {
   return {
-    name: 'strip-tg-blog-logs',
+    name: 'patch-tg-blog',
     enforce: 'pre',
     transform(code, id) {
       if (id.includes('tg-blog') && (id.endsWith('.js') || id.endsWith('.mjs'))) {
@@ -26,7 +26,8 @@ function stripTgBlogLogs(): Plugin {
             .replace(/console\.log\(y\.value\)/g, 'void 0')
             .replace(/console\.log\("Hash change",[^)]+\)/g, 'void 0')
             .replace(/console\.log\(e\), te\.value = e;/g, 'te.value = e;')
-            .replace(/console\.log\(`Downloading file: \${[^}]+}`\)/g, 'void 0'),
+            .replace(/console\.log\(`Downloading file: \${[^}]+}`\)/g, 'void 0')
+            .replace(/loading:\s*"lazy"/g, 'loading: "eager"'),
           map: null,
         }
       }
@@ -62,7 +63,7 @@ export default defineNuxtConfig({
   },
 
   vite: {
-    plugins: [stripTgBlogLogs()],
+    plugins: [patchTgBlog()],
     define: {
       __VUE_PROD_DEVTOOLS__: 'false',
       __BUILD_TIME__: JSON.stringify(buildTime),
