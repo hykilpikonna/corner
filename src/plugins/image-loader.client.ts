@@ -11,18 +11,9 @@ export default defineNuxtPlugin(() => {
     }
   }
 
-  // Ensure videos do not preload
-  const setupVideo = (video: HTMLVideoElement) => {
-    if (video.getAttribute('preload') !== 'none' || video.preload !== 'none') {
-      video.preload = 'none'
-      video.setAttribute('preload', 'none')
-    }
-  }
-
   // Fallback if IntersectionObserver is not available
   if (!hasIntersectionObserver) {
     document.querySelectorAll<HTMLImageElement>('img[data-src]').forEach(loadImage)
-    document.querySelectorAll<HTMLVideoElement>('video').forEach(setupVideo)
     return
   }
 
@@ -75,27 +66,21 @@ export default defineNuxtPlugin(() => {
     }
   }
 
-  // Setup existing images and videos in DOM
+  // Setup existing images in DOM
   document.querySelectorAll<HTMLImageElement>('img').forEach(setupImage)
-  document.querySelectorAll<HTMLVideoElement>('video').forEach(setupVideo)
 
-  // Observe dynamically added images and videos (e.g. infinite scroll / virtualized posts)
+  // Observe dynamically added images (e.g. infinite scroll / virtualized posts)
   if (typeof MutationObserver !== 'undefined') {
     const domObserver = new MutationObserver((mutations) => {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node instanceof HTMLImageElement) {
             setupImage(node)
-          } else if (node instanceof HTMLVideoElement) {
-            setupVideo(node)
           } else if (node instanceof HTMLElement) {
             if (node.tagName === 'IMG') {
               setupImage(node as HTMLImageElement)
-            } else if (node.tagName === 'VIDEO') {
-              setupVideo(node as HTMLVideoElement)
             }
             node.querySelectorAll<HTMLImageElement>('img').forEach(setupImage)
-            node.querySelectorAll<HTMLVideoElement>('video').forEach(setupVideo)
           }
         }
       }
