@@ -27,7 +27,16 @@ function patchTgBlog(): Plugin {
             .replace(/console\.log\("Hash change",[^)]+\)/g, 'void 0')
             .replace(/console\.log\(e\), te\.value = e;/g, 'te.value = e;')
             .replace(/console\.log\(`Downloading file: \${[^}]+}`\)/g, 'void 0')
-            .replace(/loading:\s*"lazy"/g, 'loading: "eager"'),
+            .replace(/preload:\s*"auto"/g, 'preload: "metadata"')
+            .replace(/preload="auto"/g, 'preload="metadata"')
+            .replace(
+              /src:\s*e\.url,\s*alt:\s*"image",\s*loading:\s*"lazy"/g,
+              'src: "data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\'/%3E", "data-src": e.url, alt: "image"'
+            )
+            .replace(
+              /src:\s*r\.value\.reply\.thumb,\s*alt:\s*"",\s*loading:\s*"lazy"/g,
+              'src: "data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\'/%3E", "data-src": r.value.reply.thumb, alt: ""'
+            ),
           map: null,
         }
       }
