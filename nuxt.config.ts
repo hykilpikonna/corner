@@ -1,5 +1,4 @@
 import { execSync } from 'node:child_process'
-import type { Plugin } from 'vite'
 
 const buildTime = new Date().toISOString()
 let gitCommit = process.env.GITHUB_SHA?.slice(0, 7)
@@ -8,39 +7,6 @@ if (!gitCommit) {
     gitCommit = execSync('git rev-parse --short HEAD').toString().trim()
   } catch {
     gitCommit = 'dev'
-  }
-}
-
-function patchTgBlog(): Plugin {
-  return {
-    name: 'patch-tg-blog',
-    enforce: 'pre',
-    transform(code, id) {
-      if (id.includes('tg-blog') && (id.endsWith('.js') || id.endsWith('.mjs'))) {
-        return {
-          code: code
-            .replace(/console\.log\(`Calculating dimensions for \${[^}]+}\.\.\.`\)/g, 'void 0')
-            .replace(/console\.log\("Spoilers initialized\."\)/g, 'void 0')
-            .replace(/console\.log\(`Spoiler clicked: \${[^}]+}`\)/g, 'void 0')
-            .replace(/console\.log\(v\.value\)/g, 'void 0')
-            .replace(/console\.log\(y\.value\)/g, 'void 0')
-            .replace(/console\.log\("Hash change",[^)]+\)/g, 'void 0')
-            .replace(/console\.log\(e\), te\.value = e;/g, 'te.value = e;')
-            .replace(/console\.log\(`Downloading file: \${[^}]+}`\)/g, 'void 0')
-            .replace(/preload:\s*"(auto|metadata|none)"/g, 'preload: "metadata"')
-            .replace(/preload="(auto|metadata|none)"/g, 'preload="metadata"')
-            .replace(
-              /src:\s*e\.url,\s*alt:\s*"image",\s*loading:\s*"lazy"/g,
-              'src: "data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\'/%3E", "data-src": e.url, alt: "image"'
-            )
-            .replace(
-              /src:\s*r\.value\.reply\.thumb,\s*alt:\s*"",\s*loading:\s*"lazy"/g,
-              'src: "data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\'/%3E", "data-src": r.value.reply.thumb, alt: ""'
-            ),
-          map: null,
-        }
-      }
-    },
   }
 }
 
@@ -72,7 +38,6 @@ export default defineNuxtConfig({
   },
 
   vite: {
-    plugins: [patchTgBlog()],
     define: {
       __VUE_PROD_DEVTOOLS__: 'false',
       __BUILD_TIME__: JSON.stringify(buildTime),

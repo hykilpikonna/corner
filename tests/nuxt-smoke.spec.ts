@@ -65,7 +65,22 @@ test('preserves SPA navigation and interactive transitions', async ({page}) => {
 
 test('hydrates the gallery and Telegram blog', async ({page}) => {
   const pageErrors: string[] = []
+  const consoleErrors: string[] = []
+  const unwantedLogs: string[] = []
+
   page.on('pageerror', error => pageErrors.push(error.message))
+  page.on('console', msg => {
+    const text = msg.text()
+    if (msg.type() === 'error') consoleErrors.push(text)
+    if (
+      text.includes('Calculating dimensions') ||
+      text.includes('Spoilers initialized') ||
+      text.includes('[messaging]') ||
+      text.includes('sendMessage')
+    ) {
+      unwantedLogs.push(text)
+    }
+  })
 
   // Pick a photo id dynamically — live manifest changes as photos are added
   await page.goto('/photo')
@@ -87,7 +102,22 @@ test('hydrates the gallery and Telegram blog', async ({page}) => {
   await page.waitForURL('**/life')
   await expect(page.locator('.tg-blog')).toBeVisible({timeout: 15_000})
 
+  // Verify posts are rendered and images load
+  await page.waitForSelector('.tg-blog .post', {timeout: 10_000})
+  const postImages = page.locator('.tg-blog .image_container img')
+  if (await postImages.count() > 0) {
+    const firstImg = postImages.first()
+    await expect(firstImg).toHaveAttribute('src', /.+/)
+    await expect(firstImg).not.toHaveAttribute('loading', 'lazy')
+  }
+
+  // Scroll down to test infinite scroll loading
+  await page.evaluate(() => window.scrollBy(0, 2000))
+  await page.waitForTimeout(1000)
+
   expect(pageErrors).toEqual([])
+  expect(consoleErrors).toEqual([])
+  expect(unwantedLogs).toEqual([])
 })
 
 test('keeps the original alignment and color contract across routes', async ({page}) => {
