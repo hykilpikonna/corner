@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-corner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-corner}
+      POSTGRES_DB: ${POSTGRES_DB:-corner}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-corner} -d ${POSTGRES_DB:-corner}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://corner:corner@postgres:5432/corner}
+      DATA_DIR: ${DATA_DIR:-/data}
+    volumes:
+      - ${DATA_DIR_HOST:-./data}:${DATA_DIR:-/data}
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+
+volumes:
+  pgdata:

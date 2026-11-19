@@ -1,0 +1,62 @@
+[project]
+name = "corner-api"
+version = "0.1.0"
+description = "Unified FastAPI + PostgreSQL 17 backend for corner /life v2"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pydantic-settings>=2.6.0",
+    "aiosmtplib>=3.0.0",
+    "pillow>=11.0.0",
+    "numpy>=2.0.0",
+    "scipy>=1.14.0",
+    "nh3>=0.2.18",
+    "httpx>=0.28.0",
+    "itsdangerous>=2.2.0",
+    "python-multipart>=0.0.17",
+    "kurigram>=2.1.0",
+    "authlib>=1.3.2",
+    "python-dateutil>=2.9.0",
+]
+
+[project.optional-dependencies]
+tgc = [
+    # Optional editable install when TelegramBackup is available locally:
+    # uv pip install -e /root/TelegramBackup
+]
+
+[project.scripts]
+corner-api-cli = "app.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

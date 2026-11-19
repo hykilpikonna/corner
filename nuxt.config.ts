@@ -34,10 +34,14 @@ export default defineNuxtConfig({
   },
 
   build: {
-    transpile: ['vue-i18n'],
+    transpile: ['vue-i18n', 'tg-blog'],
   },
 
   vite: {
+    envPrefix: ['VITE_', 'NUXT_PUBLIC_'],
+    resolve: {
+      dedupe: ['vue'],
+    },
     define: {
       __VUE_PROD_DEVTOOLS__: 'false',
       __BUILD_TIME__: JSON.stringify(buildTime),
@@ -46,6 +50,14 @@ export default defineNuxtConfig({
   },
 
   nitro: {
+    devProxy: process.env.NUXT_DEV_LIFE_API_TARGET
+      ? {
+          '/api/life': {
+            target: `${process.env.NUXT_DEV_LIFE_API_TARGET.replace(/\/+$/, '')}/api/life`,
+            changeOrigin: true,
+          },
+        }
+      : undefined,
     replace: {
       __VUE_PROD_DEVTOOLS__: 'false',
       __BUILD_TIME__: JSON.stringify(buildTime),
@@ -56,6 +68,7 @@ export default defineNuxtConfig({
       routes: [
         '/',
         '/api/photos.json',
+        '/api/life-preview.json',
         '/about',
         '/life',
         '/blog',

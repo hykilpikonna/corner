@@ -1,8 +1,27 @@
 <template>
-    <ClientOnly>
-      <TgBlog postsUrl="https://profile-api.hydev.org/exports/hykilp/posts.json">
+    <TgBlog
+        :postsUrl="life.postsUrl"
+        :postsData="postsData"
+        :apiUrl="activeApiUrl || undefined"
+        :telegramBotUsername="life.telegramBotUsername || undefined"
+        :sharedId="sharedPostId"
+        :messages="lifeMessages"
+    >
         <div class="title">
-            <h2>生活</h2>
+            <div class="title-row">
+                <h2>生活</h2>
+                <a
+                    v-if="life.rssUrl"
+                    class="rss-link"
+                    :href="life.rssUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="RSS 订阅"
+                >
+                    <i class="fas fa-rss" aria-hidden="true"></i>
+                    <span>RSS</span>
+                </a>
+            </div>
             <div class="subtitle">
                 <p>
                     在这个时间只会正向流动的世界里，每当秒针划过刻度线，就不可能再回到那里了——每一刻都是我们的第一次、也是最后一次。二十岁，人生中最有趣的这段时光，只匆匆忙忙地经历一次太可惜了。但是或许可以通过这里的照片和文字，让未来的自己能够重新体验这些心情起伏——这是这个频道的初衷。
@@ -12,23 +31,198 @@
                 </p>
             </div>
         </div>
-      </TgBlog>
-      <template #fallback>
-        <div class="title">
-          <h2>生活</h2>
-          <div class="subtitle">
-            <p>这里是我记录生活的地方，没有固定格式和内容，更新也会比较频繁。</p>
-          </div>
-        </div>
-      </template>
-    </ClientOnly>
+    </TgBlog>
 </template>
 
 <script lang="ts" setup>
-import { TgBlog } from "tg-blog";
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
+import {TgBlog} from 'tg-blog'
+import type {Post, TgBlogMessages} from 'tg-blog'
 import 'tg-blog/dist/style.css'
+import {life} from '@/scripts/constants'
 
 definePageMeta({title: '生活', navBookmark: 'life'})
+
+const lifeMessages: TgBlogMessages = {
+    searchPlaceholder: '搜索动态、标签或日期...',
+    loadFailed: '加载动态失败：',
+    forwardedFrom: '转发自：',
+    replyTo: '回复：',
+    voiceMessage: '语音消息',
+    copyShareLink: '复制分享链接',
+    linkCopied: '链接已复制',
+    poll: '投票',
+    quiz: '问答',
+    anonymousPrefix: '匿名',
+    pollResults: (count) => `共 ${count} 人参与`,
+    photoIndex: (index, total) => `第 ${index} / ${total} 张`,
+    dateFormat: 'YYYY-MM-DD HH:mm',
+
+    // Interactive: Reactions
+    addReaction: '添加回应',
+
+    // Interactive: Polls
+    pollVote: '提交投票',
+    pollRetractVote: '撤回投票',
+    pollClosed: '已结束',
+    pollExplanation: '解析',
+    pollMultipleChoice: '可多选',
+
+    // Interactive: Comments
+    reply: '留言',
+    commentsCount: (count) => `${count}`,
+    noComments: '还没有留言，来说点什么吧～',
+    loadingComments: '正在加载留言...',
+    commentsLoadFailed: '留言加载失败',
+    retry: '重试',
+    writeCommentPlaceholder: '写下你的想法...',
+    replyingTo: (name) => `回复 @${name}`,
+    cancelReply: '取消',
+    postComment: '发送',
+    postingComment: '发送中...',
+    deleteComment: '删除',
+    confirmDelete: '确认删除？',
+    commentDeleted: '该留言已删除',
+    signInToComment: '登录后即可参与留言互动',
+    signIn: '登录',
+    signOut: '退出登录',
+    commentAsAnonymous: '匿名留言',
+    commentingAnonymously: '当前为匿名留言',
+    notifyRepliesOn: '回复邮件提醒：开',
+    notifyRepliesOff: '回复邮件提醒：关',
+
+    // Interactive: Badges
+    badgeOwner: '站长',
+    badgeVerified: '已验证',
+    badgeTelegram: 'Telegram',
+    badgeAnonymous: '匿名',
+
+    // Interactive: ALTCHA PoW
+    altchaPrompt: '点击进行人机验证',
+    altchaVerifying: '验证中...',
+    altchaVerified: '已通过验证',
+    altchaError: '验证失败，点击重试',
+
+    // Interactive: Auth Modal
+    authTitle: '登录',
+    authSubtitle: '登录后可获得已验证标识，并接收留言回复的邮件提醒。',
+    authContinueWithGithub: '使用 GitHub 登录',
+    authContinueWithGoogle: '使用 Google 登录',
+    authContinueWithTelegram: '使用 Telegram 登录',
+    authOrEmail: '或使用邮箱免密登录',
+    authEmailPlaceholder: '输入你的邮箱地址',
+    authDisplayNamePlaceholder: '昵称（可选）',
+    authSendMagicLink: '发送登录链接',
+    authSendingMagicLink: '发送中...',
+    authMagicLinkSent: (email) => `登录链接已发送至 ${email}，请查收邮件完成登录。`,
+    authClose: '关闭',
+
+    // Original Photo Viewer
+    viewOriginal: '查看原图',
+    viewOriginalWithSize: (size) => `查看原图 (${size})`,
+    loadingOriginal: '原图加载中...',
+    viewingOriginal: '正在查看原图',
+}
+
+useHead(() => {
+    const link: Array<{rel: 'alternate'; type: string; title: string; href: string}> = []
+    if (life.rssUrl) {
+        link.push({
+            rel: 'alternate',
+            type: 'application/rss+xml',
+            title: 'Aza 的生活 - RSS',
+            href: life.rssUrl,
+        })
+    }
+    if (life.atomUrl) {
+        link.push({
+            rel: 'alternate',
+            type: 'application/atom+xml',
+            title: 'Aza 的生活 - Atom',
+            href: life.atomUrl,
+        })
+    }
+    if (life.jsonFeedUrl) {
+        link.push({
+            rel: 'alternate',
+            type: 'application/feed+json',
+            title: 'Aza 的生活 - JSON Feed',
+            href: life.jsonFeedUrl,
+        })
+    }
+    return {link}
+})
+
+const route = useRoute()
+
+const sharedPostId = computed<number | null>(() => {
+    const raw = route.query.shared
+    const str = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : null
+    if (!str) return null
+    const parsed = Number(str)
+    return Number.isFinite(parsed) ? parsed : null
+})
+
+const {data: previewPosts} = await useFetch<Post[]>('/api/life-preview.json', {
+    key: 'life-preview',
+    default: () => [],
+})
+
+const postsData = ref<Post[] | undefined>(
+    previewPosts.value && previewPosts.value.length > 0 ? previewPosts.value : undefined
+)
+const activeApiUrl = ref<string>(life.apiUrl)
+
+const LOCAL_OVERRIDE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]'])
+
+// Allow localhost-only same-origin API override (?lifeApi=/api/life) for local E2E testing
+// of interactive mode without exposing any override vector in production.
+function syncLocalApiOverride() {
+    if (!import.meta.client) return
+    if (!LOCAL_OVERRIDE_HOSTS.has(window.location.hostname)) return
+    const raw = route.query.lifeApi
+    const override = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : null
+    if (
+        override
+        && /^\/[a-zA-Z0-9/_-]+$/.test(override)
+        && !override.includes('//')
+        && !override.includes('..')
+    ) {
+        const normalized = override.replace(/\/+$/, '')
+        activeApiUrl.value = normalized || life.apiUrl
+    } else {
+        activeApiUrl.value = life.apiUrl
+    }
+}
+
+watch(() => route.query.lifeApi, syncLocalApiOverride)
+
+let archiveAbortController: AbortController | null = null
+
+onMounted(async () => {
+    syncLocalApiOverride()
+
+    // When SSR/preview seeded the newest 20 posts, fetch the full archive in the
+    // background so infinite scroll, search, and older ?shared= links have all posts.
+    if (!postsData.value) return
+    archiveAbortController = new AbortController()
+    try {
+        const res = await fetch(life.postsUrl, {signal: archiveAbortController.signal})
+        if (!res.ok) return
+        const fullPosts = await res.json() as Post[]
+        if (Array.isArray(fullPosts) && fullPosts.length > 0) {
+            postsData.value = fullPosts
+        }
+    } catch (err) {
+        if ((err as {name?: string})?.name === 'AbortError') return
+        console.warn('[life] Failed to hydrate full posts archive:', err)
+    }
+})
+
+onUnmounted(() => {
+    archiveAbortController?.abort()
+    archiveAbortController = null
+})
 </script>
 
 <style lang="sass" scoped>
@@ -38,4 +232,28 @@ definePageMeta({title: '生活', navBookmark: 'life'})
 .title
     text-align: left
     margin-bottom: 30px
+
+.title-row
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: 12px
+
+.rss-link
+    display: inline-flex
+    align-items: center
+    gap: 5px
+    padding: 3px 10px
+    border-radius: 999px
+    font-size: 0.82em
+    line-height: 1.4
+    color: colors.$color-text-light
+    background: colors.$color-card
+    text-decoration: none
+    box-shadow: 0 2px 4px -1px rgb(0 0 0 / 8%)
+    transition: color 0.2s ease, transform 0.2s ease
+
+    &:hover
+        color: colors.$color-text-special
+        transform: translateY(-1px)
 </style>

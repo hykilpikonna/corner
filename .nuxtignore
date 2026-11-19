@@ -1,0 +1,2 @@
+# Backend API service (Python / FastAPI) — ignored by Nuxt / Nitro scanning
+api/
