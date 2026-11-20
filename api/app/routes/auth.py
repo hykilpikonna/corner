@@ -79,7 +79,22 @@ def serialize_user_dto(user: User) -> UserDTO:
     )
 
 
-def get_enabled_providers(settings: Settings) -> list[str]:
+def _resolve_telegram_bot_username(
+    settings: Settings,
+    bot_username_fallback: str | None = None,
+) -> str | None:
+    raw = (settings.TG_LOGIN_BOT_USERNAME or "").strip().lstrip("@")
+    if raw:
+        return raw
+    fallback = (bot_username_fallback or "").strip().lstrip("@")
+    return fallback or None
+
+
+def get_enabled_providers(
+    settings: Settings,
+    *,
+    bot_username_fallback: str | None = None,
+) -> list[str]:
     providers: list[str] = []
     if settings.GITHUB_CLIENT_ID and settings.GITHUB_CLIENT_SECRET:
         providers.append("github")
@@ -91,7 +106,9 @@ def get_enabled_providers(settings: Settings) -> list[str]:
         and settings.OIDC_CLIENT_SECRET
     ):
         providers.append("oidc")
-    if settings.TG_BOT_TOKEN and settings.TG_LOGIN_BOT_USERNAME:
+    if settings.TG_BOT_TOKEN and _resolve_telegram_bot_username(
+        settings, bot_username_fallback
+    ):
         providers.append("telegram")
     providers.append("email")
     return providers
@@ -132,14 +149,18 @@ async def get_auth_me(
     settings: SettingsDep,
 ) -> AuthMeResponse:
     user = await get_current_user_optional(request, db)
-    providers = get_enabled_providers(settings)
+    tg_service_username = getattr(
+        getattr(request.app.state, "tg_service", None), "bot_username", None
+    )
+    resolved_tg_bot = _resolve_telegram_bot_username(settings, tg_service_username)
+    providers = get_enabled_providers(
+        settings, bot_username_fallback=tg_service_username
+    )
     return AuthMeResponse(
         user=serialize_user_dto(user) if user is not None else None,
         providers=providers,
         allow_anon_comments=settings.ALLOW_ANON_COMMENTS,
-        telegram_bot_username=(
-            settings.TG_LOGIN_BOT_USERNAME if "telegram" in providers else None
-        ),
+        telegram_bot_username=(resolved_tg_bot if "telegram" in providers else None),
         oidc_provider_name=(
             (settings.OIDC_PROVIDER_NAME.strip() or "SSO")
             if "oidc" in providers

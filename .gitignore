@@ -8,6 +8,9 @@ node_modules
 
 
 # local env files
+.env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 

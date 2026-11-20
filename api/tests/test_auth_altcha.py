@@ -371,6 +371,17 @@ async def test_telegram_login_widget_and_owner_role_and_unsubscribe(
         assert "telegram" in me_tg["providers"]
         assert me_tg["telegram_bot_username"] == "dummy_test_bot"
 
+        # Auto-detected bot_username from running TelegramService works without TG_LOGIN_BOT_USERNAME
+        cfg_auto = test_settings.model_copy(
+            update={"TG_BOT_TOKEN": dummy_bot_token, "TG_LOGIN_BOT_USERNAME": None}
+        )
+        app_auto, client_auto = await _make_client(cfg_auto, db_session)
+        app_auto.state.tg_service = type("Svc", (), {"bot_username": "@auto_detected_bot"})()
+        async with client_auto:
+            me_auto = (await client_auto.get("/api/life/auth/me")).json()
+            assert "telegram" in me_auto["providers"]
+            assert me_auto["telegram_bot_username"] == "auto_detected_bot"
+
         # Owner can update name to reserved alias
         r_owner_patch = await client.patch(
             "/api/life/auth/me",

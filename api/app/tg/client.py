@@ -574,6 +574,7 @@ class TelegramService:
         self.bot_id: int | None = (
             bot_id if bot_id is not None else _parse_bot_id_from_token(settings.TG_BOT_TOKEN)
         )
+        self.bot_username: str | None = None
         self._started = False
         self._user_started = False
         self._handlers_registered = False
@@ -677,6 +678,9 @@ class TelegramService:
             await self.client.start()
             me = await self.client.get_me()
             self.bot_id = int(me.id)
+            self.bot_username = (
+                str(getattr(me, "username", "") or "").strip().lstrip("@") or None
+            )
             # Register handlers only AFTER bot_id is confirmed to eliminate startup echo race
             self._register_handlers()
             self._started = True
