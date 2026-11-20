@@ -17,6 +17,7 @@ from app.db.models import (
     PollOption,
     Post,
     PostImage,
+    SiteSetting,
     TgReaction,
 )
 
@@ -102,6 +103,108 @@ def make_reaction_key(emoji: str | None = None, custom_emoji_id: str | None = No
     if emoji:
         return f"e:{emoji}"
     raise ValueError("Either emoji or custom_emoji_id must be provided")
+
+
+ALLOWED_REACTIONS_SETTING_KEY = "allowed_reactions"
+
+DEFAULT_ALLOWED_REACTION_EMOJIS: tuple[str, ...] = (
+    "❤️", "👍", "🔥", "🥰", "👏", "😂", "😮", "😢", "🎉", "✨",
+    "👎", "😁", "🤔", "🤯", "😱", "🤬", "🤩", "🤮", "💩", "🙏",
+    "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭",
+    "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾",
+    "💋", "😈", "😴", "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈",
+    "😇", "😨", "🤝", "✍️", "🤗", "🫡", "🎅", "🎄", "☃️", "💅",
+    "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎",
+    "👾", "🤷",
+)
+
+
+def canonical_reaction_key(
+    *, emoji: str | None = None, custom_emoji_id: str | None = None
+) -> str:
+    if custom_emoji_id:
+        return f"c:{custom_emoji_id.strip()}"
+    if emoji:
+        return f"e:{strip_variation_selectors(emoji.strip())}"
+    raise ValueError("Either emoji or custom_emoji_id must be provided")
+
+
+def normalize_allowed_reactions(raw_items: Sequence[dict[str, Any]]) -> list[dict[str, str | None]]:
+    """Deduplicate and normalize an ordered list of emoji/custom_emoji_id choices."""
+    seen: set[str] = set()
+    out: list[dict[str, str | None]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        cid_raw = raw.get("custom_emoji_id")
+        cid = str(cid_raw).strip() if cid_raw is not None else ""
+        emoji_raw = raw.get("emoji")
+        emoji = str(emoji_raw).strip() if emoji_raw is not None else ""
+        if cid:
+            if not cid.isascii() or not cid.isdigit() or len(cid) > 32:
+                continue
+            key = canonical_reaction_key(custom_emoji_id=cid)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"reaction_key": key, "emoji": None, "custom_emoji_id": cid})
+        elif emoji:
+            key = canonical_reaction_key(emoji=emoji)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"reaction_key": key, "emoji": emoji, "custom_emoji_id": None})
+    return out
+
+
+def default_allowed_reactions() -> list[dict[str, str | None]]:
+    return normalize_allowed_reactions([{"emoji": e} for e in DEFAULT_ALLOWED_REACTION_EMOJIS])
+
+
+async def get_allowed_reactions(session: AsyncSession) -> list[dict[str, str | None]]:
+    row = await session.get(SiteSetting, ALLOWED_REACTIONS_SETTING_KEY)
+    if row is None or not isinstance(row.value, list):
+        return default_allowed_reactions()
+    return normalize_allowed_reactions(row.value)
+
+
+async def set_allowed_reactions(
+    session: AsyncSession, items: Sequence[dict[str, Any]]
+) -> list[dict[str, str | None]]:
+    normalized = normalize_allowed_reactions(items)
+    now = datetime.now(UTC)
+    existing = await session.get(SiteSetting, ALLOWED_REACTIONS_SETTING_KEY)
+    if existing is None:
+        session.add(
+            SiteSetting(
+                key=ALLOWED_REACTIONS_SETTING_KEY,
+                value=normalized,
+                updated_at=now,
+            )
+        )
+    else:
+        existing.value = normalized
+        existing.updated_at = now
+    await session.flush()
+    return normalized
+
+
+def find_allowed_reaction_entry(
+    allowed_reactions: Sequence[dict[str, str | None]],
+    *,
+    emoji: str | None = None,
+    custom_emoji_id: str | None = None,
+) -> dict[str, str | None] | None:
+    target_key = canonical_reaction_key(emoji=emoji, custom_emoji_id=custom_emoji_id)
+    for item in allowed_reactions:
+        item_key = item.get("reaction_key")
+        if item_key == target_key:
+            return item
+        item_emoji = item.get("emoji")
+        item_cid = item.get("custom_emoji_id")
+        if canonical_reaction_key(emoji=item_emoji, custom_emoji_id=item_cid) == target_key:
+            return item
+    return None
 
 
 def resolve_media_url(raw_url: str | None, api_prefix: str = "/api/life") -> str | None:

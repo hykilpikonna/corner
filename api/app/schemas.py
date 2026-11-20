@@ -159,6 +159,16 @@ class AltchaChallengeDTO(BaseModel):
     signature: str
 
 
+class AllowedReactionDTO(BaseModel):
+    reaction_key: str
+    emoji: str | None = None
+    custom_emoji_id: str | None = None
+
+
+class AllowedReactionsResponse(BaseModel):
+    allowed_reactions: list[AllowedReactionDTO]
+
+
 class PostInteractionDTO(BaseModel):
     reactions: list[MergedReactionDTO]
     poll: MergedPollDTO | None = None
@@ -169,6 +179,7 @@ class InteractionsResponse(BaseModel):
     allow_anon_comments: bool
     captcha_provider: str = "altcha"
     me: UserDTO | None = None
+    allowed_reactions: list[AllowedReactionDTO] = Field(default_factory=list)
     posts: dict[str, PostInteractionDTO]
 
 

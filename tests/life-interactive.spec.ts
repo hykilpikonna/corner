@@ -314,6 +314,18 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
           allow_anon_comments: true,
           captcha_provider: 'altcha',
           me: null,
+          allowed_reactions: [
+            {reaction_key: 'e:🔥', emoji: '🔥', custom_emoji_id: null},
+            {reaction_key: 'e:❤️', emoji: '❤️', custom_emoji_id: null},
+            {reaction_key: 'e:👍', emoji: '👍', custom_emoji_id: null},
+            {reaction_key: 'e:🥰', emoji: '🥰', custom_emoji_id: null},
+            {reaction_key: 'e:👏', emoji: '👏', custom_emoji_id: null},
+            {reaction_key: 'e:😂', emoji: '😂', custom_emoji_id: null},
+            {reaction_key: 'e:😮', emoji: '😮', custom_emoji_id: null},
+            {reaction_key: 'e:😢', emoji: '😢', custom_emoji_id: null},
+            {reaction_key: 'e:🎉', emoji: '🎉', custom_emoji_id: null},
+            {reaction_key: 'e:✨', emoji: '✨', custom_emoji_id: null},
+          ],
           posts,
         }),
       })
@@ -496,14 +508,11 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(heartBtn).toBeVisible({timeout: 10_000})
   await expect(heartBtn).toContainText('3')
 
-  // Trigger Telegram Web A 2-stage ReactionSelector via hover .quick-reaction button
+  // Desktop hover quick-reaction heart bubble must NOT exist; right-click opens Telegram Web A 2-stage ReactionSelector
   const cardWrap = firstEntry.locator('.post-card-wrap')
   await cardWrap.hover()
-  const quickReactionBtn = cardWrap.locator('.quick-reaction')
-  await expect(quickReactionBtn).toBeVisible({timeout: 10_000})
-  await expect(quickReactionBtn).toHaveAttribute('title', '添加回应')
-  await expect(quickReactionBtn.locator('img.tgb-apple-emoji[alt="❤️"]')).toBeVisible()
-  await quickReactionBtn.click()
+  await expect(cardWrap.locator('.quick-reaction')).toHaveCount(0)
+  await firstCard.locator('.info .date').click({button: 'right'})
 
   const selector = page.locator('.ReactionSelector')
   await expect(selector).toBeVisible({timeout: 10_000})
@@ -522,15 +531,27 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(heartBtn).toHaveClass(/chosen/)
   await expect(heartBtn).toContainText('4')
 
-  // Also verify right-clicking non-interactive card area opens ReactionSelector and Escape closes it
+  // Escape also closes ReactionSelector when opened via right-click
   await firstCard.locator('.info .date').click({button: 'right'})
   await expect(selector).toBeVisible({timeout: 10_000})
   await page.keyboard.press('Escape')
   await expect(selector).toBeHidden()
 
-  // Open external chat-zone beneath .post.tgb-card
-  const commentToggle = firstCard.locator('.comment-toggle')
-  await expect(commentToggle).toContainText('1')
+  // Open external chat-zone beneath .post.tgb-card via the borderless round/pill replies button with translateY(-5px)
+  const commentToggle = cardWrap.locator('.comment-toggle')
+  await expect(commentToggle).toBeVisible()
+  await expect(commentToggle).toHaveCSS('border-top-width', '0px')
+  await expect(commentToggle).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, -5)')
+  await expect(commentToggle.locator('.comment-badge')).toHaveCount(0)
+  await expect(commentToggle.locator('.comment-count')).toHaveText('1')
+  const toggleBox = await commentToggle.boundingBox()
+  const cardWrapBox = await cardWrap.boundingBox()
+  expect(toggleBox).toBeTruthy()
+  expect(cardWrapBox).toBeTruthy()
+  expect(toggleBox!.width).toBeGreaterThanOrEqual(36)
+  expect(toggleBox!.height).toBeGreaterThanOrEqual(36)
+  expect(toggleBox!.x + toggleBox!.width).toBeGreaterThan(cardWrapBox!.x + cardWrapBox!.width)
+  expect(toggleBox!.y + toggleBox!.height).toBeGreaterThan(cardWrapBox!.y + cardWrapBox!.height)
   await commentToggle.click()
 
   // Verify .chat-zone is rendered OUTSIDE .post.tgb-card (inside .chat-accordion-shell sibling of .post-card-wrap) with symmetric 1px borders
@@ -545,13 +566,14 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   }))
   expect(borderWidths).toEqual({before: '1px', after: '1px'})
 
-  // Verify incoming owner bubble renders chronologically with zh-CN badge & top-row .message-timestamp (date by default, HH:mm on hover)
+  // Verify incoming owner bubble renders chronologically with zh-CN badge & bottom-right .message-timestamp (date by default, HH:mm on hover)
   const incomingBubble = chatZone.locator('#comment-101')
   await expect(incomingBubble.getByText('欢迎来聊天！')).toBeVisible()
   await expect(incomingBubble.getByText('站长')).toBeVisible()
   await expect(chatZone.locator('.MessageMeta')).toHaveCount(0)
+  await expect(chatZone.locator('.bubble-hover-time')).toHaveCount(0)
 
-  const incomingTs = incomingBubble.locator('.message-title .message-timestamp')
+  const incomingTs = incomingBubble.locator('.message-content .message-timestamp')
   await expect(incomingTs).toBeVisible()
   const tsDate = incomingTs.locator('.ts-date')
   const tsTime = incomingTs.locator('.ts-time')
@@ -560,7 +582,7 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(tsDate).toHaveCSS('opacity', '1')
   await expect(tsTime).toHaveCSS('opacity', '0')
   // Hovering the message body must keep showing the date; only hovering the date itself reveals the time
-  await incomingBubble.locator('.text-content').hover()
+  await incomingBubble.locator('.text-content .comment-body').hover()
   await expect(tsDate).toHaveCSS('opacity', '1')
   await expect(tsTime).toHaveCSS('opacity', '0')
   await incomingTs.hover()
@@ -579,6 +601,21 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(textarea).toHaveAttribute('placeholder', '发消息...')
   await expect(chatZone.locator('#send-comment-btn')).toHaveCount(0)
 
+  // Guest avatar sits left of "登录" with ~1/3 (10px of 30px) sunk behind the textarea top edge
+  const guestAvatar = chatZone.locator('.guest-bar .guest-avatar')
+  const signinBtn = chatZone.locator('.guest-bar .signin-btn')
+  await expect(guestAvatar).toBeVisible()
+  const avatarBox = await guestAvatar.boundingBox()
+  const signinBox = await signinBtn.boundingBox()
+  const textareaBox = await textarea.boundingBox()
+  expect(avatarBox).toBeTruthy()
+  expect(signinBox).toBeTruthy()
+  expect(textareaBox).toBeTruthy()
+  expect(avatarBox!.x + avatarBox!.width).toBeLessThanOrEqual(signinBox!.x)
+  const sinkPx = avatarBox!.y + avatarBox!.height - textareaBox!.y
+  expect(sinkPx).toBeGreaterThanOrEqual(7)
+  expect(sinkPx).toBeLessThanOrEqual(13)
+
   // Click existing comment reaction pill on #comment-101 -> toggles 1 -> 2 with .chosen
   const commentHeartPill = incomingBubble.locator('.comment-reactions .comment-reaction-btn:has(img.tgb-apple-emoji[alt="❤️"])')
   await expect(commentHeartPill).toBeVisible()
@@ -587,12 +624,12 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(commentHeartPill).toHaveClass(/chosen/)
   await expect(commentHeartPill).toContainText('2')
 
-  // Use .bubble-act-btn.react-btn to add a brand-new reaction (🔥) via ReactionSelector
-  await incomingBubble.hover()
-  const reactActBtn = incomingBubble.locator('.bubble-act-btn.react-btn')
-  await expect(reactActBtn).toBeVisible()
-  await reactActBtn.click()
+  // PC has no hover reaction button on comments; right-clicking the bubble opens ReactionSelector in backend order
+  await expect(incomingBubble.locator('.bubble-act-btn.react-btn')).toHaveCount(0)
+  await incomingBubble.locator('.message-content').click({button: 'right'})
   await expect(selector).toBeVisible({timeout: 10_000})
+  // First reaction reflects backend allowed_reactions order (🔥 first)
+  await expect(selector.locator('.ReactionSelector__reaction').first().locator('img.tgb-apple-emoji')).toHaveAttribute('alt', '🔥')
   await selector.locator('.ReactionSelector__reaction:has(img.tgb-apple-emoji[alt="🔥"])').first().click()
   await expect(selector).toBeHidden()
   const commentFirePill = incomingBubble.locator('.comment-reactions .comment-reaction-btn:has(img.tgb-apple-emoji[alt="🔥"])')
@@ -612,11 +649,16 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(sendWrap).toBeVisible()
   await sendWrap.locator('button').click()
 
-  // New comment appears as a right-aligned .Message.own bubble with .own-title .message-timestamp and solved ALTCHA
+  // New comment appears as a right-aligned .Message.own bubble with bottom-right .message-timestamp (no empty .message-title) and solved ALTCHA
   const ownBubble = chatZone.locator('.chat-list .Message.own')
   await expect(ownBubble).toBeVisible({timeout: 10_000})
   await expect(ownBubble).toContainText('你好呀，这是一条匿名聊天消息！')
-  await expect(ownBubble.locator('.message-title.own-title .message-timestamp .ts-date')).toHaveText(/^\d{2}-\d{2}$|^\d{4}-\d{2}-\d{2}$/)
+  await expect(ownBubble.locator('.message-title')).toHaveCount(0)
+  await expect(ownBubble.locator('.message-content .text-content .message-timestamp.in-text .ts-date')).toHaveText(/^\d{2}-\d{2}$|^\d{4}-\d{2}-\d{2}$/)
+  // Own chat bubbles must share the same background color as incoming bubbles
+  const ownBg = await ownBubble.locator('.message-content').evaluate(el => window.getComputedStyle(el).backgroundColor)
+  const incomingBg = await incomingBubble.locator('.message-content').evaluate(el => window.getComputedStyle(el).backgroundColor)
+  expect(ownBg).toBe(incomingBg)
   expect(receivedAltchaPayload).toBeTruthy()
   const decodedAltcha = JSON.parse(Buffer.from(receivedAltchaPayload!, 'base64').toString('utf8')) as {
     number: number
@@ -777,4 +819,108 @@ test('rejects malicious ?lifeApi= query values without leaking requests', async 
   expect(evilRequests).toEqual([])
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])
+})
+
+test('hides mobile reaction/reply buttons and supports touch slide-to-reply', async ({browser, request}) => {
+  const context = await browser.newContext({hasTouch: true, isMobile: true, viewport: {width: 390, height: 844}})
+  const page = await context.newPage()
+  try {
+    const {previewPosts, fullArchive} = await buildDeterministicArchive(request)
+    await mockPostsArchive(page, fullArchive)
+    const firstPostId = previewPosts[previewPosts.length - 1]!.id
+
+    await page.route('**/api/life/**', async route => {
+      const path = new URL(route.request().url()).pathname
+      if (path.endsWith('/api/life/interactions')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            allow_anon_comments: true,
+            captcha_provider: 'altcha',
+            me: null,
+            posts: {
+              [String(firstPostId)]: {reactions: [], poll: null, comment_count: 1},
+            },
+          }),
+        })
+        return
+      }
+      if (path.endsWith(`/api/life/posts/${firstPostId}/comments`)) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            post_id: firstPostId,
+            comments: [
+              {
+                id: 201,
+                post_id: firstPostId,
+                parent_id: null,
+                source: 'web',
+                author: {display_name: 'Aza', avatar_url: null, role: 'owner', provider: 'telegram', username: 'hykilp', verified: true},
+                body_text: 'Mobile swipe test',
+                body_html: '<p>Mobile swipe test</p>',
+                media: null,
+                created_at: '2026-11-19T12:00:00Z',
+                edited_at: null,
+                deleted: false,
+                is_mine: false,
+                can_delete: false,
+                reactions: [],
+              },
+            ],
+          }),
+        })
+        return
+      }
+      if (path.endsWith('/api/life/auth/me')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({user: null, providers: ['email'], allow_anon_comments: true, telegram_bot_username: null}),
+        })
+        return
+      }
+      if (path.endsWith('/api/life/stream')) {
+        await route.fulfill({status: 200, headers: {'content-type': 'text/event-stream'}, body: ': ping\n\n'})
+        return
+      }
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true})})
+    })
+
+    await page.goto('/life?lifeApi=/api/life')
+    const firstEntry = page.locator('.tg-blog .post-entry').first()
+    await firstEntry.locator('.comment-toggle').click()
+    const bubble = firstEntry.locator('#comment-201')
+    await expect(bubble.getByText('Mobile swipe test')).toBeVisible({timeout: 10_000})
+
+    // Desktop hover react button removed completely; mobile reply button hidden
+    await expect(bubble.locator('.bubble-act-btn.react-btn')).toHaveCount(0)
+    await expect(bubble.locator('.bubble-act-btn.reply-btn')).toBeHidden()
+
+    // Touch swipe left across the bubble triggers reply banner
+    const contentEl = bubble.locator('.message-content')
+    await contentEl.evaluate(el => {
+      const r = el.getBoundingClientRect()
+      const sx = r.left + r.width / 2
+      const sy = r.top + r.height / 2
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', clientX: sx, clientY: sy,
+      }))
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', clientX: sx - 25, clientY: sy,
+      }))
+      window.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', clientX: sx - 80, clientY: sy,
+      }))
+      window.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', clientX: sx - 80, clientY: sy,
+      }))
+    })
+
+    await expect(firstEntry.locator('.reply-banner')).toContainText('回复 @Aza')
+  } finally {
+    await context.close()
+  }
 })

@@ -28,6 +28,7 @@ EXPECTED_TABLES = {
     "notification_queue",
     "original_upload_tokens",
     "used_captcha_salts",
+    "site_settings",
 }
 
 

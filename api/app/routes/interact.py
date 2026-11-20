@@ -41,7 +41,9 @@ from app.db.repo import (
     compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
+    find_allowed_reaction_entry,
     format_iso_utc,
+    get_allowed_reactions,
     make_reaction_key,
     resolve_media_url,
     strip_variation_selectors,
@@ -49,6 +51,8 @@ from app.db.repo import (
 from app.db.session import get_db_session
 from app.routes.auth import serialize_user_dto
 from app.schemas import (
+    AllowedReactionDTO,
+    AllowedReactionsResponse,
     CommentAuthorDTO,
     CommentDTO,
     CommentReactionToggleResponse,
@@ -305,6 +309,16 @@ async def _toggle_web_reaction(
         await db.commit()
         return
 
+    allowed_reactions = await get_allowed_reactions(db)
+    allowed_entry = find_allowed_reaction_entry(
+        allowed_reactions, emoji=emoji, custom_emoji_id=custom_emoji_id
+    )
+    if allowed_entry is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Reaction emoji is not allowed",
+        )
+
     if len(actor_rows) >= MAX_WEB_REACTIONS_PER_ACTOR:
         raise HTTPException(
             status_code=400,
@@ -320,6 +334,8 @@ async def _toggle_web_reaction(
             fk_col_name=fk_col_name,
             target_id=target_id,
         )
+        if strip_variation_selectors(emoji) == emoji and allowed_entry.get("emoji"):
+            emoji = str(allowed_entry["emoji"])
 
     rkey = make_reaction_key(emoji=emoji, custom_emoji_id=custom_emoji_id)
     db.add(
@@ -526,11 +542,27 @@ async def get_interactions(
                 comment_count=comment_counts.get(post.id, 0),
             )
 
+    allowed_reactions = [
+        AllowedReactionDTO(**item) for item in await get_allowed_reactions(db)
+    ]
+
     return InteractionsResponse(
         allow_anon_comments=settings.ALLOW_ANON_COMMENTS,
         captcha_provider="altcha",
         me=serialize_user_dto(me) if me is not None else None,
+        allowed_reactions=allowed_reactions,
         posts=posts_payload,
+    )
+
+
+@router.get("/reactions/allowed", response_model=AllowedReactionsResponse)
+async def get_allowed_reactions_route(
+    db: DbSessionDep,
+) -> AllowedReactionsResponse:
+    return AllowedReactionsResponse(
+        allowed_reactions=[
+            AllowedReactionDTO(**item) for item in await get_allowed_reactions(db)
+        ]
     )
 
 

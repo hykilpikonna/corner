@@ -439,3 +439,13 @@ class UsedCaptchaSalt(Base):
 
     salt: Mapped[str] = mapped_column(Text, primary_key=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SiteSetting(Base):
+    __tablename__ = "site_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

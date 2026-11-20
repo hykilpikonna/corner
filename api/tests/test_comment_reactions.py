@@ -20,7 +20,12 @@ from app.db.models import (
     User,
     UserIdentity,
 )
-from app.db.repo import ensure_channel, upsert_post
+from app.db.repo import (
+    default_allowed_reactions,
+    ensure_channel,
+    set_allowed_reactions,
+    upsert_post,
+)
 from app.db.session import create_engine_and_factory, get_db_session
 from app.main import create_app
 from app.routes.interact import MAX_WEB_REACTIONS_PER_POST_ACTOR
@@ -208,12 +213,24 @@ async def test_comment_reactions_toggle_merge_list_and_sse_broadcast(
             assert r_anon_off.json()["reactions"][0]["reacted"] is False
             await asyncio.wait_for(queue.get(), timeout=1.0)
 
-        # 2. Verified user toggles reaction ON and OFF, plus custom_emoji_id
+        # 2. Verified user: unlisted custom emoji is rejected (400); once added to allowlist it succeeds
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="https://aza.moe",
         ) as auth_client:
             auth_client.cookies.set(SESSION_COOKIE_NAME, alice_token)
+
+            r_disallowed = await auth_client.post(
+                f"/api/life/comments/{live_comment.id}/reactions/toggle",
+                json={"custom_emoji_id": "55512345"},
+            )
+            assert r_disallowed.status_code == 400
+
+            await set_allowed_reactions(
+                db_session,
+                [*default_allowed_reactions(), {"emoji": None, "custom_emoji_id": "55512345"}],
+            )
+            await db_session.commit()
 
             r_user_on = await auth_client.post(
                 f"/api/life/comments/{live_comment.id}/reactions/toggle",
@@ -363,8 +380,16 @@ async def test_comment_reactions_404_validation_cap_and_concurrency(
                 )
             ).status_code == 400
 
+            # Unlisted valid emoji is rejected against global allowlist
+            assert (
+                await client.post(
+                    f"/api/life/comments/{live_comment.id}/reactions/toggle",
+                    json={"emoji": "🍆"},
+                )
+            ).status_code == 400
+
             # Distinct reactions cap -> 400 on overflow, toggle off still allowed
-            emojis = ["❤️", "🔥", "👍🏻", "1️⃣", "✨"]
+            emojis = ["❤️", "🔥", "👍", "👏", "✨"]
             assert len(emojis) == MAX_WEB_REACTIONS_PER_POST_ACTOR
             for emoji in emojis:
                 r_ok = await client.post(

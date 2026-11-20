@@ -69,7 +69,7 @@ async def db_session(test_settings: Settings) -> AsyncIterator[AsyncSession]:
         await session.execute(
             text(
                 "TRUNCATE TABLE "
-                "used_captcha_salts, original_upload_tokens, notification_queue, "
+                "site_settings, used_captcha_salts, original_upload_tokens, notification_queue, "
                 "comment_web_reactions, comment_tg_reactions, comments, "
                 "magic_links, sessions, user_identities, users, "
                 "web_poll_votes, poll_options, polls, web_reactions, tg_reactions, "

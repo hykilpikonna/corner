@@ -13,10 +13,14 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.security import SESSION_COOKIE_NAME, create_session
+from app.auth.security import (
+    SESSION_COOKIE_NAME,
+    create_session,
+    validate_reaction_emoji,
+)
 from app.config import Settings, get_settings
 from app.db.models import NotificationQueue, User, UserIdentity
-from app.db.repo import ensure_channel, upsert_post
+from app.db.repo import ensure_channel, set_allowed_reactions, upsert_post
 from app.db.session import get_db_session
 from app.main import create_app
 
@@ -694,13 +698,49 @@ async def test_reaction_validation_cap_and_concurrent_races(
             )
             assert r_bad_custom.status_code == 400
 
-            # 2. Valid emojis up to cap of 5 succeed; 6th returns 400; toggling off succeeds
-            for valid_emoji in ("❤️", "🔥", "👍🏻", "1️⃣", "✨"):
+            # Structural validator accepts skin-tone & keycap graphemes, while global allowlist rejects unlisted emojis
+            assert validate_reaction_emoji("👍🏻") == "👍🏻"
+            assert validate_reaction_emoji("1️⃣") == "1️⃣"
+            for unlisted in ("👍🏻", "1️⃣", "🍆"):
+                r_unlisted = await client.post(
+                    "/api/life/posts/300/reactions/toggle",
+                    json={"emoji": unlisted},
+                )
+                assert r_unlisted.status_code == 400, f"Unlisted emoji {unlisted!r} should be rejected"
+
+            # 2. Allowlisted emojis up to cap of 5 succeed; 6th returns 400; toggling off succeeds
+            for valid_emoji in ("❤️", "🔥", "👍", "👏", "✨"):
                 r_ok = await client.post(
                     "/api/life/posts/300/reactions/toggle",
                     json={"emoji": valid_emoji},
                 )
                 assert r_ok.status_code == 200, f"Should accept emoji {valid_emoji!r}"
+
+            # 2b. Even if owner later removes an emoji from allowlist, actor can still toggle their existing reaction OFF
+            await set_allowed_reactions(db_session, [{"emoji": "❤️"}, {"emoji": "🔥"}])
+            await db_session.commit()
+            r_remove_unlisted = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"emoji": "👍"},
+            )
+            assert r_remove_unlisted.status_code == 200
+            # Re-add after removal fails against narrowed allowlist
+            r_readd_unlisted = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"emoji": "👍"},
+            )
+            assert r_readd_unlisted.status_code == 400
+
+            # Restore default list for remaining cap + race assertions
+            from app.db.repo import default_allowed_reactions
+
+            await set_allowed_reactions(db_session, default_allowed_reactions())
+            await db_session.commit()
+            r_readd_thumb = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"emoji": "👍"},
+            )
+            assert r_readd_thumb.status_code == 200
 
             r_sixth = await client.post(
                 "/api/life/posts/300/reactions/toggle",

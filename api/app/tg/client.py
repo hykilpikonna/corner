@@ -65,6 +65,10 @@ from app.routes.upload import (
     invoke_sse_publish,
 )
 from app.tg.bridge import TelegramBridge
+from app.tg.reactions_cmd import (
+    cache_custom_emoji_stickers,
+    execute_owner_reaction_command,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -620,6 +624,24 @@ class TelegramService:
         self._register_handlers()
         self._started = True
         logger.info("TelegramService started as bot ID %s (@%s)", me.id, getattr(me, "username", None))
+
+        if hasattr(self.client, "set_my_commands"):
+            try:
+                from pyrogram.types import BotCommand, BotCommandScopeChat
+
+                scope = (
+                    BotCommandScopeChat(chat_id=self.settings.OWNER_TG_ID)
+                    if self.settings.OWNER_TG_ID is not None
+                    else None
+                )
+                commands = [
+                    BotCommand("reactions", "View or edit allowed web reaction emojis"),
+                    BotCommand("help", "Show bot command help"),
+                ]
+                if scope is not None:
+                    await self.client.set_my_commands(commands, scope=scope)
+            except Exception:
+                logger.debug("Could not register bot commands menu", exc_info=True)
 
         if self.settings.TG_CHANNEL_ID is not None:
             async with self.session_factory() as session:
@@ -1814,7 +1836,7 @@ class TelegramService:
         return False
 
     async def handle_owner_dm(self, msg: Any) -> None:
-        """Buffer original image files dropped by OWNER_TG_ID in private DM."""
+        """Handle owner DM slash commands and buffer original image files."""
         from_user = getattr(msg, "from_user", None)
         if (
             self.settings.OWNER_TG_ID is None
@@ -1822,6 +1844,35 @@ class TelegramService:
             or int(from_user.id) != int(self.settings.OWNER_TG_ID)
         ):
             return
+
+        raw_text = str(getattr(msg, "text", None) or "").strip()
+        if raw_text.startswith("/"):
+            reply_text, updated_allowed = await execute_owner_reaction_command(
+                raw_text,
+                getattr(msg, "entities", None),
+                session_factory=self.session_factory,
+            )
+            if updated_allowed is not None:
+                cids = [
+                    str(item["custom_emoji_id"])
+                    for item in updated_allowed
+                    if item.get("custom_emoji_id")
+                ]
+                if cids:
+                    await cache_custom_emoji_stickers(
+                        self.client, self.settings.exports_dir, cids
+                    )
+                await self._emit_sse(
+                    "reactions.allowed_updated",
+                    {"allowed_reactions": updated_allowed},
+                )
+            if self.client is not None:
+                await self.client.send_message(
+                    chat_id=self.settings.OWNER_TG_ID,
+                    text=reply_text,
+                )
+            return
+
         if not self._is_image_dm_message(msg):
             return
 

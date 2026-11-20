@@ -1071,3 +1071,137 @@ async def test_owner_dm_workflow_b_size_cap_auto_apply_and_callback_auth(
         assert {img.original_name for img in burst_post.images} == {"BURST_1.JPG", "BURST_2.JPG"}
 
     await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_owner_dm_reaction_allowlist_commands_and_custom_emoji_entities(
+    test_settings: Settings,
+    db_session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    from app.db.repo import get_allowed_reactions
+    from app.sse import SSEBus
+
+    engine, db_factory = create_engine_and_factory(test_settings)
+    sse_bus = SSEBus()
+    _, sse_queue, _ = sse_bus.subscribe()
+
+    sent_dm_replies: list[tuple[int, str]] = []
+
+    class _CmdClient:
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def get_me(self) -> Any:
+            return SimpleNamespace(id=999999, username="corner_test_bot")
+
+        async def send_message(self, chat_id: int, text: str, **_kwargs: Any) -> Any:
+            sent_dm_replies.append((int(chat_id), text))
+            return SimpleNamespace(id=len(sent_dm_replies) + 100)
+
+        async def get_custom_emoji_stickers(self, custom_emoji_ids: list[int]) -> list[Any]:
+            return [
+                SimpleNamespace(custom_emoji_id=cid, is_animated=False, is_video=False)
+                for cid in custom_emoji_ids
+            ]
+
+        async def download_media(self, sticker: Any, file_name: str) -> str:
+            Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_name).write_bytes(b"fake-webp")
+            return file_name
+
+    tg_settings = test_settings.model_copy(
+        update={
+            "OWNER_TG_ID": 777001,
+            "TG_CHANNEL_ID": -100112233,
+            "DATA_DIR": tmp_path / "data_cmd",
+        }
+    )
+    tg_settings.exports_dir.mkdir(parents=True, exist_ok=True)
+
+    service = TelegramService(
+        session_factory=db_factory,
+        settings=tg_settings,
+        client=_CmdClient(),
+        sse_publish=sse_bus.publish,
+    )
+    await service.start()
+    owner = SimpleNamespace(id=777001, first_name="Owner")
+    stranger = SimpleNamespace(id=888999, first_name="Stranger")
+
+    try:
+        # 1. Stranger DM command is completely ignored
+        await service.handle_owner_dm(SimpleNamespace(from_user=stranger, text="/reactions set ❤️"))
+        assert sent_dm_replies == []
+
+        # 2. Owner /reactions lists default ordered list (without mutating / SSE)
+        await service.handle_owner_dm(SimpleNamespace(from_user=owner, text="/reactions"))
+        assert len(sent_dm_replies) == 1
+        assert "Global allowed reactions" in sent_dm_replies[-1][1]
+        assert "1. ❤️" in sent_dm_replies[-1][1]
+
+        # 3. Owner /reactions set ❤️👍🔥 + TG CUSTOM_EMOJI entity updates exact order, caches custom asset, emits SSE
+        cmd_text = "/reactions set ❤️👍🔥 ⭐"
+        star_idx = cmd_text.index("⭐")
+        utf16_off = len(cmd_text[:star_idx].encode("utf-16-le")) // 2
+        custom_entity = SimpleNamespace(
+            type="CUSTOM_EMOJI",
+            offset=utf16_off,
+            length=1,
+            custom_emoji_id=5368324170671202286,
+        )
+        await service.handle_owner_dm(
+            SimpleNamespace(from_user=owner, text=cmd_text, entities=[custom_entity])
+        )
+        ev = await asyncio.wait_for(sse_queue.get(), timeout=1.0)
+        assert ev.event == "reactions.allowed_updated"
+        assert [x["reaction_key"] for x in ev.data["allowed_reactions"]] == [
+            "e:❤",
+            "e:👍",
+            "e:🔥",
+            "c:5368324170671202286",
+        ]
+        assert (tg_settings.exports_dir / "emoji" / "5368324170671202286.webp").is_file()
+
+        # 4. Add emoji at position #1, move #4 to #2, remove 🔥
+        await service.handle_owner_dm(
+            SimpleNamespace(from_user=owner, text="/reactions add 🎉 at 1")
+        )
+        await asyncio.wait_for(sse_queue.get(), timeout=1.0)
+
+        await service.handle_owner_dm(
+            SimpleNamespace(from_user=owner, text="/reactions move #5 2")
+        )
+        await asyncio.wait_for(sse_queue.get(), timeout=1.0)
+
+        await service.handle_owner_dm(
+            SimpleNamespace(from_user=owner, text="/reactions rm 🔥")
+        )
+        ev_rm = await asyncio.wait_for(sse_queue.get(), timeout=1.0)
+        assert [x["reaction_key"] for x in ev_rm.data["allowed_reactions"]] == [
+            "e:🎉",
+            "c:5368324170671202286",
+            "e:❤",
+            "e:👍",
+        ]
+
+        async with db_factory() as session:
+            saved = await get_allowed_reactions(session)
+            assert [x["reaction_key"] for x in saved] == [
+                "e:🎉",
+                "c:5368324170671202286",
+                "e:❤",
+                "e:👍",
+            ]
+
+        # 5. Reset restores defaults
+        await service.handle_owner_dm(SimpleNamespace(from_user=owner, text="/reactions reset"))
+        ev_reset = await asyncio.wait_for(sse_queue.get(), timeout=1.0)
+        assert len(ev_reset.data["allowed_reactions"]) > 10
+        assert ev_reset.data["allowed_reactions"][0]["reaction_key"] == "e:❤"
+    finally:
+        await service.stop()
+        await engine.dispose()
