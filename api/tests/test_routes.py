@@ -180,7 +180,7 @@ def test_config_hardening_and_create_app_settings_override(
     monkeypatch.setenv("OWNER_RESERVED_NAMES", "owner, admin, aza")
     monkeypatch.setenv("BASE_URL", "https://aza.moe")
     monkeypatch.setenv("SECRET_KEY", "a-very-strong-random-production-secret-key-0123456789")
-    cfg = Settings(DATA_DIR=tmp_path / "data")
+    cfg = Settings(_env_file=None, DATA_DIR=tmp_path / "data")
     assert cfg.CORS_ORIGINS == ["https://aza.moe", "https://preview.aza.moe"]
     assert cfg.OWNER_RESERVED_NAMES == ["owner", "admin", "aza"]
 
@@ -192,6 +192,7 @@ def test_config_hardening_and_create_app_settings_override(
     # Wildcard '*' in CORS_ORIGINS rejected
     with pytest.raises(ValidationError, match="Wildcard"):
         Settings(
+            _env_file=None,
             BASE_URL="http://localhost:8000",
             CORS_ORIGINS=["*"],
         )
@@ -200,6 +201,7 @@ def test_config_hardening_and_create_app_settings_override(
     for bad_secret in ("short-key", "change-me-in-production", "replace-with-a-random-64-char-hex-secret"):
         with pytest.raises(ValidationError, match="SECRET_KEY"):
             Settings(
+                _env_file=None,
                 BASE_URL="https://aza.moe",
                 CORS_ORIGINS=["https://aza.moe"],
                 SECRET_KEY=bad_secret,

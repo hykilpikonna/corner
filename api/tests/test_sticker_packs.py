@@ -75,6 +75,7 @@ class _FakeStickerTgClient:
 
 def _make_service(tmp_path: Path, client: Any | None) -> tuple[Settings, TelegramService]:
     cfg = Settings(
+        _env_file=None,
         DATA_DIR=tmp_path / "data",
         OWNER_TG_ID=777001,
         API_PREFIX="/api/life",
@@ -457,6 +458,7 @@ async def test_default_sticker_packs_config_ordering_and_dismissed_sync(tmp_path
     assert list(CONFIG_DEFAULT_STICKER_PACKS) == expected_defaults
 
     cfg_defaults = Settings(
+        _env_file=None,
         DATA_DIR=tmp_path / "d1",
         DEFAULT_STICKER_PACKS="SiameseCatLive, azuki_san",
     )
@@ -505,6 +507,7 @@ async def test_default_sticker_packs_config_ordering_and_dismissed_sync(tmp_path
         downloads={"f1": b"cat-webp", "f2": b"emoji-tgs"},
     )
     cfg = Settings(
+        _env_file=None,
         DATA_DIR=tmp_path / "sync_data",
         OWNER_TG_ID=777001,
         DEFAULT_STICKER_PACKS=["SiameseCatLive", "SiameseEmoji", "azuki_san"],

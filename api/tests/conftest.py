@@ -48,6 +48,7 @@ def test_db_url() -> str:
 @pytest.fixture
 def test_settings(tmp_path: Path, test_db_url: str) -> Settings:
     return Settings(
+        _env_file=None,
         DATABASE_URL=test_db_url,
         DATA_DIR=tmp_path / "data",
         BASE_URL="https://aza.moe",

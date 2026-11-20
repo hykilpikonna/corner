@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: str | None = None
     SMTP_PASSWORD: str | None = None
-    SMTP_FROM: str = "noreply@example.com"
+    SMTP_FROM: str = ""
     SMTP_USE_TLS: bool = True
 
     # Background intervals & ALTCHA
@@ -177,6 +177,18 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.strip():
             return None
         return v
+
+    @field_validator("SMTP_FROM", mode="before")
+    @classmethod
+    def _normalize_smtp_from(cls, v: Any) -> str:
+        return "" if v is None else str(v).strip()
+
+    @model_validator(mode="after")
+    def _default_smtp_from(self) -> Settings:
+        if not self.SMTP_FROM:
+            user = (self.SMTP_USER or "").strip()
+            self.SMTP_FROM = user if "@" in user else "noreply@example.com"
+        return self
 
     @model_validator(mode="after")
     def _validate_https_secret_key(self) -> Settings:

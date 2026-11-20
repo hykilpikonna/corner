@@ -477,3 +477,26 @@ async def test_mailer_releases_db_locks_before_smtp_and_supports_port_465(
     await m465.send_magic_link_email("u@example.com", "https://aza.moe/v")
     assert captured_kwargs["use_tls"] is True
     assert captured_kwargs["start_tls"] is False
+
+
+def test_settings_smtp_from_defaults_to_email_smtp_user() -> None:
+    from app.config import Settings
+
+    s_gmail = Settings(
+        _env_file=None,
+        SMTP_USER="sender@gmail.com",
+    )
+    assert s_gmail.SMTP_FROM == "sender@gmail.com"
+
+    s_explicit = Settings(
+        _env_file=None,
+        SMTP_USER="sender@gmail.com",
+        SMTP_FROM="custom@aza.moe",
+    )
+    assert s_explicit.SMTP_FROM == "custom@aza.moe"
+
+    s_non_email = Settings(
+        _env_file=None,
+        SMTP_USER="resend",
+    )
+    assert s_non_email.SMTP_FROM == "noreply@example.com"
