@@ -82,13 +82,15 @@ class Settings(BaseSettings):
         default_factory=lambda: ["owner", "admin", "administrator", "root", "system"]
     )
 
-    # Telegram (Kurigram MTProto Bot Client)
+    # Telegram (Kurigram MTProto Bot Client + Optional Read-Only User Client)
     TG_API_ID: int | None = None
     TG_API_HASH: str | None = None
     TG_BOT_TOKEN: str | None = None
     TG_CHANNEL_ID: int | None = None
     TG_DISCUSSION_CHAT_ID: int | None = None
     TG_SESSION_NAME: str = "bot"
+    TG_USER_SESSION_STRING: str | None = None
+    TG_USER_SESSION_NAME: str | None = None
     DEFAULT_STICKER_PACKS: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: list(DEFAULT_STICKER_PACKS)
     )
@@ -166,6 +168,8 @@ class Settings(BaseSettings):
         "OIDC_ISSUER_URL",
         "OIDC_CLIENT_ID",
         "OIDC_CLIENT_SECRET",
+        "TG_USER_SESSION_STRING",
+        "TG_USER_SESSION_NAME",
         mode="before",
     )
     @classmethod

@@ -1206,3 +1206,209 @@ async def test_owner_dm_reaction_allowlist_commands_and_custom_emoji_entities(
     finally:
         await service.stop()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dual_bot_and_readonly_user_client_architecture(
+    tmp_path: Path,
+    test_settings: Settings,
+    db_session: AsyncSession,
+) -> None:
+    """Bot handles sending/bridging; read-only user_client handles polls, raw reactions, and deletions."""
+    from pyrogram.handlers import DeletedMessagesHandler, PollHandler, RawUpdateHandler
+
+    tg_settings = test_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path,
+            "TG_BOT_TOKEN": "999000:TEST_BOT_TOKEN",
+            "TG_CHANNEL_ID": -1001234567890,
+            "TG_DISCUSSION_CHAT_ID": -1009876543210,
+            "OWNER_TG_ID": 777000,
+        }
+    )
+    engine, db_factory = create_engine_and_factory(tg_settings)
+    sse_bus = SSEBus()
+    _, sse_q, _ = sse_bus.subscribe()
+
+    bot_client = FakeTgClient()
+    user_client = FakeTgClient(bot_id=888000, bot_username="reader_user")
+    user_client.get_me = lambda: asyncio.sleep(  # type: ignore[method-assign]
+        0, result=SimpleNamespace(id=888000, username="reader_user", is_bot=False)
+    )
+
+    service = TelegramService(
+        session_factory=db_factory,
+        settings=tg_settings,
+        sse_publish=sse_bus.publish,
+        client=bot_client,
+        user_client=user_client,
+    )
+    reconciler = PeriodicReconciler(
+        session_factory=db_factory,
+        settings=tg_settings,
+        telegram_service=service,
+        sse_publish=sse_bus.publish,
+    )
+
+    try:
+        await service.start()
+        assert bot_client.started is True
+        assert user_client.started is True
+        # Bridge uses ONLY the bot client, never user_client
+        assert service.bridge.client is bot_client
+        # Reconciler prefers user_client for read access when available
+        assert reconciler._get_client() is user_client
+
+        # user_client registers only read-only listeners: PollHandler, RawUpdateHandler, DeletedMessagesHandler
+        user_handler_types = [type(h) for h in user_client.handlers]
+        assert PollHandler in user_handler_types
+        assert RawUpdateHandler in user_handler_types
+        assert DeletedMessagesHandler in user_handler_types
+        assert len(user_handler_types) == 3
+
+        # Seed a channel post + poll + discussion comment in DB
+        async with db_factory() as session:
+            ch = await ensure_channel(
+                session,
+                tg_chat_id=tg_settings.TG_CHANNEL_ID,
+                tg_discussion_chat_id=tg_settings.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            post = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=501,
+                tg_all_msg_ids=[501],
+                date=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
+                text_html="Poll post",
+                poll={
+                    "id": "poll_owner_501",
+                    "question": "Tea or coffee?",
+                    "options": [{"text": "Tea"}, {"text": "Coffee"}],
+                    "is_closed": False,
+                    "is_anonymous": True,
+                },
+            )
+            comment = Comment(
+                post_id=post.id,
+                source="telegram",
+                channel_id=ch.id,
+                tg_msg_id=9001,
+                tg_author_id=4242,
+                tg_author_name="Reader",
+                body_text="Nice poll",
+                body_html="<p>Nice poll</p>",
+                created_at=datetime(2026, 11, 20, 12, 1, tzinfo=UTC),
+            )
+            session.add(comment)
+            await session.commit()
+            post_id = post.id
+            comment_id = comment.id
+
+        poll_handler = next(h for h in user_client.handlers if isinstance(h, PollHandler))
+        raw_handler = next(h for h in user_client.handlers if isinstance(h, RawUpdateHandler))
+        del_handler = next(h for h in user_client.handlers if isinstance(h, DeletedMessagesHandler))
+
+        # 1. Poll update via user_client updates poll counts and emits poll.updated
+        await poll_handler.callback(
+            user_client,
+            SimpleNamespace(
+                id="poll_owner_501",
+                is_closed=True,
+                options=[
+                    SimpleNamespace(voter_count=3),
+                    SimpleNamespace(voter_count=7),
+                ],
+            ),
+        )
+        events = _drain_bus(sse_q)
+        assert any(
+            ev.event == "poll.updated"
+            and ev.data["post_id"] == post_id
+            and ev.data["poll"]["is_closed"] is True
+            and [o["voter_count"] for o in ev.data["poll"]["options"]] == [3, 7]
+            for ev in events
+        )
+
+        # 2. Raw UpdateMessageReactions via user_client updates channel post reactions (read-only)
+        chan_raw_update = SimpleNamespace(
+            peer=SimpleNamespace(channel_id=1234567890),
+            msg_id=501,
+            reactions=SimpleNamespace(
+                results=[
+                    SimpleNamespace(reaction=SimpleNamespace(emoticon="🔥"), count=4),
+                    SimpleNamespace(reaction=SimpleNamespace(document_id=5368324170671202286), count=2),
+                ]
+            ),
+        )
+        await raw_handler.callback(user_client, chan_raw_update, {}, {})
+        events = _drain_bus(sse_q)
+        assert len(events) == 1
+        assert events[0].event == "reaction.updated"
+        assert {r["reaction_key"]: r["tg_count"] for r in events[0].data["reactions"]} == {
+            "e:🔥": 4,
+            "c:5368324170671202286": 2,
+        }
+
+        # Duplicate identical reaction event is deduplicated (no extra SSE emitted)
+        await raw_handler.callback(user_client, chan_raw_update, {}, {})
+        assert _drain_bus(sse_q) == []
+
+        # Raw reaction update from an unrelated chat is strictly ignored
+        await raw_handler.callback(
+            user_client,
+            SimpleNamespace(
+                peer=SimpleNamespace(channel_id=9999999999),
+                msg_id=501,
+                reactions=SimpleNamespace(
+                    results=[SimpleNamespace(reaction=SimpleNamespace(emoticon="👎"), count=99)]
+                ),
+            ),
+            {},
+            {},
+        )
+        assert _drain_bus(sse_q) == []
+
+        # 3. Raw UpdateMessageReactions on discussion chat updates CommentTgReaction
+        disc_raw_update = SimpleNamespace(
+            peer=SimpleNamespace(channel_id=9876543210),
+            msg_id=9001,
+            reactions=SimpleNamespace(
+                results=[SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5)]
+            ),
+        )
+        await raw_handler.callback(user_client, disc_raw_update, {}, {})
+        events = _drain_bus(sse_q)
+        assert len(events) == 1
+        assert events[0].event == "comment.reaction.updated"
+        assert events[0].data["comment_id"] == comment_id
+        assert events[0].data["reactions"][0]["tg_count"] == 5
+
+        # 4. Deletion events via user_client soft-delete discussion comments and channel posts
+        await del_handler.callback(
+            user_client,
+            [
+                SimpleNamespace(id=9001, chat=SimpleNamespace(id=tg_settings.TG_DISCUSSION_CHAT_ID)),
+                SimpleNamespace(id=501, chat=SimpleNamespace(id=tg_settings.TG_CHANNEL_ID)),
+            ],
+        )
+        events = _drain_bus(sse_q)
+        assert any(ev.event == "post.deleted" and ev.data == {"post_id": post_id} for ev in events)
+        assert any(
+            ev.event == "comment.deleted"
+            and ev.data == {"post_id": post_id, "comment_id": comment_id}
+            for ev in events
+        )
+        async with db_factory() as session:
+            p_after = await session.get(Post, post_id)
+            c_after = await session.get(Comment, comment_id)
+            assert p_after is not None and p_after.is_deleted is True
+            assert c_after is not None and c_after.deleted_at is not None
+
+        # Verify user_client never sent a single message or reaction
+        assert user_client.sent_messages == []
+    finally:
+        await service.stop()
+        assert user_client.started is False
+        assert bot_client.started is False
+        await engine.dispose()

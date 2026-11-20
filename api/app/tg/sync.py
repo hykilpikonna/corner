@@ -119,7 +119,7 @@ class PeriodicReconciler:
         if self.client is not None:
             return self.client
         if self.telegram_service is not None:
-            return self.telegram_service.client
+            return self.telegram_service.user_client or self.telegram_service.client
         return None
 
     async def _emit_sse(self, event: str, data: dict[str, Any]) -> None:

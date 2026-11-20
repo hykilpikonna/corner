@@ -1232,11 +1232,38 @@ def _build_parser() -> argparse.ArgumentParser:
     p_comments.add_argument("--discussion-chat-id", type=int, default=None)
 
     sub.add_parser("rebuild-exports", help="Atomically regenerate posts.json, pages/, and feeds")
+    sub.add_parser(
+        "login-tg-user",
+        help="Interactively log in to a read-only Telegram user account and print TG_USER_SESSION_STRING",
+    )
     return parser
+
+
+async def _login_tg_user(settings: Settings) -> None:
+    if not settings.TG_API_ID or not settings.TG_API_HASH:
+        raise SystemExit("TG_API_ID and TG_API_HASH must be set before running login-tg-user.")
+    from pyrogram import Client
+
+    client = Client(
+        name=settings.TG_USER_SESSION_NAME or "user_reader",
+        api_id=int(settings.TG_API_ID),
+        api_hash=str(settings.TG_API_HASH),
+        in_memory=True,
+    )
+    async with client:
+        me = await client.get_me()
+        if getattr(me, "is_bot", False):
+            raise SystemExit("Logged in as a bot account; please log in with a regular user account.")
+        session_str = await client.export_session_string()
+        print(f"Logged in as user ID {me.id} (@{getattr(me, 'username', None)})")
+        print(f"TG_USER_SESSION_STRING={session_str}")
 
 
 async def _run_cli(args: argparse.Namespace) -> None:
     settings = get_settings()
+    if args.command == "login-tg-user":
+        await _login_tg_user(settings)
+        return
     _, factory = init_db(settings)
     try:
         async with factory() as session:

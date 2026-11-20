@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlparse
 
@@ -550,6 +551,7 @@ class TelegramService:
         sse_publish: SSEPublishFn | None = None,
         bridge: TelegramBridge | None = None,
         client: Any | None = None,
+        user_client: Any | None = None,
         album_debounce_seconds: float = 1.5,
         album_max_wait_seconds: float = 5.0,
         dm_debounce_seconds: float = 2.0,
@@ -565,12 +567,17 @@ class TelegramService:
             client=client,
         )
         self.client = client
+        # Read-only MTProto user client: strictly for listening to polls, reactions, and deletions.
+        # Never attach self.bridge or outbound write calls to user_client.
+        self.user_client = user_client
         # Pre-populate bot_id from TG_BOT_TOKEN prefix so echo loop guard is active even during startup
         self.bot_id: int | None = (
             bot_id if bot_id is not None else _parse_bot_id_from_token(settings.TG_BOT_TOKEN)
         )
         self._started = False
+        self._user_started = False
         self._handlers_registered = False
+        self._user_handlers_registered = False
         self._default_stickers_task: asyncio.Task[Any] | None = None
 
         self.album_buffer = AlbumBuffer(
@@ -592,59 +599,109 @@ class TelegramService:
     async def _emit_sse(self, event: str, data: dict[str, Any]) -> None:
         await invoke_sse_publish(self.sse_publish, event, data)
 
-    async def start(self) -> None:
-        """Start Kurigram client and register handlers (clean no-op if TG_BOT_TOKEN is unset)."""
-        if self._started:
-            return
+    def _has_user_session_config(self) -> bool:
+        return bool(self.settings.TG_USER_SESSION_STRING or self.settings.TG_USER_SESSION_NAME)
 
-        if self.client is None:
-            if not self.settings.TG_BOT_TOKEN:
-                logger.info("TG_BOT_TOKEN is unset; TelegramService running in disabled no-op mode.")
+    async def _start_user_client(self) -> None:
+        if self._user_started:
+            return
+        if self.user_client is None:
+            if not self._has_user_session_config():
                 return
             if not self.settings.TG_API_ID or not self.settings.TG_API_HASH:
                 raise ValueError(
-                    "TG_API_ID and TG_API_HASH must be configured when TG_BOT_TOKEN is set"
+                    "TG_API_ID and TG_API_HASH must be configured when TG_USER_SESSION_* is set"
                 )
-
             from pyrogram import Client
 
             self.settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-            self.client = Client(
-                name=self.settings.TG_SESSION_NAME,
-                api_id=int(self.settings.TG_API_ID),
-                api_hash=str(self.settings.TG_API_HASH),
-                bot_token=self.settings.TG_BOT_TOKEN,
-                workdir=str(self.settings.DATA_DIR),
-            )
-
-        self.bridge.set_client(self.client)
-
-        await self.client.start()
-        me = await self.client.get_me()
-        self.bot_id = int(me.id)
-        # Register handlers only AFTER bot_id is confirmed to eliminate startup echo race
-        self._register_handlers()
-        self._started = True
-        logger.info("TelegramService started as bot ID %s (@%s)", me.id, getattr(me, "username", None))
-
-        if hasattr(self.client, "set_my_commands"):
-            try:
-                from pyrogram.types import BotCommand, BotCommandScopeChat
-
-                scope = (
-                    BotCommandScopeChat(chat_id=self.settings.OWNER_TG_ID)
-                    if self.settings.OWNER_TG_ID is not None
-                    else None
+            if self.settings.TG_USER_SESSION_STRING:
+                self.user_client = Client(
+                    name=self.settings.TG_USER_SESSION_NAME or "user_reader",
+                    api_id=int(self.settings.TG_API_ID),
+                    api_hash=str(self.settings.TG_API_HASH),
+                    session_string=self.settings.TG_USER_SESSION_STRING,
+                    in_memory=True,
                 )
-                commands = [
-                    BotCommand("reactions", "View or edit allowed web reaction emojis"),
-                    BotCommand("stickers", "List, import, or remove custom web stickers"),
-                    BotCommand("help", "Show bot command help"),
-                ]
-                if scope is not None:
-                    await self.client.set_my_commands(commands, scope=scope)
-            except Exception:
-                logger.debug("Could not register bot commands menu", exc_info=True)
+            else:
+                self.user_client = Client(
+                    name=str(self.settings.TG_USER_SESSION_NAME),
+                    api_id=int(self.settings.TG_API_ID),
+                    api_hash=str(self.settings.TG_API_HASH),
+                    workdir=str(self.settings.DATA_DIR),
+                )
+
+        await self.user_client.start()
+        user_me = await self.user_client.get_me()
+        if getattr(user_me, "is_bot", False):
+            logger.warning(
+                "Configured user_client (%s) is a bot account; expected a user session for full poll/reaction/deletion events.",
+                getattr(user_me, "id", None),
+            )
+        self._register_user_handlers()
+        self._user_started = True
+        logger.info(
+            "TelegramService read-only user_client started as ID %s (@%s)",
+            getattr(user_me, "id", None),
+            getattr(user_me, "username", None),
+        )
+
+    async def start(self) -> None:
+        """Start Kurigram bot client and optional read-only user client."""
+        has_bot = bool(self.client is not None or self.settings.TG_BOT_TOKEN)
+        has_user = bool(self.user_client is not None or self._has_user_session_config())
+        if not has_bot and not has_user:
+            logger.info("TG_BOT_TOKEN and TG_USER_SESSION_* are unset; TelegramService running in disabled no-op mode.")
+            return
+
+        if has_bot and not self._started:
+            if self.client is None:
+                if not self.settings.TG_API_ID or not self.settings.TG_API_HASH:
+                    raise ValueError(
+                        "TG_API_ID and TG_API_HASH must be configured when TG_BOT_TOKEN is set"
+                    )
+
+                from pyrogram import Client
+
+                self.settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                self.client = Client(
+                    name=self.settings.TG_SESSION_NAME,
+                    api_id=int(self.settings.TG_API_ID),
+                    api_hash=str(self.settings.TG_API_HASH),
+                    bot_token=self.settings.TG_BOT_TOKEN,
+                    workdir=str(self.settings.DATA_DIR),
+                )
+
+            self.bridge.set_client(self.client)
+
+            await self.client.start()
+            me = await self.client.get_me()
+            self.bot_id = int(me.id)
+            # Register handlers only AFTER bot_id is confirmed to eliminate startup echo race
+            self._register_handlers()
+            self._started = True
+            logger.info("TelegramService started as bot ID %s (@%s)", me.id, getattr(me, "username", None))
+
+            if hasattr(self.client, "set_my_commands"):
+                try:
+                    from pyrogram.types import BotCommand, BotCommandScopeChat
+
+                    scope = (
+                        BotCommandScopeChat(chat_id=self.settings.OWNER_TG_ID)
+                        if self.settings.OWNER_TG_ID is not None
+                        else None
+                    )
+                    commands = [
+                        BotCommand("reactions", "View or edit allowed web reaction emojis"),
+                        BotCommand("stickers", "List, import, or remove custom web stickers"),
+                        BotCommand("help", "Show bot command help"),
+                    ]
+                    if scope is not None:
+                        await self.client.set_my_commands(commands, scope=scope)
+                except Exception:
+                    logger.debug("Could not register bot commands menu", exc_info=True)
+
+        await self._start_user_client()
 
         if self.settings.TG_CHANNEL_ID is not None:
             async with self.session_factory() as session:
@@ -679,6 +736,12 @@ class TelegramService:
             self._default_stickers_task = None
         await self.album_buffer.close()
         await self.dm_buffer.close()
+        if self._user_started and self.user_client is not None:
+            try:
+                await self.user_client.stop()
+            except Exception:
+                logger.exception("Error stopping read-only user_client")
+        self._user_started = False
         if self._started and self.client is not None:
             try:
                 await self.client.stop()
@@ -755,6 +818,41 @@ class TelegramService:
         self.client.add_handler(MessageReactionCountHandler(_on_reaction_count, reaction_filter))
         self.client.add_handler(PollHandler(_on_poll))
         self._handlers_registered = True
+
+    def _register_user_handlers(self) -> None:
+        """Attach strictly read-only listeners (polls, reactions, deletions) to user_client."""
+        if self._user_handlers_registered or self.user_client is None:
+            return
+        if not hasattr(self.user_client, "add_handler"):
+            return
+
+        from pyrogram import filters
+        from pyrogram.handlers import (
+            DeletedMessagesHandler,
+            PollHandler,
+            RawUpdateHandler,
+        )
+
+        async def _on_user_poll(_client: Any, poll: Any) -> None:
+            await self.handle_poll_update(poll)
+
+        async def _on_user_raw(_client: Any, update: Any, _users: Any = None, _chats: Any = None) -> None:
+            if hasattr(update, "peer") and hasattr(update, "msg_id") and hasattr(update, "reactions"):
+                await self.handle_raw_reaction_update(update)
+
+        async def _on_user_deleted(_client: Any, messages: Any) -> None:
+            await self.handle_user_deleted(messages)
+
+        watched_chats = [
+            cid
+            for cid in (self.settings.TG_CHANNEL_ID, self.settings.TG_DISCUSSION_CHAT_ID)
+            if cid is not None
+        ]
+        delete_filter = filters.chat(watched_chats) if watched_chats else None
+        self.user_client.add_handler(PollHandler(_on_user_poll))
+        self.user_client.add_handler(RawUpdateHandler(_on_user_raw))
+        self.user_client.add_handler(DeletedMessagesHandler(_on_user_deleted, delete_filter))
+        self._user_handlers_registered = True
 
     # ------------------------------------------------------------------
     # Channel Posts & Edits
@@ -2000,21 +2098,139 @@ class TelegramService:
             )
         return [cid for _, cid in deleted_events]
 
+    async def handle_channel_deleted(self, messages: Any) -> list[int]:
+        """Soft-delete posts whose primary TG channel messages were deleted and emit SSE."""
+        msg_list = list(messages) if isinstance(messages, (list, tuple, set)) else [messages]
+        ids_by_chat: dict[int | None, set[int]] = {}
+        for m in msg_list:
+            mid = getattr(m, "id", None)
+            if mid is None:
+                continue
+            cid = getattr(getattr(m, "chat", None), "id", None)
+            chat_key = int(cid) if cid is not None else self.settings.TG_CHANNEL_ID
+            ids_by_chat.setdefault(chat_key, set()).add(int(mid))
+
+        if not ids_by_chat:
+            return []
+
+        deleted_post_ids: list[int] = []
+        async with self.session_factory() as session:
+            for chan_chat_id, msg_ids in ids_by_chat.items():
+                if not msg_ids:
+                    continue
+                if chan_chat_id is not None:
+                    channel = (
+                        await session.execute(
+                            select(Channel).where(Channel.tg_chat_id == chan_chat_id)
+                        )
+                    ).scalar_one_or_none()
+                else:
+                    channel = await get_active_channel(session)
+                if channel is None:
+                    continue
+
+                rows = list(
+                    (
+                        await session.execute(
+                            select(Post).where(
+                                Post.channel_id == channel.id,
+                                Post.tg_msg_id.in_(msg_ids),
+                                Post.is_deleted.is_(False),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for post in rows:
+                    post.is_deleted = True
+                    deleted_post_ids.append(post.id)
+
+            if deleted_post_ids:
+                await session.commit()
+                await generate_exports(session, self.settings)
+
+        for post_id in deleted_post_ids:
+            await self._emit_sse("post.deleted", {"post_id": post_id})
+        return deleted_post_ids
+
+    async def handle_user_deleted(self, messages: Any) -> tuple[list[int], list[int]]:
+        """Route user_client deletion updates to channel post or discussion comment deletion."""
+        msg_list = list(messages) if isinstance(messages, (list, tuple, set)) else [messages]
+        channel_msgs: list[Any] = []
+        disc_msgs: list[Any] = []
+        for m in msg_list:
+            cid = getattr(getattr(m, "chat", None), "id", None)
+            if cid is None:
+                continue
+            cid_int = int(cid)
+            if self.settings.TG_CHANNEL_ID is not None and cid_int == int(self.settings.TG_CHANNEL_ID):
+                channel_msgs.append(m)
+            elif (
+                self.settings.TG_DISCUSSION_CHAT_ID is not None
+                and cid_int == int(self.settings.TG_DISCUSSION_CHAT_ID)
+            ):
+                disc_msgs.append(m)
+            elif self.settings.TG_CHANNEL_ID is None and self.settings.TG_DISCUSSION_CHAT_ID is None:
+                channel_msgs.append(m)
+                disc_msgs.append(m)
+
+        deleted_posts = await self.handle_channel_deleted(channel_msgs) if channel_msgs else []
+        deleted_comments = await self.handle_discussion_deleted(disc_msgs) if disc_msgs else []
+        return deleted_posts, deleted_comments
+
     # ------------------------------------------------------------------
     # Live Reaction Count & Poll Updates
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _replace_tg_reactions(
-        session: AsyncSession,
-        *,
-        model: type[TgReaction] | type[CommentTgReaction],
-        fk_col_name: str,
-        target_id: int,
+    def _extract_raw_peer_chat_id(peer: Any) -> int | None:
+        if peer is None:
+            return None
+        channel_id = getattr(peer, "channel_id", None)
+        if channel_id is not None:
+            return int(f"-100{int(channel_id)}")
+        chat_id = getattr(peer, "chat_id", None)
+        if chat_id is not None:
+            return -int(chat_id)
+        user_id = getattr(peer, "user_id", None)
+        if user_id is not None:
+            return int(user_id)
+        return None
+
+    @staticmethod
+    def _extract_raw_reaction_items(raw_reactions: Any) -> list[Any] | None:
+        if raw_reactions is None:
+            return None
+        raw_list = getattr(raw_reactions, "results", raw_reactions)
+        if raw_list is None:
+            return None
+        items: list[Any] = []
+        for entry in raw_list:
+            count = int(getattr(entry, "count", 0) or 0)
+            reaction_obj = getattr(entry, "reaction", None)
+            if reaction_obj is not None:
+                emoji = getattr(reaction_obj, "emoticon", None)
+                cid = getattr(reaction_obj, "document_id", None)
+            else:
+                emoji = getattr(entry, "emoji", None)
+                cid = getattr(entry, "custom_emoji_id", None)
+            if not emoji and cid is None:
+                continue
+            items.append(
+                SimpleNamespace(
+                    emoji=emoji,
+                    custom_emoji_id=str(cid) if cid is not None else None,
+                    count=count,
+                )
+            )
+        return items
+
+    @staticmethod
+    def _normalize_reaction_rows(
         raw_reactions: Sequence[Any],
-    ) -> None:
-        fk_col = getattr(model, fk_col_name)
-        await session.execute(delete(model).where(fk_col == target_id))
+    ) -> list[tuple[str, str | None, str | None, int]]:
+        normalized: list[tuple[str, str | None, str | None, int]] = []
         seen: set[str] = set()
         for r in raw_reactions:
             emoji = getattr(r, "emoji", None)
@@ -2026,34 +2242,54 @@ class TelegramService:
             if rkey in seen:
                 continue
             seen.add(rkey)
+            normalized.append((rkey, emoji, cid_str, int(getattr(r, "count", 0) or 0)))
+        return normalized
+
+    @classmethod
+    async def _replace_tg_reactions(
+        cls,
+        session: AsyncSession,
+        *,
+        model: type[TgReaction] | type[CommentTgReaction],
+        fk_col_name: str,
+        target_id: int,
+        raw_reactions: Sequence[Any],
+    ) -> None:
+        fk_col = getattr(model, fk_col_name)
+        await session.execute(delete(model).where(fk_col == target_id))
+        for rkey, emoji, cid_str, count in cls._normalize_reaction_rows(raw_reactions):
             session.add(
                 model(
                     **{fk_col_name: target_id},
                     reaction_key=rkey,
                     emoji=emoji,
                     custom_emoji_id=cid_str,
-                    count=int(getattr(r, "count", 0) or 0),
+                    count=count,
                 )
             )
 
-    async def handle_reaction_count_update(self, update: Any) -> None:
-        chat_id = getattr(getattr(update, "chat", None), "id", None)
-        msg_id = getattr(update, "message_id", None)
-        if msg_id is None or chat_id is None:
-            return
-
-        chat_id_int = int(chat_id)
-        raw_reactions = getattr(update, "reactions", None) or []
+    async def _apply_reaction_count_update(
+        self,
+        *,
+        chat_id_int: int,
+        msg_id: int,
+        raw_reactions: Sequence[Any],
+    ) -> None:
+        incoming_rows = self._normalize_reaction_rows(raw_reactions)
+        incoming_map = {rkey: count for rkey, _, _, count in incoming_rows}
 
         async with self.session_factory() as session:
             channel = await self._resolve_channel_for_chat(session, chat_id_int)
             if channel is not None:
-                post = await find_post_by_channel_tg_msg(session, channel.id, int(msg_id))
+                post = await find_post_by_channel_tg_msg(session, channel.id, msg_id)
                 if post is None:
                     # Channel-chat reaction for an untracked/service message must never
                     # collide with a discussion Comment sharing the same tg_msg_id.
                     return
                 post_id = post.id
+                existing_map = {r.reaction_key: int(r.count) for r in post.tg_reactions}
+                if existing_map == incoming_map:
+                    return
                 await self._replace_tg_reactions(
                     session,
                     model=TgReaction,
@@ -2088,10 +2324,11 @@ class TelegramService:
             comment = (
                 await session.execute(
                     select(Comment)
+                    .options(selectinload(Comment.tg_reactions))
                     .join(Post, Post.id == Comment.post_id)
                     .where(
                         Comment.channel_id == disc_channel.id,
-                        Comment.tg_msg_id == int(msg_id),
+                        Comment.tg_msg_id == msg_id,
                         Comment.deleted_at.is_(None),
                         Post.is_deleted.is_(False),
                     )
@@ -2102,6 +2339,9 @@ class TelegramService:
                 return
 
             comment_id = comment.id
+            existing_comment_map = {r.reaction_key: int(r.count) for r in comment.tg_reactions}
+            if existing_comment_map == incoming_map:
+                return
             await self._replace_tg_reactions(
                 session,
                 model=CommentTgReaction,
@@ -2136,6 +2376,40 @@ class TelegramService:
                     "reactions": public_reactions,
                 },
             )
+
+    async def handle_reaction_count_update(self, update: Any) -> None:
+        chat_id = getattr(getattr(update, "chat", None), "id", None)
+        msg_id = getattr(update, "message_id", None)
+        if msg_id is None or chat_id is None:
+            return
+        raw_reactions = getattr(update, "reactions", None) or []
+        await self._apply_reaction_count_update(
+            chat_id_int=int(chat_id),
+            msg_id=int(msg_id),
+            raw_reactions=raw_reactions,
+        )
+
+    async def handle_raw_reaction_update(self, update: Any) -> None:
+        """Process raw MTProto UpdateMessageReactions from read-only user_client."""
+        chat_id_int = self._extract_raw_peer_chat_id(getattr(update, "peer", None))
+        msg_id = getattr(update, "msg_id", None)
+        if chat_id_int is None or msg_id is None:
+            return
+        watched_chats = {
+            int(cid)
+            for cid in (self.settings.TG_CHANNEL_ID, self.settings.TG_DISCUSSION_CHAT_ID)
+            if cid is not None
+        }
+        if watched_chats and chat_id_int not in watched_chats:
+            return
+        raw_reactions = self._extract_raw_reaction_items(getattr(update, "reactions", None))
+        if raw_reactions is None:
+            return
+        await self._apply_reaction_count_update(
+            chat_id_int=chat_id_int,
+            msg_id=int(msg_id),
+            raw_reactions=raw_reactions,
+        )
 
     async def handle_poll_update(self, tg_poll: Any) -> None:
         poll_id = str(getattr(tg_poll, "id", "") or "")
