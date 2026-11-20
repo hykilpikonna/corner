@@ -684,7 +684,7 @@ def _render_tdesktop_text(
         elif etype == "blockquote":
             html_parts.append(f"<blockquote>{esc}</blockquote>")
         elif etype == "spoiler":
-            html_parts.append(f'<span class="spoiler">{esc}</span>')
+            html_parts.append(f'<span class="spoiler"><span>{esc}</span></span>')
         else:
             html_parts.append(esc)
 
@@ -768,7 +768,7 @@ def _render_telethon_text(text: str, entities: list[dict[str, Any]] | None) -> t
         elif etype in ("MessageEntityBlockquote", "blockquote"):
             parts.append(f"<blockquote>{esc}</blockquote>")
         elif etype in ("MessageEntitySpoiler", "spoiler"):
-            parts.append(f'<span class="spoiler">{esc}</span>')
+            parts.append(f'<span class="spoiler"><span>{esc}</span></span>')
         else:
             parts.append(esc)
         cursor = end

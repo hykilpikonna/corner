@@ -42,6 +42,26 @@ export default defineNuxtConfig({
     resolve: {
       dedupe: ['vue'],
     },
+    plugins: [
+      {
+        name: 'tg-blog-dev-no-cache',
+        apply: 'serve',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.includes('/tg-blog/')) {
+              const origSetHeader = res.setHeader.bind(res)
+              res.setHeader = ((name: string, value: number | string | readonly string[]) => {
+                if (name.toLowerCase() === 'cache-control') {
+                  return origSetHeader(name, 'no-cache')
+                }
+                return origSetHeader(name, value)
+              }) as typeof res.setHeader
+            }
+            next()
+          })
+        },
+      },
+    ],
     define: {
       __VUE_PROD_DEVTOOLS__: 'false',
       __BUILD_TIME__: JSON.stringify(buildTime),

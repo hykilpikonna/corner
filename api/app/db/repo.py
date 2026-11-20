@@ -72,7 +72,7 @@ ALLOWED_POST_ATTRS: dict[str, set[str]] = {
     "code": {"class"},
     "div": {"class"},
     "figure": {"class"},
-    "i": {"class", "emoji-src"},
+    "i": {"class", "emoji-src", "data-custom-emoji-id"},
     "img": {"src", "alt", "width", "height", "class", "data-src", "data-full"},
     "pre": {"language", "class"},
     "span": {"class"},
@@ -906,6 +906,34 @@ def compute_merged_poll(
     }
 
 
+def compute_merged_views(post: Post) -> str | None:
+    web_views = int(getattr(post, "web_views", 0) or 0)
+    if post.views is None and web_views <= 0:
+        return None
+    return str((post.views or 0) + web_views)
+
+
+def serialize_comment_media(
+    raw_media: Any, api_prefix: str = "/api/life"
+) -> dict[str, Any] | None:
+    if not raw_media or not isinstance(raw_media, dict):
+        return None
+    out = dict(raw_media)
+    if out.get("url"):
+        resolved_url = resolve_media_url(str(out["url"]), api_prefix)
+        if resolved_url:
+            out["url"] = resolved_url
+        else:
+            out.pop("url", None)
+    if out.get("thumb"):
+        resolved_thumb = resolve_media_url(str(out["thumb"]), api_prefix)
+        if resolved_thumb:
+            out["thumb"] = resolved_thumb
+        else:
+            out.pop("thumb", None)
+    return out
+
+
 def serialize_post(post: Post, *, api_prefix: str = "/api/life") -> dict[str, Any]:
     """Serialize a Post ORM instance into canonical `tg-blog` models.ts JSON dict."""
     out: dict[str, Any] = {
@@ -919,8 +947,9 @@ def serialize_post(post: Post, *, api_prefix: str = "/api/life") -> dict[str, An
         out["forwarded_from"] = post.forwarded_from
     if post.type:
         out["type"] = post.type
-    if post.views is not None:
-        out["views"] = str(post.views)
+    merged_views = compute_merged_views(post)
+    if merged_views is not None:
+        out["views"] = merged_views
     if post.author:
         out["author"] = post.author
 

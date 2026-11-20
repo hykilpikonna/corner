@@ -20,6 +20,16 @@ _WEAK_SECRET_PREFIXES = (
     "change-me",
 )
 
+DEFAULT_STICKER_PACKS: tuple[str, ...] = (
+    "SiameseCatLive",
+    "azuki_san",
+    "SiameseEmoji",
+    "timoxixiaodui",
+    "LINE_Ghost_and_black_cat_TL",
+    "azalea_anim",
+    "azalea_2022",
+)
+
 
 def _parse_str_list(value: Any) -> list[str]:
     if value is None:
@@ -79,6 +89,9 @@ class Settings(BaseSettings):
     TG_CHANNEL_ID: int | None = None
     TG_DISCUSSION_CHAT_ID: int | None = None
     TG_SESSION_NAME: str = "bot"
+    DEFAULT_STICKER_PACKS: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_STICKER_PACKS)
+    )
 
     # OAuth & Telegram Login Widget
     GITHUB_CLIENT_ID: str | None = None
@@ -114,7 +127,13 @@ class Settings(BaseSettings):
     FEED_IMAGE_URL: str | None = None
     FEED_MAX_ITEMS: int = 100
 
-    @field_validator("CORS_ORIGINS", "OWNER_RESERVED_NAMES", "TRUSTED_PROXIES", mode="before")
+    @field_validator(
+        "CORS_ORIGINS",
+        "OWNER_RESERVED_NAMES",
+        "TRUSTED_PROXIES",
+        "DEFAULT_STICKER_PACKS",
+        mode="before",
+    )
     @classmethod
     def _validate_list(cls, v: Any) -> list[str]:
         return _parse_str_list(v)

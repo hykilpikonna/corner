@@ -226,6 +226,28 @@ async def test_comment_reactions_toggle_merge_list_and_sse_broadcast(
             )
             assert r_disallowed.status_code == 400
 
+            # Existing CommentTgReaction on a comment can be toggled even if unlisted
+            db_session.add(
+                CommentTgReaction(
+                    comment_id=live_comment.id,
+                    reaction_key="c:777888999",
+                    emoji=None,
+                    custom_emoji_id="777888999",
+                    count=2,
+                )
+            )
+            await db_session.commit()
+
+            r_tg_comment_custom = await auth_client.post(
+                f"/api/life/comments/{live_comment.id}/reactions/toggle",
+                json={"custom_emoji_id": "777888999"},
+            )
+            assert r_tg_comment_custom.status_code == 200
+            tg_c_keys = {r["reaction_key"]: r for r in r_tg_comment_custom.json()["reactions"]}
+            assert tg_c_keys["c:777888999"]["count"] == 3
+            assert tg_c_keys["c:777888999"]["reacted"] is True
+            await asyncio.wait_for(queue.get(), timeout=1.0)
+
             await set_allowed_reactions(
                 db_session,
                 [*default_allowed_reactions(), {"emoji": None, "custom_emoji_id": "55512345"}],

@@ -73,7 +73,7 @@ async def db_session(test_settings: Settings) -> AsyncIterator[AsyncSession]:
                 "comment_web_reactions, comment_tg_reactions, comments, "
                 "magic_links, sessions, user_identities, users, "
                 "web_poll_votes, poll_options, polls, web_reactions, tg_reactions, "
-                "post_images, posts, channels "
+                "post_views, post_images, posts, channels "
                 "RESTART IDENTITY CASCADE"
             )
         )

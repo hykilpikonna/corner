@@ -194,7 +194,10 @@ def _help_text() -> str:
         "/reactions add 🫡 [at 1] — add (or move if `at <pos>` given)\n"
         "/reactions rm 💩 [#3] — remove emoji(s) or #index\n"
         "/reactions move 🔥 1 — move emoji or #index to position\n"
-        "/reactions reset — restore default Telegram list\n\n"
+        "/reactions reset — restore default Telegram list\n"
+        "/stickers — list or manage custom web stickers (or send a sticker / t.me/addstickers/... link)\n"
+        "/stickers add <t.me/addstickers/...> — import an entire Telegram sticker pack\n"
+        "/stickers rmpack <pack> — remove an entire sticker pack\n\n"
         "You can send standard emojis, Telegram custom emojis, or `c:<id>` tokens."
     )
 

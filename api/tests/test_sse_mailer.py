@@ -338,7 +338,7 @@ async def test_mailer_debounce_coalesce_sse_skip_and_retry(
 
         plain = msg.get_body(preferencelist=("plain",)).get_content()
         assert "Bob: First reply!" in plain
-        assert "Anonymous #abcd: Second reply!" in plain
+        assert "Anon #abcd: Second reply!" in plain
         assert "https://aza.moe/life?shared=50" in plain
 
         # All 3 queue rows marked sent_at

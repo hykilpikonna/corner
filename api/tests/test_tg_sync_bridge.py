@@ -543,15 +543,16 @@ async def test_discussion_bridge_manual_fwd_loop_guard_entities_and_archived_dm(
         p2 = await session.get(Post, e2_post_id)
         assert p2 is not None and p2.tg_discussion_root_id == 8001
 
-    # 3. Web -> TG bridge sends with ParseMode.DISABLED and disable_web_page_preview=True (M2)!
+    # 3. Web -> TG bridge sends sanitized HTML with ParseMode.HTML and disable_web_page_preview=True!
     bridged_tg_id = await bridge.bridge_web_comment(e2_comment_id)
     assert bridged_tg_id is not None
     sent = fake_client.sent_messages[-1]
     assert sent["chat_id"] == tg_settings.TG_DISCUSSION_CHAT_ID
     assert sent["reply_to_message_id"] == 8001
-    assert sent["parse_mode"] == ParseMode.DISABLED
+    assert sent["parse_mode"] == ParseMode.HTML
     assert sent["disable_web_page_preview"] is True
     assert "💬 Alice (via aza.moe):" in sent["text"]
+    assert "evil.example" not in sent["text"]
 
     # 4. Strict bot echo loop prevention (bot_id match AND is_self=True!)
     bot_echo = SimpleNamespace(

@@ -6,8 +6,9 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import delete, func, select, text
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
+from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,9 +17,11 @@ from app.auth.security import (
     VISITOR_COOKIE_NAME,
     SlidingWindowRateLimiter,
     ensure_visitor_id,
+    format_anon_display_name,
     get_client_ip,
     get_current_user_optional,
     make_anon_tag,
+    make_comment_owner_hash,
     reject_control_chars,
     render_and_sanitize_comment_html,
     validate_reaction_emoji,
@@ -32,6 +35,7 @@ from app.db.models import (
     NotificationQueue,
     Poll,
     Post,
+    PostView,
     TgReaction,
     User,
     WebPollVote,
@@ -41,20 +45,29 @@ from app.db.repo import (
     compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
+    compute_merged_views,
     find_allowed_reaction_entry,
     format_iso_utc,
     get_allowed_reactions,
     make_reaction_key,
     resolve_media_url,
+    serialize_comment_media,
     strip_variation_selectors,
 )
 from app.db.session import get_db_session
+from app.media.optimize import (
+    MAX_COMMENT_MEDIA_BYTES,
+    InvalidImageError,
+    process_comment_image_upload,
+)
 from app.routes.auth import serialize_user_dto
+from app.routes.media import resolve_safe_media_path
 from app.schemas import (
     AllowedReactionDTO,
     AllowedReactionsResponse,
     CommentAuthorDTO,
     CommentDTO,
+    CommentMediaDTO,
     CommentReactionToggleResponse,
     CommentsListResponse,
     CreateCommentRequest,
@@ -66,6 +79,8 @@ from app.schemas import (
     PollVoteRequest,
     PollVoteResponse,
     PostInteractionDTO,
+    PostViewRequest,
+    PostViewResponse,
     ReactionToggleRequest,
     ReactionToggleResponse,
 )
@@ -79,6 +94,7 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 MAX_BATCH_IDS = 200
+MAX_VIEW_BATCH_IDS = 50
 MAX_COMMENT_LENGTH = 4000
 MAX_WEB_REACTIONS_PER_POST_ACTOR = 5
 MAX_WEB_REACTIONS_PER_ACTOR = MAX_WEB_REACTIONS_PER_POST_ACTOR
@@ -210,18 +226,30 @@ def _parse_reaction_toggle_request(
     return None, raw_custom
 
 
-async def _normalize_reaction_emoji(
+async def _find_tg_reaction_match(
     db: AsyncSession,
-    emoji: str,
     *,
     tg_model: type[TgReaction] | type[CommentTgReaction],
-    web_model: type[WebReaction] | type[CommentWebReaction],
     fk_col_name: str,
     target_id: int,
-) -> str:
-    """Match variation selectors against existing TG/web reactions on the same target."""
-    stripped_target = strip_variation_selectors(emoji)
+    emoji: str | None = None,
+    custom_emoji_id: str | None = None,
+) -> tuple[bool, str | None]:
+    """Return (exists, matched_emoji) when tg_model already has the reaction on target_id."""
     tg_fk = getattr(tg_model, fk_col_name)
+    if custom_emoji_id is not None:
+        rkey = make_reaction_key(custom_emoji_id=custom_emoji_id)
+        hit = (
+            await db.execute(
+                select(tg_model.reaction_key)
+                .where(tg_fk == target_id, tg_model.reaction_key == rkey)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return (hit is not None, None)
+
+    assert emoji is not None
+    stripped_target = strip_variation_selectors(emoji)
     tg_emojis = (
         await db.execute(
             select(tg_model.emoji).where(
@@ -235,8 +263,31 @@ async def _normalize_reaction_emoji(
             existing_emoji
             and strip_variation_selectors(existing_emoji) == stripped_target
         ):
-            return existing_emoji
+            return (True, existing_emoji)
+    return (False, None)
 
+
+async def _normalize_reaction_emoji(
+    db: AsyncSession,
+    emoji: str,
+    *,
+    tg_model: type[TgReaction] | type[CommentTgReaction],
+    web_model: type[WebReaction] | type[CommentWebReaction],
+    fk_col_name: str,
+    target_id: int,
+) -> str:
+    """Match variation selectors against existing TG/web reactions on the same target."""
+    matched, tg_emoji = await _find_tg_reaction_match(
+        db,
+        tg_model=tg_model,
+        fk_col_name=fk_col_name,
+        target_id=target_id,
+        emoji=emoji,
+    )
+    if matched and tg_emoji is not None:
+        return tg_emoji
+
+    stripped_target = strip_variation_selectors(emoji)
     web_fk = getattr(web_model, fk_col_name)
     web_emojis = (
         await db.execute(
@@ -314,10 +365,19 @@ async def _toggle_web_reaction(
         allowed_reactions, emoji=emoji, custom_emoji_id=custom_emoji_id
     )
     if allowed_entry is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Reaction emoji is not allowed",
+        has_existing_tg, _ = await _find_tg_reaction_match(
+            db,
+            tg_model=tg_model,
+            fk_col_name=fk_col_name,
+            target_id=target_id,
+            emoji=emoji,
+            custom_emoji_id=custom_emoji_id,
         )
+        if not has_existing_tg:
+            raise HTTPException(
+                status_code=400,
+                detail="Reaction emoji is not allowed",
+            )
 
     if len(actor_rows) >= MAX_WEB_REACTIONS_PER_ACTOR:
         raise HTTPException(
@@ -334,7 +394,11 @@ async def _toggle_web_reaction(
             fk_col_name=fk_col_name,
             target_id=target_id,
         )
-        if strip_variation_selectors(emoji) == emoji and allowed_entry.get("emoji"):
+        if (
+            strip_variation_selectors(emoji) == emoji
+            and allowed_entry
+            and allowed_entry.get("emoji")
+        ):
             emoji = str(allowed_entry["emoji"])
 
     rkey = make_reaction_key(emoji=emoji, custom_emoji_id=custom_emoji_id)
@@ -350,6 +414,150 @@ async def _toggle_web_reaction(
     await db.commit()
 
 
+def _add_anon_ownership_tags(
+    anon_tags: set[str],
+    post_id: int,
+    actor_key: str,
+    secret: str,
+) -> None:
+    current = make_anon_tag(post_id, actor_key, secret)
+    anon_tags.add(current)
+    # Keep matching pre-rename DB rows whose anon_tag was stored as "Anonymous #<hex>".
+    if current.startswith("Anon #"):
+        anon_tags.add(f"Anonymous #{current[len('Anon #'):]}")
+
+
+def _collect_viewer_ownership(
+    request: Request,
+    me: User | None,
+    settings: Settings,
+    *,
+    post_id: int | None = None,
+) -> tuple[set[str], set[str]]:
+    actor_hashes: set[str] = set()
+    anon_tags: set[str] = set()
+    if me is not None:
+        u_key = f"u:{me.id}"
+        actor_hashes.add(make_comment_owner_hash(u_key, settings.SECRET_KEY))
+        if post_id is not None:
+            _add_anon_ownership_tags(anon_tags, post_id, u_key, settings.SECRET_KEY)
+    vid = verify_visitor_cookie(
+        request.cookies.get(VISITOR_COOKIE_NAME), settings.SECRET_KEY
+    )
+    if vid is not None:
+        v_key = f"v:{vid}"
+        actor_hashes.add(make_comment_owner_hash(v_key, settings.SECRET_KEY))
+        if post_id is not None:
+            _add_anon_ownership_tags(anon_tags, post_id, v_key, settings.SECRET_KEY)
+    return actor_hashes, anon_tags
+
+
+_PHOTO_MEDIA_EXTS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif", ".apng", ".avif"})
+_STICKER_MEDIA_EXTS: frozenset[str] = frozenset({".webp", ".tgs", ".webm", ".png"})
+_THUMB_MEDIA_EXTS: frozenset[str] = frozenset({".webp", ".jpg", ".jpeg", ".png", ".gif"})
+_MEDIA_MIME_BY_EXT: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".apng": "image/apng",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".avif": "image/avif",
+    ".tgs": "application/x-tgsticker",
+    ".webm": "video/webm",
+}
+
+
+def _normalize_comment_media_input(
+    media: CommentMediaDTO,
+    settings: Settings,
+) -> dict[str, Any]:
+    media_type = media.media_type.strip().lower()
+    if media_type not in {"photo", "sticker"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Comment media_type must be 'photo' or 'sticker'",
+        )
+
+    media_root_resolved = settings.media_dir.resolve()
+    media_prefix = f"{settings.API_PREFIX.rstrip('/')}/media/"
+    abs_media_prefix = f"{settings.api_base_url.rstrip('/')}/media/"
+
+    def _extract_safe_rel(
+        raw_url: str,
+        *,
+        allowed_prefixes: tuple[str, ...],
+        allowed_exts: frozenset[str],
+    ) -> tuple[str, Any]:
+        cleaned = raw_url.strip()
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Invalid comment media path")
+        if cleaned.startswith(abs_media_prefix):
+            cleaned = cleaned[len(abs_media_prefix) :]
+        elif cleaned.startswith(media_prefix):
+            cleaned = cleaned[len(media_prefix) :]
+        else:
+            lowered = cleaned.lower()
+            if lowered.startswith(("http://", "https://", "//", "data:", "javascript:", "vbscript:")):
+                raise HTTPException(status_code=400, detail="Invalid comment media path")
+
+        resolved = resolve_safe_media_path(settings.media_dir, cleaned)
+        rel = resolved.relative_to(media_root_resolved).as_posix()
+        if not rel.startswith(allowed_prefixes):
+            raise HTTPException(status_code=400, detail="Invalid comment media directory")
+        ext = resolved.suffix.lower()
+        if ext not in allowed_exts:
+            raise HTTPException(status_code=400, detail="Unsupported comment media extension")
+        return rel, resolved
+
+    if media_type == "photo":
+        rel_url, resolved_main = _extract_safe_rel(
+            media.url,
+            allowed_prefixes=("comments/",),
+            allowed_exts=_PHOTO_MEDIA_EXTS,
+        )
+    else:
+        rel_url, resolved_main = _extract_safe_rel(
+            media.url,
+            allowed_prefixes=("stickers/", "comments/"),
+            allowed_exts=_STICKER_MEDIA_EXTS,
+        )
+
+    rel_thumb: str | None = None
+    if media.thumb:
+        rel_thumb, _ = _extract_safe_rel(
+            media.thumb,
+            allowed_prefixes=("comments/", "stickers/"),
+            allowed_exts=_THUMB_MEDIA_EXTS,
+        )
+
+    main_ext = resolved_main.suffix.lower()
+    disk_size = resolved_main.stat().st_size
+    disk_mime = _MEDIA_MIME_BY_EXT.get(main_ext)
+
+    out: dict[str, Any] = {
+        "media_type": media_type,
+        "url": rel_url,
+        "size": disk_size,
+    }
+    if disk_mime:
+        out["mime_type"] = disk_mime
+    if rel_thumb:
+        out["thumb"] = rel_thumb
+    if media.width is not None and media.width > 0:
+        out["width"] = int(media.width)
+    if media.height is not None and media.height > 0:
+        out["height"] = int(media.height)
+    if media.emoji:
+        out["emoji"] = str(media.emoji)[:32]
+    if media_type == "sticker":
+        out["is_animated"] = main_ext == ".tgs"
+        out["is_video"] = main_ext == ".webm"
+    if media.sticker_id:
+        out["sticker_id"] = str(media.sticker_id)[:128]
+    return out
+
+
 def _serialize_comment(
     comment: Comment,
     *,
@@ -358,6 +566,7 @@ def _serialize_comment(
     settings: Settings,
     tombstone: bool = False,
     viewer_anon_tags: set[str] | None = None,
+    viewer_actor_hashes: set[str] | None = None,
     actor_key: str | None = None,
     include_reactions: bool = True,
 ) -> CommentDTO:
@@ -412,7 +621,7 @@ def _serialize_comment(
         )
     else:
         author = CommentAuthorDTO(
-            display_name=comment.anon_tag or "Anonymous",
+            display_name=format_anon_display_name(comment.anon_tag),
             avatar_url=None,
             role="anonymous",
             provider=None,
@@ -423,15 +632,21 @@ def _serialize_comment(
     is_mine_user = bool(
         me is not None and comment.user_id is not None and comment.user_id == me.id
     )
-    is_mine_anon = bool(
-        comment.user_id is None
+    is_mine_hash = bool(
+        viewer_actor_hashes
+        and comment.actor_key_hash is not None
+        and comment.actor_key_hash in viewer_actor_hashes
+    )
+    is_mine_legacy_anon_tag = bool(
+        comment.actor_key_hash is None
+        and comment.user_id is None
         and comment.source == "web"
         and viewer_anon_tags
         and comment.anon_tag is not None
         and comment.anon_tag in viewer_anon_tags
     )
-    is_mine = is_mine_user or is_mine_anon
-    can_delete = bool(me is not None and (me.role == "owner" or is_mine_user))
+    is_mine = is_mine_user or is_mine_hash or is_mine_legacy_anon_tag
+    can_delete = bool(is_mine or (me is not None and me.role == "owner"))
 
     reactions = (
         [
@@ -450,7 +665,7 @@ def _serialize_comment(
         author=author,
         body_text=comment.body_text,
         body_html=comment.body_html,
-        media=comment.media,
+        media=serialize_comment_media(comment.media, settings.API_PREFIX),
         created_at=format_iso_utc(comment.created_at),
         edited_at=format_iso_utc(comment.edited_at) if comment.edited_at else None,
         deleted=False,
@@ -479,6 +694,28 @@ def _schedule_tg_bridge(request: Request, comment_id: int) -> None:
             logger.exception("tg_bridge callback failed for comment_id=%s", comment_id)
 
     task = asyncio.create_task(_run(), name=f"tg-bridge-comment-{comment_id}")
+    tasks: set[asyncio.Task[Any]] | None = getattr(
+        request.app.state, "background_tasks", None
+    )
+    if tasks is not None:
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+
+def _schedule_tg_delete(request: Request, comment_id: int) -> None:
+    tg_bridge = getattr(request.app.state, "tg_bridge", None)
+    if tg_bridge is None or not hasattr(tg_bridge, "delete_bridged_comment"):
+        return
+
+    async def _run() -> None:
+        try:
+            res = tg_bridge.delete_bridged_comment(comment_id)
+            if inspect.isawaitable(res):
+                await res
+        except Exception:
+            logger.exception("tg_bridge delete failed for comment_id=%s", comment_id)
+
+    task = asyncio.create_task(_run(), name=f"tg-delete-comment-{comment_id}")
     tasks: set[asyncio.Task[Any]] | None = getattr(
         request.app.state, "background_tasks", None
     )
@@ -540,6 +777,7 @@ async def get_interactions(
                 reactions=merged_reactions,
                 poll=merged_poll,
                 comment_count=comment_counts.get(post.id, 0),
+                views=compute_merged_views(post),
             )
 
     allowed_reactions = [
@@ -564,6 +802,122 @@ async def get_allowed_reactions_route(
             AllowedReactionDTO(**item) for item in await get_allowed_reactions(db)
         ]
     )
+
+
+@router.post("/posts/view", response_model=PostViewResponse)
+async def record_post_views(
+    payload: PostViewRequest,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> PostViewResponse:
+    limiter = _get_rate_limiter(request)
+    ip = get_client_ip(request, settings)
+    allowed, _ = limiter.hit("view", ip, limit=60, window_seconds=60.0)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many view requests; please slow down",
+        )
+
+    unique_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for raw_id in payload.post_ids:
+        if isinstance(raw_id, bool) or not isinstance(raw_id, int):
+            continue
+        if raw_id > 0 and raw_id not in seen_ids:
+            seen_ids.add(raw_id)
+            unique_ids.append(raw_id)
+            if len(unique_ids) >= MAX_VIEW_BATCH_IDS:
+                break
+
+    me = await get_current_user_optional(request, db)
+    existing_vid = verify_visitor_cookie(
+        request.cookies.get(VISITOR_COOKIE_NAME), settings.SECRET_KEY
+    )
+    had_valid_actor = (me is not None) or (existing_vid is not None)
+    if me is not None:
+        actor_key = f"u:{me.id}"
+    else:
+        vid = (
+            existing_vid
+            if existing_vid is not None
+            else ensure_visitor_id(request, response, settings)
+        )
+        actor_key = f"v:{vid}"
+
+    if not unique_ids:
+        return PostViewResponse(views={})
+
+    existing_posts = list(
+        (
+            await db.execute(
+                select(Post)
+                .where(Post.id.in_(unique_ids), Post.is_deleted.is_(False))
+                .order_by(Post.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not existing_posts:
+        return PostViewResponse(views={})
+
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=24)
+    updated_views_map: dict[str, str] = {}
+    all_views_map: dict[str, str] = {}
+
+    for post in existing_posts:
+        if not had_valid_actor:
+            allowed_nc, _ = limiter.hit(
+                f"view-nc:{post.id}", ip, limit=1, window_seconds=3600.0
+            )
+            if not allowed_nc:
+                merged_str = compute_merged_views(post)
+                if merged_str is not None:
+                    all_views_map[str(post.id)] = merged_str
+                continue
+
+        view_stmt = (
+            pg_insert(PostView)
+            .values(post_id=post.id, actor_key=actor_key, viewed_at=now)
+            .on_conflict_do_update(
+                index_elements=[PostView.post_id, PostView.actor_key],
+                set_={"viewed_at": now},
+                where=PostView.viewed_at < cutoff,
+            )
+            .returning(PostView.post_id)
+        )
+        inserted_or_updated = (await db.execute(view_stmt)).scalar_one_or_none()
+        if inserted_or_updated is not None:
+            upd_row = (
+                await db.execute(
+                    update(Post)
+                    .where(Post.id == post.id)
+                    .values(web_views=Post.web_views + 1)
+                    .returning(Post.views, Post.web_views)
+                )
+            ).one()
+            merged_str = str((upd_row[0] or 0) + int(upd_row[1]))
+            updated_views_map[str(post.id)] = merged_str
+            all_views_map[str(post.id)] = merged_str
+        else:
+            merged_str = compute_merged_views(post)
+            if merged_str is not None:
+                all_views_map[str(post.id)] = merged_str
+
+    await db.commit()
+
+    if updated_views_map:
+        _get_sse_bus(request).publish(
+            "post.views.updated",
+            {"views": updated_views_map},
+            post_id=None,
+        )
+
+    return PostViewResponse(views=all_views_map)
 
 
 # ---------------------------------------------------------------------------
@@ -853,15 +1207,12 @@ async def get_post_comments(
         raise HTTPException(status_code=404, detail="Post not found")
 
     me = await get_current_user_optional(request, db)
-    viewer_anon_tags: set[str] = set()
-    if me is not None:
-        viewer_anon_tags.add(make_anon_tag(post_id, f"u:{me.id}", settings.SECRET_KEY))
+    viewer_hashes, viewer_anon_tags = _collect_viewer_ownership(
+        request, me, settings, post_id=post_id
+    )
     vid = verify_visitor_cookie(
         request.cookies.get(VISITOR_COOKIE_NAME), settings.SECRET_KEY
     )
-    if vid is not None:
-        viewer_anon_tags.add(make_anon_tag(post_id, f"v:{vid}", settings.SECRET_KEY))
-
     actor_key = f"u:{me.id}" if me is not None else (f"v:{vid}" if vid is not None else None)
 
     comments_stmt = (
@@ -918,11 +1269,70 @@ async def get_post_comments(
             settings=settings,
             tombstone=is_tomb,
             viewer_anon_tags=viewer_anon_tags or None,
+            viewer_actor_hashes=viewer_hashes or None,
             actor_key=actor_key,
         )
         for c, is_tomb in visible_comments
     ]
-    return CommentsListResponse(post_id=post_id, comments=serialized)
+    viewer_anon_tag = (
+        make_anon_tag(post_id, actor_key, settings.SECRET_KEY)
+        if actor_key is not None
+        else None
+    )
+    return CommentsListResponse(
+        post_id=post_id,
+        comments=serialized,
+        viewer_anon_tag=viewer_anon_tag,
+    )
+
+
+@router.post("/comments/media", response_model=CommentMediaDTO)
+async def upload_comment_media(
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+    file: Annotated[UploadFile, File()],
+) -> CommentMediaDTO:
+    me = await get_current_user_optional(request, db)
+    if me is None and not settings.ALLOW_ANON_COMMENTS:
+        raise HTTPException(
+            status_code=403,
+            detail="Anonymous comments are disabled",
+        )
+
+    limiter = _get_rate_limiter(request)
+    ip = get_client_ip(request, settings)
+    allowed, _ = limiter.hit("comment-media", ip, limit=20, window_seconds=60.0)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many media uploads; please slow down",
+        )
+
+    try:
+        data = await file.read(MAX_COMMENT_MEDIA_BYTES + 1)
+    finally:
+        await file.close()
+
+    try:
+        saved = await asyncio.to_thread(
+            process_comment_image_upload,
+            data,
+            settings.media_dir,
+            max_bytes=MAX_COMMENT_MEDIA_BYTES,
+        )
+    except InvalidImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return CommentMediaDTO(
+        media_type=saved["media_type"],
+        url=resolve_media_url(saved["url"], settings.API_PREFIX) or saved["url"],
+        thumb=resolve_media_url(saved["thumb"], settings.API_PREFIX),
+        width=saved["width"],
+        height=saved["height"],
+        size=saved["size"],
+        mime_type=saved["mime_type"],
+    )
 
 
 @router.post(
@@ -957,11 +1367,20 @@ async def create_comment(
 
     reject_control_chars(payload.body, allow_newlines=True)
     stripped_body = payload.body.strip()
-    if not stripped_body or len(stripped_body) > MAX_COMMENT_LENGTH:
+    if len(stripped_body) > MAX_COMMENT_LENGTH:
         raise HTTPException(
             status_code=400,
-            detail=f"Comment body must be between 1 and {MAX_COMMENT_LENGTH} characters",
+            detail=f"Comment body must be at most {MAX_COMMENT_LENGTH} characters",
         )
+    if not stripped_body and payload.media is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Comment must include body text or media",
+        )
+
+    media_payload: dict[str, Any] | None = None
+    if payload.media is not None:
+        media_payload = _normalize_comment_media_input(payload.media, settings)
 
     parent_comment: Comment | None = None
     if payload.parent_id is not None:
@@ -991,7 +1410,8 @@ async def create_comment(
         assert me is not None
         comment_user_id = me.id
 
-    body_html = render_and_sanitize_comment_html(stripped_body)
+    actor_key_hash = make_comment_owner_hash(actor_key, settings.SECRET_KEY)
+    body_html = render_and_sanitize_comment_html(stripped_body) if stripped_body else ""
     now = datetime.now(UTC)
 
     comment = Comment(
@@ -1001,8 +1421,10 @@ async def create_comment(
         channel_id=post.channel_id,
         user_id=comment_user_id,
         anon_tag=anon_tag,
+        actor_key_hash=actor_key_hash,
         body_text=stripped_body,
         body_html=body_html,
+        media=media_payload,
         created_at=now,
     )
     db.add(comment)
@@ -1032,14 +1454,13 @@ async def create_comment(
     await db.commit()
 
     users_by_id = {me.id: me} if (me is not None and comment_user_id == me.id) else {}
-    # Pass `me=me` so owner retains `can_delete=True` even when posting anonymously,
-    # and pass `viewer_anon_tags={anon_tag}` so anonymous comments return `is_mine=True`.
     caller_dto = _serialize_comment(
         comment,
         users_by_id=users_by_id,
         me=me,
         settings=settings,
         viewer_anon_tags={anon_tag} if anon_tag else None,
+        viewer_actor_hashes={actor_key_hash},
         include_reactions=False,
     )
     public_dto = _serialize_comment(
@@ -1066,16 +1487,35 @@ async def delete_comment(
     comment_id: int,
     request: Request,
     db: DbSessionDep,
+    settings: SettingsDep,
 ) -> DeleteCommentResponse:
     me = await get_current_user_optional(request, db)
-    if me is None:
+    vid = verify_visitor_cookie(
+        request.cookies.get(VISITOR_COOKIE_NAME), settings.SECRET_KEY
+    )
+    if me is None and vid is None:
         raise HTTPException(status_code=401, detail="Authentication required")
 
     comment = await db.get(Comment, comment_id)
     if comment is None:
         raise HTTPException(status_code=404, detail="Comment not found")
 
-    if me.role != "owner" and comment.user_id != me.id:
+    viewer_hashes, viewer_anon_tags = _collect_viewer_ownership(
+        request, me, settings, post_id=comment.post_id
+    )
+    is_owner = me is not None and me.role == "owner"
+    owns_by_user = me is not None and comment.user_id is not None and comment.user_id == me.id
+    owns_by_hash = (
+        comment.actor_key_hash is not None and comment.actor_key_hash in viewer_hashes
+    )
+    owns_by_legacy_anon = (
+        comment.actor_key_hash is None
+        and comment.user_id is None
+        and comment.source == "web"
+        and comment.anon_tag is not None
+        and comment.anon_tag in viewer_anon_tags
+    )
+    if not (is_owner or owns_by_user or owns_by_hash or owns_by_legacy_anon):
         raise HTTPException(
             status_code=403,
             detail="You are not allowed to delete this comment",
@@ -1092,6 +1532,8 @@ async def delete_comment(
             },
             post_id=comment.post_id,
         )
+        if comment.tg_msg_id is not None and comment.channel_id is not None:
+            _schedule_tg_delete(request, comment.id)
 
     return DeleteCommentResponse(
         ok=True,

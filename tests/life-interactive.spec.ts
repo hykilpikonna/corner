@@ -424,7 +424,7 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
         parent_id: payload.parent_id ?? null,
         source: 'web',
         author: {
-          display_name: 'Anonymous #a1b2',
+          display_name: 'Anon #a1b2',
           avatar_url: null,
           role: 'anonymous',
           provider: 'anonymous',
@@ -438,7 +438,7 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
         edited_at: null,
         deleted: false,
         is_mine: true,
-        can_delete: false,
+        can_delete: true,
       }
       commentsStore.push(created)
       await route.fulfill({
@@ -597,22 +597,22 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   expect(chatBox).toBeTruthy()
   expect(Math.abs(chatBox!.y - (cardBox!.y + cardBox!.height))).toBeLessThanOrEqual(1)
 
-  const textarea = chatZone.locator('#add-comment textarea')
-  await expect(textarea).toHaveAttribute('placeholder', '发消息...')
-  await expect(chatZone.locator('#send-comment-btn')).toHaveCount(0)
+  const textbox = chatZone.locator('#add-comment [role="textbox"]')
+  await expect(textbox).toHaveAttribute('aria-label', '发消息...')
+  await expect(chatZone.locator('#send-comment-btn .unstyled-button')).toHaveCount(0)
 
-  // Guest avatar sits left of "登录" with ~1/3 (10px of 30px) sunk behind the textarea top edge
+  // Guest avatar sits left of "登录" with ~1/3 (10px of 30px) sunk behind the composer input top edge
   const guestAvatar = chatZone.locator('.guest-bar .guest-avatar')
   const signinBtn = chatZone.locator('.guest-bar .signin-btn')
   await expect(guestAvatar).toBeVisible()
   const avatarBox = await guestAvatar.boundingBox()
   const signinBox = await signinBtn.boundingBox()
-  const textareaBox = await textarea.boundingBox()
+  const inputBox = await textbox.boundingBox()
   expect(avatarBox).toBeTruthy()
   expect(signinBox).toBeTruthy()
-  expect(textareaBox).toBeTruthy()
+  expect(inputBox).toBeTruthy()
   expect(avatarBox!.x + avatarBox!.width).toBeLessThanOrEqual(signinBox!.x)
-  const sinkPx = avatarBox!.y + avatarBox!.height - textareaBox!.y
+  const sinkPx = avatarBox!.y + avatarBox!.height - inputBox!.y
   expect(sinkPx).toBeGreaterThanOrEqual(7)
   expect(sinkPx).toBeLessThanOrEqual(13)
 
@@ -643,11 +643,12 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await incomingBubble.locator('.bubble-act-btn[title="讨论"]').click()
   await expect(chatZone.locator('.reply-banner')).toContainText('回复 @Aza')
 
-  // Typing reveals embedded #send-comment-btn; clicking sends with auto-solved ALTCHA PoW
-  await textarea.fill('你好呀，这是一条匿名聊天消息！')
-  const sendWrap = chatZone.locator('#send-comment-btn')
-  await expect(sendWrap).toBeVisible()
-  await sendWrap.locator('button').click()
+  // Typing reveals embedded send button; clicking sends with auto-solved ALTCHA PoW
+  await textbox.click()
+  await textbox.fill('你好呀，这是一条匿名聊天消息！')
+  const sendBtn = chatZone.locator('#send-comment-btn .unstyled-button')
+  await expect(sendBtn).toBeVisible()
+  await sendBtn.click()
 
   // New comment appears as a right-aligned .Message.own bubble with bottom-right .message-timestamp (no empty .message-title) and solved ALTCHA
   const ownBubble = chatZone.locator('.chat-list .Message.own')
@@ -684,7 +685,7 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   expect(messageIds).toEqual(['comment-101', 'comment-102'])
 
   // Open Auth Modal from chat composer and verify zh-CN GitHub, generic OIDC, and email providers
-  await chatZone.getByRole('button', {name: '登录'}).click()
+  await chatZone.getByRole('button', {name: '登录', exact: true}).click()
   const dialog = page.getByRole('dialog', {name: '登录'})
   await expect(dialog).toBeVisible({timeout: 10_000})
   await expect(dialog.getByRole('link', {name: '使用 GitHub 登录'})).toBeVisible()
@@ -923,4 +924,337 @@ test('hides mobile reaction/reply buttons and supports touch slide-to-reply', as
   } finally {
     await context.close()
   }
+})
+
+test('supports v3 view increment, Web A formatting, SymbolMenu emojis/stickers, AttachmentModal photos, reply thumbs, and own-comment delete', async ({page, request}) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', err => pageErrors.push(err.message))
+
+  const altchaSalt = 'v3-e2e-salt:'
+  const altchaSecretNumber = 4
+  const {createHash} = await import('node:crypto')
+  const altchaChallengeHex = createHash('sha256').update(`${altchaSalt}${altchaSecretNumber}`).digest('hex')
+
+  // Minimal 1x1 transparent PNG
+  const TINY_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aW1sAAAAASUVORK5CYII=',
+    'base64',
+  )
+
+  let targetPostId: number | null = null
+  let nextCommentId = 302
+  const viewBatchCalls: number[][] = []
+  const deletedCommentIds: number[] = []
+  const createdPayloads: Array<{body?: string; media?: Record<string, unknown> | null; parent_id?: number | null}> = []
+  const commentsStore: Array<Record<string, unknown>> = []
+
+  await page.route('**/api/life/**', async route => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const path = url.pathname
+
+    if (path.endsWith('/api/life/interactions')) {
+      const ids = (url.searchParams.get('ids') || '').split(',').map(Number).filter(Number.isFinite)
+      if (targetPostId === null && ids.length > 0) {
+        targetPostId = ids[0]!
+        commentsStore.push(
+          {
+            id: 300,
+            post_id: targetPostId,
+            parent_id: null,
+            source: 'web',
+            author: {display_name: 'Anonymous #64b6', avatar_url: null, role: 'anonymous', provider: null, username: null, verified: false},
+            body_text: 'Anon message',
+            body_html: '<p>Anon message</p>',
+            media: null,
+            created_at: '2026-11-20T00:55:00Z',
+            edited_at: null,
+            deleted: false,
+            is_mine: false,
+            can_delete: false,
+            reactions: [],
+          },
+          {
+            id: 301,
+            post_id: targetPostId,
+            parent_id: null,
+            source: 'telegram',
+            author: {display_name: 'TG Friend', avatar_url: null, role: 'telegram', provider: 'telegram', username: 'tgfriend', verified: true},
+            body_text: 'Check this photo',
+            body_html: '<p>Check this photo</p>',
+            media: {media_type: 'photo', url: '/api/life/media/comments/tg_301.png', thumb: '/api/life/media/comments/tg_301.png', width: 100, height: 100},
+            created_at: '2026-11-20T01:00:00Z',
+            edited_at: null,
+            deleted: false,
+            is_mine: false,
+            can_delete: false,
+            reactions: [],
+          },
+        )
+      }
+      const posts: Record<string, unknown> = {}
+      if (targetPostId !== null && ids.includes(targetPostId)) {
+        posts[String(targetPostId)] = {reactions: [], poll: null, comment_count: commentsStore.length, views: '50'}
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({allow_anon_comments: true, captcha_provider: 'altcha', me: null, allowed_reactions: [], posts}),
+      })
+      return
+    }
+
+    if (path.endsWith('/api/life/posts/view') && req.method() === 'POST') {
+      const body = JSON.parse(req.postData() || '{}') as {post_ids?: number[]}
+      const pids = body.post_ids ?? []
+      viewBatchCalls.push(pids)
+      const views: Record<string, string> = {}
+      for (const id of pids) {
+        views[String(id)] = id === targetPostId ? '51' : '12'
+      }
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({views})})
+      return
+    }
+
+    if (path.endsWith('/api/life/emojis/custom')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({emojis: [{id: '9876543210', url: '/api/life/exports/emoji/9876543210.webp', format: 'webp'}]}),
+      })
+      return
+    }
+
+    if (path.endsWith('/api/life/exports/emoji/9876543210.webp') || path.endsWith('/api/life/media/comments/tg_301.png') || path.endsWith('/api/life/media/comments/web_uploaded.png') || path.endsWith('/api/life/media/stickers/starter/wave.webp')) {
+      await route.fulfill({status: 200, contentType: 'image/png', body: TINY_PNG})
+      return
+    }
+
+    if (path.endsWith('/api/life/stickers')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          packs: [{
+            id: 'starter',
+            name: 'starter',
+            title: 'Starter',
+            stickers: [{
+              id: 'starter/wave.webp',
+              file: 'wave.webp',
+              url: '/api/life/media/stickers/starter/wave.webp',
+              thumb: null,
+              emoji: '👋',
+              format: 'webp',
+              width: 512,
+              height: 512,
+              is_animated: false,
+              is_video: false,
+            }],
+          }],
+        }),
+      })
+      return
+    }
+
+    if (path.endsWith('/api/life/comments/media') && req.method() === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          media_type: 'photo',
+          url: '/api/life/media/comments/web_uploaded.png',
+          thumb: '/api/life/media/comments/web_uploaded.png',
+          width: 1,
+          height: 1,
+          size: TINY_PNG.length,
+          mime_type: 'image/png',
+        }),
+      })
+      return
+    }
+
+    if (path.endsWith('/comments') && req.method() === 'GET') {
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({post_id: targetPostId, comments: commentsStore})})
+      return
+    }
+
+    if (path.endsWith('/comments') && req.method() === 'POST') {
+      const payload = JSON.parse(req.postData() || '{}') as {body?: string; media?: Record<string, unknown> | null; parent_id?: number | null}
+      createdPayloads.push(payload)
+      const cid = nextCommentId++
+      const bodyStr = payload.body ?? ''
+      const bodyHtml = bodyStr
+        ? `<p>${bodyStr.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/<tg-emoji emoji-id="(\d+)">([^<]*)<\/tg-emoji>/g, '<i class="custom-emoji" data-custom-emoji-id="$1">$2</i>')}</p>`
+        : ''
+      const created = {
+        id: cid,
+        post_id: targetPostId,
+        parent_id: payload.parent_id ?? null,
+        source: 'web',
+        author: {display_name: 'Anon #v301', avatar_url: null, role: 'anonymous', provider: null, username: null, verified: false},
+        body_text: bodyStr,
+        body_html: bodyHtml,
+        media: payload.media ?? null,
+        created_at: '2026-11-20T02:00:00Z',
+        edited_at: null,
+        deleted: false,
+        is_mine: true,
+        can_delete: true,
+        reactions: [],
+      }
+      commentsStore.push(created)
+      await route.fulfill({status: 201, contentType: 'application/json', body: JSON.stringify(created)})
+      return
+    }
+
+    if (path.includes('/api/life/comments/') && req.method() === 'DELETE') {
+      const cid = Number(path.split('/').pop())
+      deletedCommentIds.push(cid)
+      const idx = commentsStore.findIndex(c => c.id === cid)
+      if (idx >= 0) commentsStore.splice(idx, 1)
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true, post_id: targetPostId, comment_id: cid})})
+      return
+    }
+
+    if (path.endsWith('/api/life/captcha/challenge')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({algorithm: 'SHA-256', challenge: altchaChallengeHex, maxnumber: 10, salt: altchaSalt, signature: 'sig'}),
+      })
+      return
+    }
+
+    if (path.endsWith('/api/life/auth/me')) {
+      await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({user: null, providers: ['email'], allow_anon_comments: true, telegram_bot_username: null})})
+      return
+    }
+
+    if (path.endsWith('/api/life/stream')) {
+      await route.fulfill({status: 200, headers: {'content-type': 'text/event-stream'}, body: ': ping\n\n'})
+      return
+    }
+
+    await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true})})
+  })
+
+  await page.goto('/life?lifeApi=/api/life')
+  const firstEntry = page.locator('.tg-blog .post-entry').first()
+  const firstCard = firstEntry.locator('.post.tgb-card')
+
+  // 1. View count increments on visible post via IntersectionObserver -> POST /posts/view
+  await expect.poll(() => viewBatchCalls.flat().length, {timeout: 5_000}).toBeGreaterThan(0)
+  await expect(firstCard.locator('.info .views')).toContainText('51')
+
+  // Open comments and check anon avatar/ring (#300) + photo comment (#301)
+  await firstEntry.locator('.comment-toggle').click()
+  const chatZone = firstEntry.locator('.chat-zone')
+  const anonComment = chatZone.locator('#comment-300')
+  await expect(anonComment).toBeVisible({timeout: 10_000})
+  await expect(anonComment.locator('.sender-title')).toHaveText('Anon #64b6')
+  const anonAvatarImg = anonComment.locator('img.bubble-avatar.anon.anon-ringed')
+  await expect(anonAvatarImg).toHaveAttribute('src', /^\/anons\/anon-[1-9]\.webp$/)
+  const anonRingColor = await anonAvatarImg.evaluate(el => (el as HTMLElement).style.getPropertyValue('--tgb-anon-ring'))
+  expect(anonRingColor).toMatch(/^#[0-9a-f]{6}$/i)
+
+  const photoImg = chatZone.locator('#comment-301 .comment-media-photo img')
+  await expect(photoImg).toBeVisible({timeout: 10_000})
+
+  // Right-clicking photo comment opens ReactionSelector instead of native browser menu
+  await photoImg.click({button: 'right'})
+  await expect(page.locator('.tgb-reaction-selector, .ReactionSelector').first()).toBeVisible({timeout: 5_000})
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.tgb-reaction-selector, .ReactionSelector')).toHaveCount(0)
+
+  // 2. Reply to photo comment #301 using Web A formatting (right-click -> Bold) + SymbolMenu custom emoji
+  await chatZone.locator('#comment-301').hover()
+  await chatZone.locator('#comment-301 .bubble-act-btn[title="讨论"]').click()
+
+  const textbox = chatZone.locator('#add-comment [role="textbox"]')
+  await textbox.click()
+  await textbox.type('hello world')
+  // Select "hello" programmatically then right-click directly over the selection to open TextFormatter
+  const selPoint = await textbox.evaluate(el => {
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    const textNode = walk.nextNode() as Text | null
+    if (!textNode) return null
+    const r = document.createRange()
+    r.setStart(textNode, 0)
+    r.setEnd(textNode, 5)
+    const sel = window.getSelection()!
+    sel.removeAllRanges()
+    sel.addRange(r)
+    const rect = r.getBoundingClientRect()
+    return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2}
+  })
+  expect(selPoint).toBeTruthy()
+  await page.mouse.click(selPoint!.x, selPoint!.y, {button: 'right'})
+  const formatter = page.locator('.TextFormatter')
+  await expect(formatter).toBeVisible({timeout: 5_000})
+  await formatter.getByRole('button', {name: '加粗'}).click()
+
+  // Close formatter, move caret to end of text, and insert a custom emoji via SymbolMenu
+  await page.keyboard.press('Escape')
+  await textbox.focus()
+  await page.keyboard.press('End')
+  await chatZone.locator('.composer-smiley-btn').click()
+  const symbolMenu = page.locator('.SymbolMenu')
+  await expect(symbolMenu).toBeVisible({timeout: 5_000})
+  await symbolMenu.locator('.custom-grid .EmojiButton').first().click()
+  await page.locator('.tgb-symbol-backdrop').click({position: {x: 2, y: 2}})
+
+  // Char count updated reactively > 0; send formatted reply
+  await expect(chatZone.locator('#send-comment-btn .char-count')).not.toHaveText('0')
+  await chatZone.locator('#send-comment-btn .unstyled-button').click()
+
+  const replyBubble = chatZone.locator('#comment-302')
+  await expect(replyBubble).toBeVisible({timeout: 10_000})
+  await expect(chatZone.locator('.guest-bar .guest-anon-name')).toHaveText('Anon #v301')
+  const v3GuestAvatar = chatZone.locator('.guest-bar .guest-avatar.anon-ringed')
+  await expect(v3GuestAvatar.locator('img.guest-avatar-img')).toHaveAttribute('src', /^\/anons\/anon-[1-9]\.webp$/)
+  await expect.poll(async () => (await v3GuestAvatar.boundingBox())?.width, {timeout: 5_000}).toBe(40)
+  await expect.poll(async () => (await v3GuestAvatar.boundingBox())?.height, {timeout: 5_000}).toBe(40)
+  const guestHintBox = await chatZone.locator('.guest-bar .guest-hint').boundingBox()
+  const v3SigninBox = await chatZone.locator('.guest-bar .signin-btn').boundingBox()
+  expect(guestHintBox!.x + guestHintBox!.width).toBeLessThanOrEqual(v3SigninBox!.x)
+  // Clicking the guest avatar opens the auth modal
+  await v3GuestAvatar.click()
+  await expect(page.locator('.tgb-auth-backdrop')).toBeVisible({timeout: 5_000})
+  await page.locator('.tgb-auth-backdrop .close-btn').click()
+  await expect(page.locator('.tgb-auth-backdrop')).toHaveCount(0)
+  await expect(replyBubble.locator('.inline-reply-quote .quote-thumb')).toBeVisible()
+  await expect(replyBubble.locator('.comment-body b')).toContainText('hello')
+  expect(createdPayloads[0]?.body).toContain('**hello**')
+  expect(createdPayloads[0]?.body).toContain('<tg-emoji emoji-id="9876543210">')
+
+  // 3. Send 1-click sticker from SymbolMenu Stickers tab
+  await chatZone.locator('.composer-smiley-btn').click()
+  await expect(symbolMenu).toBeVisible()
+  await symbolMenu.locator('.SymbolMenu-footer .symbol-tab-button').nth(1).click()
+  await expect(symbolMenu.locator('.StickerButton')).toHaveCount(1)
+  await symbolMenu.locator('.StickerButton').first().click()
+  await expect(chatZone.locator('#comment-303 .comment-media-sticker')).toBeVisible({timeout: 10_000})
+
+  // 4. Upload photo via AttachmentModal and send with caption
+  await chatZone.locator('input[type="file"]').setInputFiles({
+    name: 'photo.png',
+    mimeType: 'image/png',
+    buffer: TINY_PNG,
+  })
+  const attachModal = page.locator('.tgb-attach-modal')
+  await expect(attachModal).toBeVisible({timeout: 5_000})
+  await attachModal.getByRole('button', {name: '发送图片'}).click()
+  await expect(chatZone.locator('#comment-304 .comment-media-photo img')).toBeVisible({timeout: 10_000})
+
+  // 5. Delete own anonymous comment (#comment-304) with 2-step confirm
+  await chatZone.locator('#comment-304').hover()
+  const delBtn = chatZone.locator('#comment-304 .bubble-act-btn.danger')
+  await expect(delBtn).toBeVisible()
+  await delBtn.click()
+  await expect(delBtn).toContainText('确认删除')
+  await delBtn.click()
+  await expect(chatZone.locator('#comment-304')).toHaveCount(0, {timeout: 5_000})
+  expect(deletedCommentIds).toEqual([304])
+  expect(pageErrors).toEqual([])
 })

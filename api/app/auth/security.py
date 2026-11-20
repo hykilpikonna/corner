@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import ipaddress
 import re
 import secrets
@@ -114,23 +115,58 @@ _CONFUSABLES_MAP: dict[str, str] = str.maketrans(
 )
 
 _COMMENT_ALLOWED_TAGS: set[str] = {
-    "p",
-    "br",
-    "strong",
-    "b",
-    "em",
-    "i",
     "u",
     "s",
     "del",
+    "b",
+    "strong",
+    "i",
+    "em",
     "code",
     "pre",
     "blockquote",
+    "span",
     "a",
+    "p",
+    "br",
+    "ul",
+    "ol",
+    "li",
 }
 _COMMENT_ALLOWED_ATTRS: dict[str, set[str]] = {
     "a": {"href", "title"},
+    "i": {"class", "data-custom-emoji-id"},
+    "span": {"class"},
+    "pre": {"language"},
+    "code": {"class"},
 }
+
+_FENCED_CODE_RE = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*\n(.*?)```", re.DOTALL)
+_INLINE_FENCE_RE = re.compile(r"```([^\n`]+?)```")
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+?)`")
+_TG_EMOJI_RE = re.compile(
+    r"<tg-emoji\s+emoji-id=[\"'](\d{1,32})[\"']\s*>(.*?)</tg-emoji>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CUSTOM_EMOJI_I_RE = re.compile(
+    r"<i\s+(?=[^>]*\bclass=[\"']custom-emoji[\"'])(?=[^>]*\bdata-custom-emoji-id=[\"'](\d{1,32})[\"'])[^>]*>(.*?)</i>",
+    re.IGNORECASE | re.DOTALL,
+)
+_U_OPEN_RE = re.compile(r"<u>", re.IGNORECASE)
+_U_CLOSE_RE = re.compile(r"</u>", re.IGNORECASE)
+_MD_LINK_RE = re.compile(r"\[([^\[\]\n]+)\]\((https?://[^\s\)\"<>]+)\)")
+_MD_BOLD_RE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_MD_ITALIC_RE = re.compile(r"(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)")
+_MD_STRIKE_RE = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~")
+_MD_SPOILER_RE = re.compile(r"\|\|(?=\S)(.+?)(?<=\S)\|\|")
+_INLINE_MD_SPECS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (_MD_BOLD_RE, "<b>", "</b>"),
+    (_MD_ITALIC_RE, "<i>", "</i>"),
+    (_MD_STRIKE_RE, "<s>", "</s>"),
+    (_MD_SPOILER_RE, '<span class="spoiler"><span>', "</span></span>"),
+)
+_CB_TOKEN_SPLIT_RE = re.compile(r"(\x00CB\d+\x00)")
+_QUOTE_LINE_RE = re.compile(r"^>[ ]?(.*)$")
 
 MAX_EMOJI_CODEPOINTS = 16
 _KEYCAP_EMOJI_RE = re.compile(r"[0-9#*]\ufe0f?\u20e3")
@@ -391,7 +427,23 @@ def verify_unsubscribe_token(token: str | None, secret: str) -> int | None:
 
 def make_anon_tag(post_id: int, actor_key: str, secret: str) -> str:
     digest = hmac_sha256_hex(secret, f"anon:{post_id}:{actor_key}")
-    return f"Anonymous #{digest[:4]}"
+    return f"Anon #{digest[:4]}"
+
+
+def format_anon_display_name(raw_tag: str | None) -> str:
+    """Normalize persisted or generated anonymous tags to the compact 'Anon' label."""
+    if not raw_tag:
+        return "Anon"
+    stripped = raw_tag.strip()
+    if not stripped or stripped == "Anonymous":
+        return "Anon"
+    if stripped.startswith("Anonymous #"):
+        return f"Anon #{stripped[len('Anonymous #'):]}"
+    return stripped
+
+
+def make_comment_owner_hash(actor_key: str, secret: str) -> str:
+    return sha256_hex(f"comment-owner:{secret}:{actor_key}")
 
 
 # ---------------------------------------------------------------------------
@@ -518,32 +570,213 @@ def validate_next_url(next_url: str | None, settings: Settings) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Comment HTML Sanitization (nh3)
+# Comment HTML Sanitization (nh3) & Telegram Markdown Parsing
 # ---------------------------------------------------------------------------
 
 
+def _comment_attribute_filter(tag: str, attr: str, value: str) -> str | None:
+    if tag == "i":
+        if attr == "data-custom-emoji-id":
+            return (
+                value
+                if (value.isascii() and value.isdigit() and 1 <= len(value) <= 32)
+                else None
+            )
+        if attr == "class":
+            return "custom-emoji" if "custom-emoji" in value.split() else None
+        return None
+    if tag == "span" and attr == "class":
+        return "spoiler" if "spoiler" in value.split() else None
+    if tag == "code" and attr == "class":
+        if value.startswith("language-"):
+            lang = value[9:]
+            if lang and lang.replace("-", "").replace("_", "").replace("+", "").isalnum():
+                return value
+        return None
+    if tag == "pre" and attr == "language":
+        if value and value.replace("-", "").replace("_", "").replace("+", "").isalnum():
+            return value
+        return None
+    return value
+
+
+def sanitize_comment_html(
+    raw_html: str,
+    *,
+    url_schemes: set[str] | None = None,
+    link_rel: str | None = "noopener noreferrer nofollow",
+) -> str:
+    return nh3.clean(
+        raw_html,
+        tags=_COMMENT_ALLOWED_TAGS,
+        attributes=_COMMENT_ALLOWED_ATTRS,
+        attribute_filter=_comment_attribute_filter,
+        url_schemes=url_schemes or {"http", "https"},
+        link_rel=link_rel,
+    )
+
+
+def _apply_inline_markdown_tags(escaped_text: str, *, _depth: int = 0) -> str:
+    """Recursively apply bold/italic/strike/spoiler inline markdown without corrupting HTML tags."""
+    if not escaped_text or _depth >= 16:
+        return escaped_text
+
+    out: list[str] = []
+    pos = 0
+    n = len(escaped_text)
+    while pos < n:
+        best_match: re.Match[str] | None = None
+        best_open = ""
+        best_close = ""
+        for pattern, open_tag, close_tag in _INLINE_MD_SPECS:
+            m = pattern.search(escaped_text, pos)
+            if m is None:
+                continue
+            if best_match is None or m.start() < best_match.start():
+                best_match = m
+                best_open = open_tag
+                best_close = close_tag
+                if m.start() == pos:
+                    break
+
+        if best_match is None:
+            out.append(escaped_text[pos:])
+            break
+
+        if best_match.start() > pos:
+            out.append(escaped_text[pos : best_match.start()])
+        inner_html = _apply_inline_markdown_tags(best_match.group(1), _depth=_depth + 1)
+        out.append(f"{best_open}{inner_html}{best_close}")
+        pos = best_match.end()
+
+    return "".join(out)
+
+
+def _format_inline_markdown(text: str) -> str:
+    links: list[str] = []
+
+    def _store_link(m: re.Match[str]) -> str:
+        raw_label = m.group(1)
+        raw_url = m.group(2)
+        esc_label = _apply_inline_markdown_tags(html.escape(raw_label, quote=False))
+        esc_url = html.escape(raw_url, quote=True)
+        token = f"\x00LK{len(links)}\x00"
+        links.append(f'<a href="{esc_url}">{esc_label}</a>')
+        return token
+
+    with_link_tokens = _MD_LINK_RE.sub(_store_link, text)
+    escaped = html.escape(with_link_tokens, quote=False)
+    out = _apply_inline_markdown_tags(escaped)
+    for idx, link_html in enumerate(links):
+        out = out.replace(f"\x00LK{idx}\x00", link_html)
+    return out
+
+
+def _flush_comment_block_lines(
+    buf: list[str], tag: str, out: list[str]
+) -> None:
+    if not buf:
+        return
+    formatted = "<br>".join(_format_inline_markdown(line) for line in buf)
+    out.append(f"<{tag}>{formatted}</{tag}>")
+    buf.clear()
+
+
 def render_and_sanitize_comment_html(body_text: str) -> str:
-    stripped = body_text.strip()
-    if not stripped:
+    normalized = body_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
         return ""
-    paragraphs = _BLANK_LINE_RE.split(stripped)
+
+    code_blocks: list[str] = []
+    inline_codes: list[str] = []
+    custom_emojis: list[str] = []
+
+    def _store_fenced(m: re.Match[str]) -> str:
+        lang = m.group(1).strip()
+        code = m.group(2)
+        if code.endswith("\n"):
+            code = code[:-1]
+        esc_code = html.escape(code, quote=False)
+        if lang:
+            block_html = (
+                f'<pre language="{html.escape(lang, quote=True)}"><code>{esc_code}</code></pre>'
+            )
+        else:
+            block_html = f"<pre><code>{esc_code}</code></pre>"
+        token = f"\x00CB{len(code_blocks)}\x00"
+        code_blocks.append(block_html)
+        return token
+
+    def _store_inline_fence(m: re.Match[str]) -> str:
+        esc_code = html.escape(m.group(1), quote=False)
+        token = f"\x00IC{len(inline_codes)}\x00"
+        inline_codes.append(f"<code>{esc_code}</code>")
+        return token
+
+    def _store_inline_code(m: re.Match[str]) -> str:
+        esc_code = html.escape(m.group(1), quote=False)
+        token = f"\x00IC{len(inline_codes)}\x00"
+        inline_codes.append(f"<code>{esc_code}</code>")
+        return token
+
+    def _store_custom_emoji(m: re.Match[str]) -> str:
+        cid = m.group(1)
+        inner = html.escape(m.group(2), quote=False)
+        token = f"\x00CE{len(custom_emojis)}\x00"
+        custom_emojis.append(
+            f'<i class="custom-emoji" data-custom-emoji-id="{cid}">{inner}</i>'
+        )
+        return token
+
+    protected = _FENCED_CODE_RE.sub(_store_fenced, normalized)
+    protected = _INLINE_FENCE_RE.sub(_store_inline_fence, protected)
+    protected = _INLINE_CODE_RE.sub(_store_inline_code, protected)
+    protected = _TG_EMOJI_RE.sub(_store_custom_emoji, protected)
+    protected = _CUSTOM_EMOJI_I_RE.sub(_store_custom_emoji, protected)
+    protected = _U_OPEN_RE.sub("\x00UO\x00", protected)
+    protected = _U_CLOSE_RE.sub("\x00UC\x00", protected)
+
+    paragraphs = _BLANK_LINE_RE.split(protected)
     raw_html_parts: list[str] = []
+
     for para in paragraphs:
         p = para.strip()
         if not p:
             continue
-        p_html = p.replace("\r\n", "\n").replace("\n", "<br>")
-        raw_html_parts.append(f"<p>{p_html}</p>")
+        for segment in _CB_TOKEN_SPLIT_RE.split(p):
+            seg = segment.strip()
+            if not seg:
+                continue
+            if seg.startswith("\x00CB") and seg.endswith("\x00"):
+                raw_html_parts.append(seg)
+                continue
+
+            lines = seg.split("\n")
+            quote_buf: list[str] = []
+            text_buf: list[str] = []
+
+            for line in lines:
+                qm = _QUOTE_LINE_RE.match(line)
+                if qm is not None:
+                    _flush_comment_block_lines(text_buf, "p", raw_html_parts)
+                    quote_buf.append(qm.group(1))
+                else:
+                    _flush_comment_block_lines(quote_buf, "blockquote", raw_html_parts)
+                    text_buf.append(line)
+
+            _flush_comment_block_lines(quote_buf, "blockquote", raw_html_parts)
+            _flush_comment_block_lines(text_buf, "p", raw_html_parts)
 
     raw_html = "".join(raw_html_parts)
-    cleaned = nh3.clean(
-        raw_html,
-        tags=_COMMENT_ALLOWED_TAGS,
-        attributes=_COMMENT_ALLOWED_ATTRS,
-        url_schemes={"http", "https"},
-        link_rel="noopener noreferrer nofollow",
-    )
-    return cleaned
+    raw_html = raw_html.replace("\x00UO\x00", "<u>").replace("\x00UC\x00", "</u>")
+    for idx, emoji_html in enumerate(custom_emojis):
+        raw_html = raw_html.replace(f"\x00CE{idx}\x00", emoji_html)
+    for idx, block_html in enumerate(code_blocks):
+        raw_html = raw_html.replace(f"\x00CB{idx}\x00", block_html)
+    for idx, inline_html in enumerate(inline_codes):
+        raw_html = raw_html.replace(f"\x00IC{idx}\x00", inline_html)
+
+    return sanitize_comment_html(raw_html)
 
 
 # ---------------------------------------------------------------------------

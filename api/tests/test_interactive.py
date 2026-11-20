@@ -19,7 +19,7 @@ from app.auth.security import (
     validate_reaction_emoji,
 )
 from app.config import Settings, get_settings
-from app.db.models import NotificationQueue, User, UserIdentity
+from app.db.models import Comment, NotificationQueue, User, UserIdentity
 from app.db.repo import ensure_channel, set_allowed_reactions, upsert_post
 from app.db.session import get_db_session
 from app.main import create_app
@@ -405,7 +405,7 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
                 "/api/life/posts/100/comments",
                 json={
                     "body": "<script>alert(1)</script><img src=x onerror=alert(1)>"
-                    "Hello <b>world</b> <a href=\"javascript:alert(1)\">click</a>"
+                    "Hello **world** [click](javascript:alert(1))"
                 },
             )
             assert r_c1.status_code == 201
@@ -415,8 +415,8 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             assert c1["is_mine"] is True
             assert c1["can_delete"] is True
             assert "<script" not in c1["body_html"].lower()
-            assert "onerror" not in c1["body_html"].lower()
-            assert "javascript:" not in c1["body_html"].lower()
+            assert "<img" not in c1["body_html"].lower()
+            assert "<a " not in c1["body_html"].lower()
             assert "<b>world</b>" in c1["body_html"]
 
             # SSE comment.created payload is raw CommentDTO directly (no wrapper!)
@@ -451,22 +451,24 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             assert r_anon1.status_code == 201
             c2 = r_anon1.json()
             assert c2["author"]["verified"] is False
-            assert c2["author"]["display_name"].startswith("Anonymous #")
-            assert len(c2["author"]["display_name"]) == len("Anonymous #") + 4
+            assert c2["author"]["display_name"].startswith("Anon #")
+            assert len(c2["author"]["display_name"]) == len("Anon #") + 4
             anon_tag_post_100 = c2["author"]["display_name"]
 
-            # Same anon visitor on same post gets deterministic same tripcode
+            # Same anon visitor on same post gets deterministic same tripcode and can delete own comment
             assert c2["is_mine"] is True
-            assert c2["can_delete"] is False
+            assert c2["can_delete"] is True
 
             # Reloading GET /posts/100/comments with the same `life_vid` cookie preserves is_mine=True
-            # for the anon visitor's own comment (and False for Alice's), with can_delete=False!
+            # and can_delete=True for the anon visitor's own comment (and False for Alice's)!
             r_anon_reload = await client.get("/api/life/posts/100/comments")
             assert r_anon_reload.status_code == 200
+            assert r_anon_reload.json()["viewer_anon_tag"] == anon_tag_post_100
             reloaded_by_id = {c["id"]: c for c in r_anon_reload.json()["comments"]}
             assert reloaded_by_id[c2["id"]]["is_mine"] is True
-            assert reloaded_by_id[c2["id"]]["can_delete"] is False
+            assert reloaded_by_id[c2["id"]]["can_delete"] is True
             assert reloaded_by_id[c1["id"]]["is_mine"] is False
+            assert reloaded_by_id[c1["id"]]["can_delete"] is False
 
             # Another anonymous visitor without `life_vid` cookie sees is_mine=False and no cookie minted
             saved_vid = client.cookies.get("life_vid")
@@ -474,6 +476,7 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             r_fresh_anon = await client.get("/api/life/posts/100/comments")
             assert r_fresh_anon.status_code == 200
             assert "life_vid" not in r_fresh_anon.headers.get("set-cookie", "")
+            assert r_fresh_anon.json()["viewer_anon_tag"] is None
             fresh_by_id = {c["id"]: c for c in r_fresh_anon.json()["comments"]}
             assert fresh_by_id[c2["id"]]["is_mine"] is False
             if saved_vid:
@@ -494,7 +497,7 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
                 json={"body": "Other thread", "altcha_payload": solve_altcha(ch3)},
             )
             assert r_anon_other.status_code == 201
-            assert r_anon_other.json()["author"]["display_name"].startswith("Anonymous #")
+            assert r_anon_other.json()["author"]["display_name"].startswith("Anon #")
 
             # Verify debounced notification was queued for Alice (reply c2 -> c1)
             notif_rows = (
@@ -507,6 +510,31 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             assert len(notif_rows) == 1
             assert notif_rows[0].comment_id == c2["id"]
             assert notif_rows[0].post_id == 100
+
+            # Pre-rename DB row with legacy "Anonymous #<hex>" renders as "Anon #<hex>"
+            # while still honoring legacy anon_tag ownership when actor_key_hash is None.
+            legacy_hex = anon_tag_post_100.removeprefix("Anon #")
+            legacy_comment = Comment(
+                post_id=100,
+                channel_id=1,
+                source="web",
+                anon_tag=f"Anonymous #{legacy_hex}",
+                body_text="Legacy anon comment",
+                body_html="<p>Legacy anon comment</p>",
+                created_at=datetime.now(UTC),
+            )
+            db_session.add(legacy_comment)
+            await db_session.commit()
+            await db_session.refresh(legacy_comment)
+
+            r_legacy = await client.get("/api/life/posts/100/comments")
+            assert r_legacy.status_code == 200
+            legacy_dto = next(
+                c for c in r_legacy.json()["comments"] if c["id"] == legacy_comment.id
+            )
+            assert legacy_dto["author"]["display_name"] == f"Anon #{legacy_hex}"
+            assert legacy_dto["is_mine"] is True
+            assert legacy_dto["can_delete"] is True
 
             # 3. Bob cannot delete Alice's comment (403)
             client.cookies.set(SESSION_COOKIE_NAME, bob_token)
@@ -552,7 +580,7 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             assert r_owner_anon.json()["is_mine"] is True
             assert r_owner_anon.json()["can_delete"] is True
 
-            # Regular logged-in user (Bob) posting as_anonymous=True gets is_mine=True, can_delete=False
+            # Regular logged-in user (Bob) posting as_anonymous=True gets is_mine=True, can_delete=True
             client.cookies.set(SESSION_COOKIE_NAME, bob_token)
             ch_bob = (await client.get("/api/life/captcha/challenge")).json()
             r_bob_anon = await client.post(
@@ -566,16 +594,17 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             assert r_bob_anon.status_code == 201
             bob_anon_id = r_bob_anon.json()["id"]
             assert r_bob_anon.json()["is_mine"] is True
-            assert r_bob_anon.json()["can_delete"] is False
+            assert r_bob_anon.json()["can_delete"] is True
 
-            # Reload as Bob -> Bob's own anon comment has is_mine=True, owner's has is_mine=False
+            # Reload as Bob -> Bob's own anon comment has is_mine=True/can_delete=True, owner's has False
             bob_reload = {
                 c["id"]: c
                 for c in (await client.get("/api/life/posts/100/comments")).json()["comments"]
             }
             assert bob_reload[bob_anon_id]["is_mine"] is True
-            assert bob_reload[bob_anon_id]["can_delete"] is False
+            assert bob_reload[bob_anon_id]["can_delete"] is True
             assert bob_reload[owner_anon_id]["is_mine"] is False
+            assert bob_reload[owner_anon_id]["can_delete"] is False
 
             # Reload as Owner -> Owner's anon comment has is_mine=True and can_delete=True
             client.cookies.set(SESSION_COOKIE_NAME, owner_token)
@@ -730,6 +759,45 @@ async def test_reaction_validation_cap_and_concurrent_races(
                 json={"emoji": "👍"},
             )
             assert r_readd_unlisted.status_code == 400
+
+            # 2c. Existing Telegram custom emoji reaction on a post can still be +1'd even if unlisted,
+            # while brand-new unlisted custom emojis are rejected (400).
+            from app.db.models import TgReaction
+
+            db_session.add(
+                TgReaction(
+                    post_id=300,
+                    reaction_key="c:2513354515068326746",
+                    emoji=None,
+                    custom_emoji_id="2513354515068326746",
+                    count=3,
+                )
+            )
+            await db_session.commit()
+
+            r_existing_tg_custom = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"custom_emoji_id": "2513354515068326746"},
+            )
+            assert r_existing_tg_custom.status_code == 200
+            tg_custom_map = {r["reaction_key"]: r for r in r_existing_tg_custom.json()["reactions"]}
+            assert tg_custom_map["c:2513354515068326746"]["tg_count"] == 3
+            assert tg_custom_map["c:2513354515068326746"]["web_count"] == 1
+            assert tg_custom_map["c:2513354515068326746"]["count"] == 4
+            assert tg_custom_map["c:2513354515068326746"]["reacted"] is True
+
+            # Toggle off again so the remaining cap test stays at 4 active web reactions
+            r_existing_tg_custom_off = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"custom_emoji_id": "2513354515068326746"},
+            )
+            assert r_existing_tg_custom_off.status_code == 200
+
+            r_new_unlisted_custom = await client.post(
+                "/api/life/posts/300/reactions/toggle",
+                json={"custom_emoji_id": "999888777"},
+            )
+            assert r_new_unlisted_custom.status_code == 400
 
             # Restore default list for remaining cap + race assertions
             from app.db.repo import default_allowed_reactions

@@ -6,6 +6,7 @@
         :telegramBotUsername="life.telegramBotUsername || undefined"
         :sharedId="sharedPostId"
         :messages="lifeMessages"
+        :anonAvatars="anonAvatars"
     >
         <div class="title">
             <div class="title-row">
@@ -38,14 +39,17 @@
 
 <script lang="ts" setup>
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
-import {TgBlog} from 'tg-blog'
+import {TgBlog, zhCnMessages} from 'tg-blog'
 import type {Post, TgBlogMessages} from 'tg-blog'
 import 'tg-blog/dist/style.css'
 import {life} from '@/scripts/constants'
 
 definePageMeta({title: '生活', navBookmark: 'life'})
 
+const anonAvatars = Array.from({length: 9}, (_, idx) => `/anons/anon-${idx + 1}.webp`)
+
 const lifeMessages: TgBlogMessages = {
+    ...zhCnMessages,
     searchPlaceholder: '搜索动态、标签或日期...',
     loadFailed: '加载动态失败：',
     forwardedFrom: '转发自：',

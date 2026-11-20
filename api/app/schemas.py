@@ -173,6 +173,15 @@ class PostInteractionDTO(BaseModel):
     reactions: list[MergedReactionDTO]
     poll: MergedPollDTO | None = None
     comment_count: int
+    views: str | None = None
+
+
+class PostViewRequest(BaseModel):
+    post_ids: list[int]
+
+
+class PostViewResponse(BaseModel):
+    views: dict[str, str]
 
 
 class InteractionsResponse(BaseModel):
@@ -217,6 +226,21 @@ class CommentAuthorDTO(BaseModel):
     verified: bool
 
 
+class CommentMediaDTO(BaseModel):
+    media_type: str
+    url: str
+    thumb: str | None = None
+    width: int | None = None
+    height: int | None = None
+    size: int | None = None
+    file_name: str | None = None
+    mime_type: str | None = None
+    emoji: str | None = None
+    is_animated: bool | None = None
+    is_video: bool | None = None
+    sticker_id: str | None = None
+
+
 class CommentDTO(BaseModel):
     id: int
     post_id: int
@@ -225,7 +249,7 @@ class CommentDTO(BaseModel):
     author: CommentAuthorDTO
     body_text: str
     body_html: str
-    media: Any | None = None
+    media: CommentMediaDTO | dict[str, Any] | None = None
     created_at: str
     edited_at: str | None = None
     deleted: bool = False
@@ -237,10 +261,12 @@ class CommentDTO(BaseModel):
 class CommentsListResponse(BaseModel):
     post_id: int
     comments: list[CommentDTO]
+    viewer_anon_tag: str | None = None
 
 
 class CreateCommentRequest(BaseModel):
-    body: str
+    body: str = ""
+    media: CommentMediaDTO | None = None
     parent_id: int | None = None
     as_anonymous: bool = False
     altcha_payload: str | None = None
@@ -250,3 +276,37 @@ class DeleteCommentResponse(BaseModel):
     ok: bool = True
     post_id: int
     comment_id: int
+
+
+class CustomEmojiDTO(BaseModel):
+    id: str
+    url: str
+    format: str
+
+
+class CustomEmojisResponse(BaseModel):
+    emojis: list[CustomEmojiDTO]
+
+
+class StickerItemDTO(BaseModel):
+    id: str
+    file: str
+    url: str
+    format: str
+    thumb: str | None = None
+    emoji: str | None = None
+    width: int | None = None
+    height: int | None = None
+    is_animated: bool = False
+    is_video: bool = False
+
+
+class StickerPackDTO(BaseModel):
+    id: str
+    name: str
+    title: str
+    stickers: list[StickerItemDTO]
+
+
+class StickersResponse(BaseModel):
+    packs: list[StickerPackDTO]

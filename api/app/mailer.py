@@ -13,7 +13,7 @@ import aiosmtplib
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.security import make_unsubscribe_token
+from app.auth.security import format_anon_display_name, make_unsubscribe_token
 from app.config import Settings
 from app.db.models import Comment, NotificationQueue, User
 from app.db.session import get_session_factory
@@ -181,7 +181,7 @@ class Mailer:
             return authors_by_user_id[comment.user_id].display_name
         if comment.source == "telegram" and comment.tg_author_name:
             return comment.tg_author_name
-        return comment.anon_tag or "Anonymous"
+        return format_anon_display_name(comment.anon_tag)
 
     async def _claim_batch(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import re
 from pathlib import Path, PurePosixPath
@@ -10,6 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from app.config import Settings, get_settings
+from app.media.stickers import list_custom_emojis, list_sticker_packs
+from app.schemas import CustomEmojisResponse, StickersResponse
 
 router = APIRouter(tags=["media"])
 
@@ -132,7 +135,10 @@ async def serve_media(
 ) -> FileResponse:
     _validate_raw_media_path(request)
     file_path = resolve_safe_media_path(settings.media_dir, path)
-    return _build_safe_media_response(file_path)
+    rel_path = file_path.relative_to(settings.media_dir.resolve()).as_posix()
+    return _build_safe_media_response(
+        file_path, allow_tgsticker=rel_path.startswith(("stickers/", "comments/"))
+    )
 
 
 @router.get("/exports/emoji/{path:path}")
@@ -163,3 +169,17 @@ async def serve_export_emoji(
         return _build_safe_media_response(file_path, allow_tgsticker=True)
 
     raise HTTPException(status_code=404, detail="Emoji file not found")
+
+
+@router.get("/emojis/custom", response_model=CustomEmojisResponse)
+async def get_custom_emojis(settings: SettingsDep) -> CustomEmojisResponse:
+    emojis = await asyncio.to_thread(list_custom_emojis, settings)
+    return CustomEmojisResponse(emojis=emojis)
+
+
+@router.get("/stickers", response_model=StickersResponse)
+async def get_stickers(settings: SettingsDep) -> StickersResponse:
+    packs = await asyncio.to_thread(
+        list_sticker_packs, settings.media_dir, settings.API_PREFIX
+    )
+    return StickersResponse(packs=packs)

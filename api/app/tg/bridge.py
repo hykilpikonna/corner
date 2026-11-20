@@ -4,11 +4,13 @@ import html
 import inspect
 import logging
 import re
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.auth.security import format_anon_display_name
 from app.config import Settings
 from app.db.models import Channel, Comment, Post, User
 from app.db.repo import get_post_by_id
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _MAX_TG_TEXT_LEN = 4096
+_MAX_TG_CAPTION_LEN = 1024
 
 
 def _get_disabled_parse_mode() -> Any:
@@ -27,6 +30,150 @@ def _get_disabled_parse_mode() -> Any:
         return ParseMode.DISABLED
     except Exception:
         return None
+
+
+def _get_html_parse_mode() -> Any:
+    try:
+        from pyrogram.enums import ParseMode
+
+        return ParseMode.HTML
+    except Exception:
+        return None
+
+
+class _TgHtmlConverter(HTMLParser):
+    """Convert sanitized comment HTML into Telegram Bot API HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.stack: list[str | None] = []
+        self.in_pre = False
+        self.pre_lang: str | None = None
+
+    def _emit_newline_sep(self, count: int = 1) -> None:
+        current = "".join(self.parts)
+        if not current:
+            return
+        trailing = 0
+        for ch in reversed(current):
+            if ch == "\n":
+                trailing += 1
+            else:
+                break
+        if trailing < count:
+            self.parts.append("\n" * (count - trailing))
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        t = tag.lower()
+        attr_map = {k.lower(): (v or "") for k, v in attrs}
+
+        if t == "br":
+            self.parts.append("\n")
+            return
+        if t in ("p", "blockquote", "pre"):
+            self._emit_newline_sep(2 if t == "p" else 1)
+
+        if t in ("b", "strong"):
+            self.parts.append("<b>")
+            self.stack.append("</b>")
+        elif t in ("i", "em"):
+            cls_tokens = attr_map.get("class", "").split()
+            cid = attr_map.get("data-custom-emoji-id", "").strip()
+            if (
+                "custom-emoji" in cls_tokens
+                and cid.isascii()
+                and cid.isdigit()
+                and 1 <= len(cid) <= 32
+            ):
+                self.parts.append(f'<tg-emoji emoji-id="{cid}">')
+                self.stack.append("</tg-emoji>")
+            else:
+                self.parts.append("<i>")
+                self.stack.append("</i>")
+        elif t == "u":
+            self.parts.append("<u>")
+            self.stack.append("</u>")
+        elif t in ("s", "del"):
+            self.parts.append("<s>")
+            self.stack.append("</s>")
+        elif t == "span":
+            if "spoiler" in attr_map.get("class", "").split():
+                self.parts.append("<tg-spoiler>")
+                self.stack.append("</tg-spoiler>")
+            else:
+                self.stack.append(None)
+        elif t == "blockquote":
+            self.parts.append("<blockquote>")
+            self.stack.append("</blockquote>")
+        elif t == "pre":
+            lang = attr_map.get("language", "").strip()
+            self.in_pre = True
+            self.pre_lang = lang or None
+            if lang:
+                self.parts.append(
+                    f'<pre><code class="language-{html.escape(lang, quote=True)}">'
+                )
+                self.stack.append("</code></pre>")
+            else:
+                self.parts.append("<pre>")
+                self.stack.append("</pre>")
+        elif t == "code":
+            if self.in_pre:
+                # Already emitted <code class="language-..."> on <pre> if language was set
+                if self.pre_lang:
+                    self.stack.append(None)
+                else:
+                    self.parts.append("<code>")
+                    self.stack.append("</code>")
+            else:
+                self.parts.append("<code>")
+                self.stack.append("</code>")
+        elif t == "a":
+            href = attr_map.get("href", "").strip()
+            scheme = urlparse(href).scheme.lower()
+            if scheme in ("http", "https"):
+                self.parts.append(f'<a href="{html.escape(href, quote=True)}">')
+                self.stack.append("</a>")
+            else:
+                self.stack.append(None)
+        elif t == "li":
+            self._emit_newline_sep(1)
+            self.parts.append("• ")
+            self.stack.append(None)
+        else:
+            self.stack.append(None)
+
+    def handle_endtag(self, tag: str) -> None:
+        t = tag.lower()
+        if t == "br":
+            return
+        if self.stack:
+            closing = self.stack.pop()
+            if closing:
+                self.parts.append(closing)
+        if t == "pre":
+            self.in_pre = False
+            self.pre_lang = None
+        if t in ("p", "blockquote", "pre", "li", "ul", "ol"):
+            self._emit_newline_sep(1 if t != "p" else 2)
+
+    def handle_data(self, data: str) -> None:
+        if data:
+            self.parts.append(html.escape(data, quote=False))
+
+
+def _comment_html_to_tg_html(body_html: str) -> str:
+    if not body_html or not body_html.strip():
+        return ""
+    parser = _TgHtmlConverter()
+    parser.feed(body_html)
+    parser.close()
+    while parser.stack:
+        closing = parser.stack.pop()
+        if closing:
+            parser.parts.append(closing)
+    return "".join(parser.parts).strip()
 
 
 def _strip_html(raw: str | None, max_len: int = 180) -> str:
@@ -73,29 +220,15 @@ class TelegramBridge:
     def set_client(self, client: Any | None) -> None:
         self.client = client
 
-    async def _send_plain_message(
+    async def _send_with_optional_kwargs(
         self,
-        *,
-        chat_id: int,
-        text: str,
-        reply_to_message_id: int | None = None,
+        fn: Any,
+        base_kwargs: dict[str, Any],
+        optional: dict[str, Any],
     ) -> Any:
-        """Send plain text with parse_mode=DISABLED and link previews disabled to prevent injection."""
-        kwargs: dict[str, Any] = {
-            "chat_id": chat_id,
-            "text": text,
-        }
-        if reply_to_message_id is not None:
-            kwargs["reply_to_message_id"] = reply_to_message_id
-
-        optional: dict[str, Any] = {"disable_web_page_preview": True}
-        disabled_pm = _get_disabled_parse_mode()
-        if disabled_pm is not None:
-            optional["parse_mode"] = disabled_pm
-
-        send_fn = self.client.send_message
+        kwargs = dict(base_kwargs)
         try:
-            sig = inspect.signature(send_fn)
+            sig = inspect.signature(fn)
             has_var_kw = any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             )
@@ -104,8 +237,75 @@ class TelegramBridge:
                     kwargs[k] = v
         except (TypeError, ValueError):
             kwargs.update(optional)
+        return await fn(**kwargs)
 
-        return await send_fn(**kwargs)
+    async def _send_plain_message(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None = None,
+    ) -> Any:
+        """Send plain text with parse_mode=DISABLED and link previews disabled to prevent injection."""
+        base_kwargs: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+        }
+        if reply_to_message_id is not None:
+            base_kwargs["reply_to_message_id"] = reply_to_message_id
+
+        optional: dict[str, Any] = {"disable_web_page_preview": True}
+        disabled_pm = _get_disabled_parse_mode()
+        if disabled_pm is not None:
+            optional["parse_mode"] = disabled_pm
+
+        return await self._send_with_optional_kwargs(
+            self.client.send_message, base_kwargs, optional
+        )
+
+    async def _send_html_or_plain_message(
+        self,
+        *,
+        chat_id: int,
+        html_text: str,
+        plain_text: str,
+        reply_to_message_id: int | None = None,
+    ) -> Any:
+        html_pm = _get_html_parse_mode()
+        if html_pm is not None and len(html_text) <= _MAX_TG_TEXT_LEN:
+            base_kwargs: dict[str, Any] = {
+                "chat_id": chat_id,
+                "text": html_text,
+            }
+            if reply_to_message_id is not None:
+                base_kwargs["reply_to_message_id"] = reply_to_message_id
+            try:
+                return await self._send_with_optional_kwargs(
+                    self.client.send_message,
+                    base_kwargs,
+                    {"parse_mode": html_pm, "disable_web_page_preview": True},
+                )
+            except Exception:
+                logger.warning(
+                    "Telegram HTML send failed for chat %s; falling back to plain text",
+                    chat_id,
+                    exc_info=True,
+                )
+
+        return await self._send_plain_message(
+            chat_id=chat_id,
+            text=_truncate_tg_text(plain_text, limit=_MAX_TG_TEXT_LEN),
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    def _resolve_local_media_file(self, rel_url: str | None) -> Any | None:
+        if not rel_url:
+            return None
+        media_root = self.settings.media_dir.resolve()
+        candidate = (media_root / str(rel_url).lstrip("/")).resolve()
+        if not candidate.is_relative_to(media_root) or not candidate.is_file():
+            return None
+        return candidate
 
     async def bridge_web_comment(self, comment_id: int) -> int | None:
         """Forward a web comment to the active TG discussion group or DM owner for archived posts.
@@ -133,7 +333,7 @@ class TelegramBridge:
             if channel is None:
                 return None
 
-            author_name = comment.anon_tag or "Anonymous"
+            author_name = format_anon_display_name(comment.anon_tag)
             if comment.user_id is not None:
                 user = await session.get(User, comment.user_id)
                 if user is not None and user.display_name:
@@ -154,15 +354,99 @@ class TelegramBridge:
                 and post.tg_discussion_root_id is not None
             ):
                 reply_to_id = parent_tg_msg_id or post.tg_discussion_root_id
-                formatted = _truncate_tg_text(
+                header_html = f"💬 {html.escape(author_name)} (via {html.escape(site_host)}):"
+                body_tg_html = _comment_html_to_tg_html(comment.body_html)
+                if not body_tg_html and comment.body_text:
+                    body_tg_html = html.escape(comment.body_text)
+
+                full_html = f"{header_html}\n{body_tg_html}" if body_tg_html else header_html
+                plain_fallback = (
                     f"💬 {author_name} (via {site_host}):\n{comment.body_text}"
+                    if comment.body_text
+                    else f"💬 {author_name} (via {site_host})"
                 )
+
+                media = comment.media if isinstance(comment.media, dict) else None
+                media_type = str(media.get("media_type") or "").lower() if media else ""
+                local_media = (
+                    self._resolve_local_media_file(media.get("url")) if media else None
+                )
+
                 try:
-                    sent = await self._send_plain_message(
-                        chat_id=channel.tg_discussion_chat_id,
-                        text=formatted,
-                        reply_to_message_id=reply_to_id,
-                    )
+                    sent: Any = None
+                    if (
+                        media_type == "sticker"
+                        and local_media is not None
+                        and hasattr(self.client, "send_sticker")
+                    ):
+                        sent = await self._send_with_optional_kwargs(
+                            self.client.send_sticker,
+                            {
+                                "chat_id": channel.tg_discussion_chat_id,
+                                "sticker": str(local_media),
+                            },
+                            {"reply_to_message_id": reply_to_id},
+                        )
+                        if body_tg_html:
+                            follow_reply_id = int(getattr(sent, "id", 0) or 0) or reply_to_id
+                            await self._send_html_or_plain_message(
+                                chat_id=channel.tg_discussion_chat_id,
+                                html_text=full_html,
+                                plain_text=plain_fallback,
+                                reply_to_message_id=follow_reply_id,
+                            )
+                    elif (
+                        media_type == "photo"
+                        and local_media is not None
+                        and hasattr(self.client, "send_photo")
+                    ):
+                        html_pm = _get_html_parse_mode()
+                        if html_pm is not None and len(full_html) <= _MAX_TG_CAPTION_LEN:
+                            try:
+                                sent = await self._send_with_optional_kwargs(
+                                    self.client.send_photo,
+                                    {
+                                        "chat_id": channel.tg_discussion_chat_id,
+                                        "photo": str(local_media),
+                                    },
+                                    {
+                                        "caption": full_html,
+                                        "parse_mode": html_pm,
+                                        "reply_to_message_id": reply_to_id,
+                                    },
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "Telegram HTML photo caption failed for comment %s; retrying plain",
+                                    comment_id,
+                                    exc_info=True,
+                                )
+                                sent = None
+                        if sent is None:
+                            disabled_pm = _get_disabled_parse_mode()
+                            opt: dict[str, Any] = {
+                                "caption": _truncate_tg_text(
+                                    plain_fallback, limit=_MAX_TG_CAPTION_LEN
+                                ),
+                                "reply_to_message_id": reply_to_id,
+                            }
+                            if disabled_pm is not None:
+                                opt["parse_mode"] = disabled_pm
+                            sent = await self._send_with_optional_kwargs(
+                                self.client.send_photo,
+                                {
+                                    "chat_id": channel.tg_discussion_chat_id,
+                                    "photo": str(local_media),
+                                },
+                                opt,
+                            )
+                    else:
+                        sent = await self._send_html_or_plain_message(
+                            chat_id=channel.tg_discussion_chat_id,
+                            html_text=full_html,
+                            plain_text=plain_fallback,
+                            reply_to_message_id=reply_to_id,
+                        )
                 except Exception:
                     logger.exception(
                         "Failed to bridge web comment %s to TG discussion chat %s",
@@ -200,6 +484,34 @@ class TelegramBridge:
                         comment_id,
                     )
             return None
+
+    async def delete_bridged_comment(self, comment_id: int) -> bool:
+        """Best-effort delete of a bridged or TG-sourced comment message in Telegram."""
+        if self.client is None or not hasattr(self.client, "delete_messages"):
+            return False
+
+        async with self.session_factory() as session:
+            comment = await session.get(Comment, comment_id)
+            if comment is None or comment.tg_msg_id is None or comment.channel_id is None:
+                return False
+            channel = await session.get(Channel, comment.channel_id)
+            if channel is None or channel.tg_discussion_chat_id is None:
+                return False
+            tg_chat_id = int(channel.tg_discussion_chat_id)
+            tg_msg_id = int(comment.tg_msg_id)
+
+        try:
+            await self.client.delete_messages(tg_chat_id, [tg_msg_id])
+            return True
+        except Exception:
+            logger.warning(
+                "Best-effort TG delete failed for comment_id=%s (chat=%s, msg=%s)",
+                comment_id,
+                tg_chat_id,
+                tg_msg_id,
+                exc_info=True,
+            )
+            return False
 
     async def prompt_original_photos(
         self,

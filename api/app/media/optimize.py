@@ -5,6 +5,7 @@ import io
 import os
 import re
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -399,3 +400,122 @@ def process_original_upgrade(
         rgb_sig=rgb_sig,
         gps_stripped=gps_stripped,
     )
+
+
+MAX_COMMENT_MEDIA_BYTES = 10 * 1024 * 1024  # 10 MiB
+MAX_ANIMATED_FRAMES = 300
+_COMMENT_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "MPO", "PNG", "WEBP", "GIF"})
+_COMMENT_FORMAT_META: dict[str, tuple[str, str]] = {
+    "JPEG": (".jpg", "image/jpeg"),
+    "MPO": (".jpg", "image/jpeg"),
+    "PNG": (".png", "image/png"),
+    "WEBP": (".webp", "image/webp"),
+    "GIF": (".gif", "image/gif"),
+}
+
+
+def process_comment_image_upload(
+    data: bytes,
+    media_root: Path,
+    *,
+    max_bytes: int = MAX_COMMENT_MEDIA_BYTES,
+    max_pixels: int = MAX_IMAGE_PIXELS,
+) -> dict[str, Any]:
+    """Validate and normalize a web comment image upload (JPEG/PNG/WEBP/GIF) + WebP thumb."""
+    if not data:
+        raise InvalidImageError("Uploaded file is empty")
+    if len(data) > max_bytes:
+        raise InvalidImageError(f"Uploaded file exceeds size limit ({max_bytes} bytes)")
+
+    head = data[:512]
+    if _SVG_PREFIX_RE.search(head) or b"<svg" in head.lower():
+        raise InvalidImageError("SVG files are not allowed")
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            fmt = (img.format or "").upper()
+            if fmt not in _COMMENT_IMAGE_FORMATS:
+                raise InvalidImageError(f"Unsupported image format: {fmt or 'unknown'}")
+            w, h = img.size
+            if w <= 0 or h <= 0:
+                raise InvalidImageError("Image has invalid dimensions")
+            if w * h > max_pixels:
+                raise InvalidImageError("Image dimensions exceed maximum allowed pixel count")
+            img.verify()
+
+        uid = uuid.uuid4().hex[:16]
+        ext, mime_type = _COMMENT_FORMAT_META[fmt]
+        rel_url = f"comments/web_{uid}{ext}"
+        rel_thumb = f"comments/web_{uid}_thumb.webp"
+        abs_url = media_root / rel_url
+        abs_thumb = media_root / rel_thumb
+
+        with Image.open(io.BytesIO(data)) as img:
+            is_animated = bool(getattr(img, "is_animated", False))
+            if fmt == "GIF" or (fmt == "WEBP" and is_animated):
+                n_frames = int(getattr(img, "n_frames", 1) or 1)
+                w, h = img.size
+                if n_frames > MAX_ANIMATED_FRAMES or (w * h * n_frames) > max_pixels:
+                    raise InvalidImageError(
+                        "Animated image exceeds maximum frame or pixel limit"
+                    )
+            img.load()
+
+            if fmt == "GIF" or (fmt == "WEBP" and is_animated):
+                final_w, final_h = img.size
+                save_kwargs: dict[str, Any] = {"save_all": True} if is_animated else {}
+                _atomic_save_pil_image(img, abs_url, fmt, **save_kwargs)
+
+                img.seek(0)
+                first_frame = img.convert("RGBA" if "A" in img.mode or img.mode == "P" else "RGB")
+                first_frame.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                _atomic_save_pil_image(first_frame, abs_thumb, "WEBP", quality=80, method=6)
+            else:
+                oriented = ImageOps.exif_transpose(img)
+                icc_profile = oriented.info.get("icc_profile")
+                if fmt in ("JPEG", "MPO") and oriented.mode not in ("RGB", "L"):
+                    oriented = oriented.convert("RGB")
+                elif fmt == "WEBP" and oriented.mode not in ("RGB", "RGBA"):
+                    oriented = oriented.convert(
+                        "RGBA" if ("A" in oriented.mode or oriented.mode == "P") else "RGB"
+                    )
+                oriented.thumbnail((2048, 2048), Image.Resampling.LANCZOS)
+                final_w, final_h = oriented.size
+
+                save_kwargs = {}
+                if icc_profile:
+                    save_kwargs["icc_profile"] = icc_profile
+                if fmt in ("JPEG", "MPO"):
+                    _atomic_save_pil_image(
+                        oriented, abs_url, "JPEG", quality=90, **save_kwargs
+                    )
+                elif fmt == "PNG":
+                    _atomic_save_pil_image(oriented, abs_url, "PNG", **save_kwargs)
+                else:
+                    _atomic_save_pil_image(
+                        oriented, abs_url, "WEBP", quality=90, method=6, **save_kwargs
+                    )
+
+                thumb_im = oriented.copy()
+                if thumb_im.mode not in ("RGB", "RGBA"):
+                    thumb_im = thumb_im.convert(
+                        "RGBA" if ("A" in thumb_im.mode or thumb_im.mode == "P") else "RGB"
+                    )
+                thumb_im.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                _atomic_save_pil_image(thumb_im, abs_thumb, "WEBP", quality=80, method=6)
+
+        return {
+            "media_type": "photo",
+            "url": rel_url,
+            "thumb": rel_thumb,
+            "width": final_w,
+            "height": final_h,
+            "size": abs_url.stat().st_size,
+            "mime_type": mime_type,
+        }
+    except InvalidImageError:
+        raise
+    except Image.DecompressionBombError as exc:
+        raise InvalidImageError("Image exceeds decompression bomb pixel limit") from exc
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        raise InvalidImageError(f"Invalid or corrupted image file: {exc}") from exc

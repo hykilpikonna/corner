@@ -80,6 +80,9 @@ class Post(Base):
     text_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     author: Mapped[str | None] = mapped_column(Text, nullable=True)
     views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    web_views: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=sa_text("0")
+    )
     forwards: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     reply_to_post_id: Mapped[int | None] = mapped_column(
@@ -145,6 +148,19 @@ class PostImage(Base):
     rgb_sig: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
     post: Mapped[Post] = relationship(back_populates="images")
+
+
+class PostView(Base):
+    __tablename__ = "post_views"
+    __table_args__ = (Index("ix_post_views_post_viewed_at", "post_id", "viewed_at"),)
+
+    post_id: Mapped[int] = mapped_column(
+        ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True
+    )
+    actor_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    viewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class TgReaction(Base):
@@ -322,6 +338,7 @@ class Comment(Base):
         UniqueConstraint("channel_id", "tg_msg_id", name="uq_comments_channel_tg_msg"),
         Index("ix_comments_post_created", "post_id", "created_at"),
         Index("ix_comments_parent_id", "parent_id"),
+        Index("ix_comments_post_actor_hash", "post_id", "actor_key_hash"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -339,6 +356,7 @@ class Comment(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     anon_tag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actor_key_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     tg_author_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     tg_author_name: Mapped[str | None] = mapped_column(Text, nullable=True)

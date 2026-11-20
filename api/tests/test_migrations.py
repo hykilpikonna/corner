@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "channels",
     "posts",
     "post_images",
+    "post_views",
     "tg_reactions",
     "web_reactions",
     "polls",

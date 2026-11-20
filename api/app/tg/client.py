@@ -13,13 +13,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import nh3
 from PIL import Image, ImageOps
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from app.auth.security import sanitize_comment_html
 from app.config import Settings
 from app.db.models import (
     Channel,
@@ -46,6 +46,7 @@ from app.db.repo import (
     get_post_by_id,
     make_reaction_key,
     resolve_media_url,
+    serialize_comment_media,
     serialize_post,
     upsert_post,
 )
@@ -57,6 +58,19 @@ from app.media.optimize import (
     InvalidImageError,
     sanitize_original_filename,
     validate_image_file,
+)
+from app.media.stickers import (
+    STICKER_EXTENSIONS,
+    list_sticker_packs,
+    load_dismissed_default_packs,
+    parse_sticker_set_ref,
+    parse_sticker_set_url,
+    remove_sticker_by_id,
+    remove_sticker_pack,
+    sanitize_sticker_filename,
+    sanitize_sticker_pack_name,
+    save_sticker_pack_manifest,
+    upsert_sticker_manifest_entry,
 )
 from app.routes.upload import (
     SSEPublishFn,
@@ -72,29 +86,8 @@ from app.tg.reactions_cmd import (
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_COMMENT_TAGS = {
-    "a",
-    "b",
-    "blockquote",
-    "br",
-    "code",
-    "del",
-    "em",
-    "i",
-    "p",
-    "pre",
-    "s",
-    "span",
-    "strong",
-    "u",
-}
-ALLOWED_COMMENT_ATTRS = {
-    "a": {"href", "title"},
-    "pre": {"language"},
-    "span": {"class"},
-    "blockquote": {"class"},
-}
 _SAFE_URL_SCHEMES = frozenset({"http", "https", "mailto", "tg"})
+_MAX_COMMENT_TG_MEDIA_BYTES = 20 * 1024 * 1024
 _IMAGE_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -110,11 +103,10 @@ _IMAGE_EXTENSIONS = {
 
 
 def sanitize_tg_comment_html(raw_html: str) -> str:
-    return nh3.clean(
+    return sanitize_comment_html(
         raw_html,
-        tags=ALLOWED_COMMENT_TAGS,
-        attributes=ALLOWED_COMMENT_ATTRS,
         url_schemes={"http", "https", "mailto"},
+        link_rel="noopener noreferrer nofollow",
     )
 
 
@@ -229,7 +221,16 @@ def _render_entities_to_html(text: str, entities: Sequence[Any] | None = None) -
         elif etype in ("BLOCKQUOTE", "EXPANDABLE_BLOCKQUOTE"):
             parts.append(f"<blockquote>{esc}</blockquote>")
         elif etype == "SPOILER":
-            parts.append(f'<span class="spoiler">{esc}</span>')
+            parts.append(f'<span class="spoiler"><span>{esc}</span></span>')
+        elif etype == "CUSTOM_EMOJI":
+            cid = getattr(en, "custom_emoji_id", None)
+            cid_str = str(cid).strip() if cid is not None else ""
+            if cid_str.isascii() and cid_str.isdigit() and 1 <= len(cid_str) <= 32:
+                parts.append(
+                    f'<i class="custom-emoji" data-custom-emoji-id="{cid_str}">{esc}</i>'
+                )
+            else:
+                parts.append(esc)
         else:
             parts.append(esc)
         cursor = end
@@ -570,6 +571,7 @@ class TelegramService:
         )
         self._started = False
         self._handlers_registered = False
+        self._default_stickers_task: asyncio.Task[Any] | None = None
 
         self.album_buffer = AlbumBuffer(
             on_flush=self._on_album_flushed,
@@ -636,6 +638,7 @@ class TelegramService:
                 )
                 commands = [
                     BotCommand("reactions", "View or edit allowed web reaction emojis"),
+                    BotCommand("stickers", "List, import, or remove custom web stickers"),
                     BotCommand("help", "Show bot command help"),
                 ]
                 if scope is not None:
@@ -653,7 +656,27 @@ class TelegramService:
                 )
                 await session.commit()
 
+        if (
+            self.client is not None
+            and hasattr(self.client, "get_sticker_set")
+            and self.settings.DEFAULT_STICKER_PACKS
+        ):
+            self._default_stickers_task = asyncio.create_task(
+                self.ensure_default_sticker_packs(),
+                name="ensure_default_sticker_packs",
+            )
+
     async def stop(self) -> None:
+        if self._default_stickers_task is not None:
+            if not self._default_stickers_task.done():
+                self._default_stickers_task.cancel()
+            try:
+                await self._default_stickers_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Default sticker sync task exited with error", exc_info=True)
+            self._default_stickers_task = None
         await self.album_buffer.close()
         await self.dm_buffer.close()
         if self._started and self.client is not None:
@@ -672,6 +695,7 @@ class TelegramService:
         from pyrogram import filters
         from pyrogram.handlers import (
             CallbackQueryHandler,
+            DeletedMessagesHandler,
             EditedMessageHandler,
             MessageHandler,
             MessageReactionCountHandler,
@@ -696,7 +720,13 @@ class TelegramService:
             async def _on_discussion_msg(_client: Any, msg: Any) -> None:
                 await self.handle_discussion_message(msg)
 
+            async def _on_discussion_deleted(_client: Any, messages: Any) -> None:
+                await self.handle_discussion_deleted(messages)
+
             self.client.add_handler(MessageHandler(_on_discussion_msg, disc_filter))
+            self.client.add_handler(
+                DeletedMessagesHandler(_on_discussion_deleted, disc_filter)
+            )
 
         if self.settings.OWNER_TG_ID is not None:
             owner_dm_filter = filters.private & filters.user(self.settings.OWNER_TG_ID)
@@ -1358,6 +1388,265 @@ class TelegramService:
             tmp_path.unlink(missing_ok=True)
         return None
 
+    async def _download_tg_media_to_rel(
+        self,
+        media_obj: Any,
+        msg: Any,
+        rel_path: str,
+    ) -> Path | None:
+        if self.client is None or not hasattr(self.client, "download_media"):
+            return None
+        abs_path = self.settings.media_dir / rel_path
+        if abs_path.is_file():
+            return abs_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = abs_path.parent / f".{abs_path.stem}.{uuid.uuid4().hex[:8]}.tmp{abs_path.suffix}"
+        target_arg = getattr(media_obj, "file_id", None) or msg
+        try:
+            dl = await self.client.download_media(target_arg, file_name=str(tmp_path))
+            if dl:
+                dl_path = Path(str(dl))
+                if dl_path.is_file():
+                    os.replace(dl_path, abs_path)
+                    return abs_path
+        except Exception:
+            logger.debug("Failed to download TG media to %s", rel_path, exc_info=True)
+            tmp_path.unlink(missing_ok=True)
+        return None
+
+    async def _download_discussion_media(
+        self,
+        msg: Any,
+        channel_id: int,
+        msg_id: int,
+    ) -> dict[str, Any] | None:
+        photo = getattr(msg, "photo", None)
+        if photo is not None:
+            rel_url = f"comments/tg_{channel_id}_{msg_id}.jpg"
+            abs_path = await self._download_tg_media_to_rel(photo, msg, rel_url)
+            if abs_path is None:
+                return None
+            width = getattr(photo, "width", None)
+            height = getattr(photo, "height", None)
+            rel_thumb: str | None = None
+            size = abs_path.stat().st_size
+            try:
+                width, height = await asyncio.to_thread(_read_image_size_sync, abs_path)
+                thumb_path = await asyncio.to_thread(
+                    _create_webp_thumb_sync, abs_path, (480, 480)
+                )
+                if thumb_path is not None:
+                    rel_thumb = f"comments/{thumb_path.name}"
+            except Exception:
+                logger.debug("Failed reading photo size/thumb for %s", abs_path, exc_info=True)
+            payload: dict[str, Any] = {
+                "media_type": "photo",
+                "url": rel_url,
+                "size": int(size),
+            }
+            if rel_thumb:
+                payload["thumb"] = rel_thumb
+            if width is not None:
+                payload["width"] = int(width)
+            if height is not None:
+                payload["height"] = int(height)
+            return payload
+
+        sticker = getattr(msg, "sticker", None)
+        if sticker is not None:
+            is_animated = bool(getattr(sticker, "is_animated", False))
+            is_video = bool(getattr(sticker, "is_video", False))
+            ext = ".tgs" if is_animated else (".webm" if is_video else ".webp")
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            abs_path = await self._download_tg_media_to_rel(sticker, msg, rel_url)
+            if abs_path is None:
+                return None
+            width = getattr(sticker, "width", None)
+            height = getattr(sticker, "height", None)
+            size = abs_path.stat().st_size
+            if not is_animated and not is_video and (width is None or height is None):
+                try:
+                    width, height = await asyncio.to_thread(_read_image_size_sync, abs_path)
+                except Exception:
+                    pass
+            emoji = getattr(sticker, "emoji", None) or None
+            sticker_uid = (
+                getattr(sticker, "file_unique_id", None)
+                or getattr(sticker, "file_id", None)
+            )
+            payload = {
+                "media_type": "sticker",
+                "url": rel_url,
+                "size": int(size),
+                "is_animated": is_animated,
+                "is_video": is_video,
+            }
+            if emoji:
+                payload["emoji"] = str(emoji)
+            if width is not None:
+                payload["width"] = int(width)
+            if height is not None:
+                payload["height"] = int(height)
+            if sticker_uid:
+                payload["sticker_id"] = str(sticker_uid)
+            return payload
+
+        animation = getattr(msg, "animation", None)
+        if animation is not None:
+            mime = str(getattr(animation, "mime_type", "") or "").lower()
+            ext = ".gif" if "gif" in mime else ".mp4"
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            file_size = getattr(animation, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(animation, msg, rel_url)
+            if abs_path is None:
+                return None
+            payload = {
+                "media_type": "animation",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+            }
+            if getattr(animation, "width", None) is not None:
+                payload["width"] = int(animation.width)
+            if getattr(animation, "height", None) is not None:
+                payload["height"] = int(animation.height)
+            if getattr(animation, "file_name", None):
+                payload["file_name"] = sanitize_original_filename(
+                    str(animation.file_name), fallback_ext=ext
+                )
+            if mime:
+                payload["mime_type"] = mime
+            return payload
+
+        video = getattr(msg, "video", None)
+        if video is not None:
+            mime = str(getattr(video, "mime_type", "") or "").lower()
+            ext = ".webm" if "webm" in mime else ".mp4"
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            file_size = getattr(video, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(video, msg, rel_url)
+            if abs_path is None:
+                return None
+            payload = {
+                "media_type": "video",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+            }
+            if getattr(video, "width", None) is not None:
+                payload["width"] = int(video.width)
+            if getattr(video, "height", None) is not None:
+                payload["height"] = int(video.height)
+            if getattr(video, "file_name", None):
+                payload["file_name"] = sanitize_original_filename(
+                    str(video.file_name), fallback_ext=ext
+                )
+            if mime:
+                payload["mime_type"] = mime
+            return payload
+
+        video_note = getattr(msg, "video_note", None)
+        if video_note is not None:
+            rel_url = f"comments/tg_{channel_id}_{msg_id}.mp4"
+            file_size = getattr(video_note, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(video_note, msg, rel_url)
+            if abs_path is None:
+                return None
+            length = getattr(video_note, "length", None)
+            payload = {
+                "media_type": "video",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+                "mime_type": "video/mp4",
+            }
+            if length is not None:
+                payload["width"] = int(length)
+                payload["height"] = int(length)
+            return payload
+
+        voice = getattr(msg, "voice", None)
+        if voice is not None:
+            mime = str(getattr(voice, "mime_type", "") or "audio/ogg").lower()
+            ext = ".ogg" if "ogg" in mime else ".mp3"
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            file_size = getattr(voice, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(voice, msg, rel_url)
+            if abs_path is None:
+                return None
+            return {
+                "media_type": "voice",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+                "mime_type": mime,
+            }
+
+        audio = getattr(msg, "audio", None)
+        if audio is not None:
+            mime = str(getattr(audio, "mime_type", "") or "audio/mpeg").lower()
+            raw_fname = getattr(audio, "file_name", None)
+            safe_fname = (
+                sanitize_original_filename(str(raw_fname), fallback_ext="")
+                if raw_fname
+                else None
+            )
+            ext = Path(safe_fname).suffix.lower() if safe_fname else ""
+            if not ext:
+                ext = ".ogg" if "ogg" in mime else (".m4a" if "mp4" in mime else ".mp3")
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            file_size = getattr(audio, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(audio, msg, rel_url)
+            if abs_path is None:
+                return None
+            payload = {
+                "media_type": "audio",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+                "mime_type": mime,
+            }
+            if safe_fname:
+                payload["file_name"] = safe_fname
+            return payload
+
+        doc = getattr(msg, "document", None)
+        if doc is not None:
+            mime = str(getattr(doc, "mime_type", "") or "").lower()
+            raw_fname = getattr(doc, "file_name", None)
+            safe_fname = (
+                sanitize_original_filename(str(raw_fname), fallback_ext="")
+                if raw_fname
+                else None
+            )
+            ext = Path(safe_fname).suffix.lower() if safe_fname else ""
+            if not ext:
+                ext = ".bin"
+            rel_url = f"comments/tg_{channel_id}_{msg_id}{ext}"
+            file_size = getattr(doc, "file_size", None)
+            if file_size is not None and int(file_size) > _MAX_COMMENT_TG_MEDIA_BYTES:
+                return None
+            abs_path = await self._download_tg_media_to_rel(doc, msg, rel_url)
+            if abs_path is None:
+                return None
+            payload = {
+                "media_type": "document",
+                "url": rel_url,
+                "size": abs_path.stat().st_size,
+            }
+            if safe_fname:
+                payload["file_name"] = safe_fname
+            if mime:
+                payload["mime_type"] = mime
+            return payload
+
+        return None
+
     async def handle_discussion_message(self, msg: Any) -> Comment | None:
         """Process auto-forwarded channel roots and regular discussion comments with strict loop protection."""
         if getattr(msg, "service", None):
@@ -1461,7 +1750,7 @@ class TelegramService:
             if post_id is None:
                 return None
 
-            # 5. Extract & sanitize comment body (render entities BEFORE stripping so UTF-16 offsets stay exact!)
+            # 5. Extract & sanitize comment body + media (always check media even if caption exists!)
             raw_text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
             raw_text_str = str(raw_text)
             entities = (
@@ -1470,25 +1759,27 @@ class TelegramService:
                 else getattr(msg, "caption_entities", None)
             )
             body_text = raw_text_str.strip()
-            media_payload: dict[str, Any] | None = None
+            media_payload = await self._download_discussion_media(msg, channel.id, msg_id)
 
-            if not body_text:
-                if getattr(msg, "sticker", None) is not None:
-                    emoji = getattr(msg.sticker, "emoji", "") or ""
-                    body_text = f"[Sticker {emoji}]".strip()
-                    media_payload = {"media_type": "sticker", "sticker_emoji": emoji}
-                elif getattr(msg, "photo", None) is not None:
-                    body_text = "[Photo]"
-                    media_payload = {"media_type": "photo"}
-                elif getattr(msg, "document", None) is not None:
-                    body_text = "[File]"
-                    media_payload = {"media_type": "document"}
-                else:
-                    return None
-                body_html = sanitize_tg_comment_html(f"<em>{html.escape(body_text)}</em>")
-            else:
+            if not body_text and media_payload is None:
+                return None
+
+            if body_text:
                 raw_html = _render_entities_to_html(raw_text_str, entities)
                 body_html = sanitize_tg_comment_html(raw_html).strip()
+                if self.client is not None and entities:
+                    custom_ids = [
+                        str(getattr(en, "custom_emoji_id", "")).strip()
+                        for en in entities
+                        if str(getattr(en, "type", "")).upper().split(".")[-1] == "CUSTOM_EMOJI"
+                        and getattr(en, "custom_emoji_id", None) is not None
+                    ]
+                    if custom_ids:
+                        await cache_custom_emoji_stickers(
+                            self.client, self.settings.exports_dir, custom_ids
+                        )
+            else:
+                body_html = ""
 
             # 6. Author metadata + optional linked web user + lazy avatar cache
             tg_author_id: int | None = None
@@ -1641,7 +1932,7 @@ class TelegramService:
             },
             "body_text": comment.body_text,
             "body_html": comment.body_html,
-            "media": comment.media,
+            "media": serialize_comment_media(comment.media, self.settings.API_PREFIX),
             "created_at": format_iso_utc(comment.created_at),
             "edited_at": format_iso_utc(comment.edited_at) if comment.edited_at else None,
             "deleted": comment.deleted_at is not None,
@@ -1649,6 +1940,65 @@ class TelegramService:
             "can_delete": False,
             "reactions": [],
         }
+
+    async def handle_discussion_deleted(self, messages: Any) -> list[int]:
+        """Soft-delete comments whose TG discussion messages were deleted and emit SSE."""
+        msg_list = list(messages) if isinstance(messages, (list, tuple, set)) else [messages]
+        ids_by_chat: dict[int | None, set[int]] = {}
+        for m in msg_list:
+            mid = getattr(m, "id", None)
+            if mid is None:
+                continue
+            cid = getattr(getattr(m, "chat", None), "id", None)
+            chat_key = int(cid) if cid is not None else self.settings.TG_DISCUSSION_CHAT_ID
+            ids_by_chat.setdefault(chat_key, set()).add(int(mid))
+
+        if not ids_by_chat:
+            return []
+
+        deleted_events: list[tuple[int, int]] = []
+        now = datetime.now(UTC)
+        async with self.session_factory() as session:
+            for disc_chat_id, msg_ids in ids_by_chat.items():
+                if not msg_ids:
+                    continue
+                if disc_chat_id is not None:
+                    channel = (
+                        await session.execute(
+                            select(Channel).where(Channel.tg_discussion_chat_id == disc_chat_id)
+                        )
+                    ).scalar_one_or_none()
+                else:
+                    channel = await get_active_channel(session)
+                if channel is None:
+                    continue
+
+                rows = list(
+                    (
+                        await session.execute(
+                            select(Comment).where(
+                                Comment.channel_id == channel.id,
+                                Comment.tg_msg_id.in_(msg_ids),
+                                Comment.deleted_at.is_(None),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for c in rows:
+                    c.deleted_at = now
+                    deleted_events.append((c.post_id, c.id))
+
+            if deleted_events:
+                await session.commit()
+
+        for post_id, comment_id in deleted_events:
+            await self._emit_sse(
+                "comment.deleted",
+                {"post_id": post_id, "comment_id": comment_id},
+            )
+        return [cid for _, cid in deleted_events]
 
     # ------------------------------------------------------------------
     # Live Reaction Count & Poll Updates
@@ -1847,6 +2197,16 @@ class TelegramService:
 
         raw_text = str(getattr(msg, "text", None) or "").strip()
         if raw_text.startswith("/"):
+            cmd_head = raw_text.split(None, 1)[0].split("@", 1)[0].lower()
+            if cmd_head in ("/stickers", "/sticker"):
+                reply_text = await self._execute_owner_sticker_command(raw_text)
+                if self.client is not None:
+                    await self.client.send_message(
+                        chat_id=self.settings.OWNER_TG_ID,
+                        text=reply_text,
+                    )
+                return
+
             reply_text, updated_allowed = await execute_owner_reaction_command(
                 raw_text,
                 getattr(msg, "entities", None),
@@ -1866,6 +2226,19 @@ class TelegramService:
                     "reactions.allowed_updated",
                     {"allowed_reactions": updated_allowed},
                 )
+            if self.client is not None:
+                await self.client.send_message(
+                    chat_id=self.settings.OWNER_TG_ID,
+                    text=reply_text,
+                )
+            return
+
+        if getattr(msg, "sticker", None) is not None:
+            await self._handle_owner_dm_sticker(msg)
+            return
+
+        if raw_text and parse_sticker_set_url(raw_text) is not None:
+            _, reply_text = await self.import_sticker_set(raw_text)
             if self.client is not None:
                 await self.client.send_message(
                     chat_id=self.settings.OWNER_TG_ID,
@@ -1896,6 +2269,360 @@ class TelegramService:
             return
 
         self.dm_buffer.add(f"dm:{from_user.id}:{target_post_id}", (target_post_id, msg))
+
+    @staticmethod
+    def _resolve_sticker_spec(sticker: Any, fallback_stem: str) -> tuple[str, str, bool, bool]:
+        """Derive sanitized `(file_name, ext, is_animated, is_video)` for a Telegram Sticker."""
+        is_animated = bool(getattr(sticker, "is_animated", False))
+        is_video = bool(getattr(sticker, "is_video", False))
+        ext = ".tgs" if is_animated else (".webm" if is_video else ".webp")
+        raw_uid = (
+            getattr(sticker, "file_unique_id", None)
+            or getattr(sticker, "file_id", None)
+            or fallback_stem
+        )
+        stem = sanitize_sticker_filename(str(raw_uid))
+        max_stem = 80 - len(ext)
+        if stem.lower().endswith(ext):
+            stem = stem[: -len(ext)] or fallback_stem[:max_stem]
+        file_name = f"{stem[:max_stem]}{ext}"
+        return file_name, ext, is_animated, is_video
+
+    async def _download_sticker_file(
+        self,
+        target_arg: Any,
+        *,
+        dest: Path,
+        ext: str,
+        log_context: str,
+    ) -> bool:
+        """Download a sticker via `client.download_media` into `dest` atomically."""
+        if self.client is None or not hasattr(self.client, "download_media"):
+            return False
+        tmp_path = dest.parent / f".{dest.name}.{uuid.uuid4().hex[:8]}.tmp{ext}"
+        try:
+            dl = await self.client.download_media(target_arg, file_name=str(tmp_path))
+            dl_path = Path(str(dl)) if dl else None
+            if dl_path is not None and dl_path.is_file() and dl_path.stat().st_size > 0:
+                os.replace(dl_path, dest)
+                return True
+            if dl_path is not None:
+                dl_path.unlink(missing_ok=True)
+            tmp_path.unlink(missing_ok=True)
+            return False
+        except Exception:
+            logger.warning("Failed downloading sticker (%s)", log_context, exc_info=True)
+            tmp_path.unlink(missing_ok=True)
+            return False
+
+    async def _handle_owner_dm_sticker(self, msg: Any) -> None:
+        sticker = getattr(msg, "sticker", None)
+        if sticker is None or self.settings.OWNER_TG_ID is None:
+            return
+        pack_name = sanitize_sticker_pack_name(getattr(sticker, "set_name", None))
+        fallback_stem = f"msg_{getattr(msg, 'id', uuid.uuid4().hex[:8])}"
+        file_name, ext, is_animated, is_video = self._resolve_sticker_spec(sticker, fallback_stem)
+
+        pack_dir = self.settings.media_dir / "stickers" / pack_name
+        pack_dir.mkdir(parents=True, exist_ok=True)
+        dest = pack_dir / file_name
+
+        target_arg = getattr(sticker, "file_id", None) or msg
+        downloaded = await self._download_sticker_file(
+            target_arg, dest=dest, ext=ext, log_context=f"owner dm {pack_name}/{file_name}"
+        )
+
+        if not downloaded:
+            if self.client is not None:
+                await self.client.send_message(
+                    chat_id=self.settings.OWNER_TG_ID,
+                    text="❌ Failed to download sticker file.",
+                )
+            return
+
+        emoji = getattr(sticker, "emoji", None) or None
+        width = getattr(sticker, "width", None)
+        height = getattr(sticker, "height", None)
+        await asyncio.to_thread(
+            upsert_sticker_manifest_entry,
+            pack_dir,
+            pack_name=pack_name,
+            file_name=file_name,
+            emoji=emoji,
+            width=int(width) if width is not None else 512,
+            height=int(height) if height is not None else 512,
+            is_animated=is_animated,
+            is_video=is_video,
+        )
+        (self.settings.media_dir / "stickers" / ".no_auto_seed").unlink(missing_ok=True)
+
+        if self.client is not None:
+            emoji_label = f"{emoji} " if emoji else ""
+            await self.client.send_message(
+                chat_id=self.settings.OWNER_TG_ID,
+                text=f"✅ Saved sticker {emoji_label}to `{pack_name}/{file_name}`",
+            )
+
+    async def import_sticker_set(self, ref_or_name: str) -> tuple[bool, str]:
+        """Fetch and download a Telegram sticker set into `media_dir/stickers/<pack>/`."""
+        if self.client is None or not hasattr(self.client, "get_sticker_set"):
+            return False, "❌ Telegram client is not connected."
+
+        short_name = parse_sticker_set_ref(ref_or_name)
+        if short_name is None:
+            return (
+                False,
+                "❌ Invalid sticker pack reference. Send a `t.me/addstickers/<name>` link or pack short name.",
+            )
+
+        try:
+            sticker_set = await self.client.get_sticker_set(short_name)
+        except Exception as exc:
+            logger.warning("Failed to fetch sticker set %s: %s", short_name, exc)
+            return False, f"❌ Could not fetch sticker pack `{short_name}`."
+
+        if sticker_set is None:
+            return False, f"❌ Could not fetch sticker pack `{short_name}`."
+
+        raw_stickers = list(getattr(sticker_set, "stickers", None) or [])
+        if not raw_stickers:
+            return False, f"❌ Sticker pack `{short_name}` has no stickers."
+
+        resolved_name = getattr(sticker_set, "name", None) or short_name
+        pack_name = sanitize_sticker_pack_name(resolved_name)
+        raw_title = getattr(sticker_set, "title", None)
+        pack_title = str(raw_title).strip() if raw_title is not None and str(raw_title).strip() else pack_name
+        pack_dir = self.settings.media_dir / "stickers" / pack_name
+        pack_dir.mkdir(parents=True, exist_ok=True)
+
+        sem = asyncio.Semaphore(4)
+        seen_names: set[str] = set()
+        tasks: list[asyncio.Task[tuple[str, dict[str, Any] | None]]] = []
+
+        async def _process_one(
+            sticker: Any,
+            file_name: str,
+            ext: str,
+            is_animated: bool,
+            is_video: bool,
+        ) -> tuple[str, dict[str, Any] | None]:
+            dest = pack_dir / file_name
+            width = getattr(sticker, "width", None)
+            height = getattr(sticker, "height", None)
+            entry = {
+                "file": file_name,
+                "emoji": getattr(sticker, "emoji", None) or None,
+                "width": int(width) if width is not None else 512,
+                "height": int(height) if height is not None else 512,
+                "is_animated": is_animated,
+                "is_video": is_video,
+            }
+            if dest.is_file() and dest.stat().st_size > 0:
+                return "skipped", entry
+            if dest.is_file() and dest.stat().st_size == 0:
+                dest.unlink(missing_ok=True)
+
+            target_arg = getattr(sticker, "file_id", None) or sticker
+            async with sem:
+                ok = await self._download_sticker_file(
+                    target_arg, dest=dest, ext=ext, log_context=f"{pack_name}/{file_name}"
+                )
+            if ok:
+                return "saved", entry
+            return "failed", None
+
+        for idx, sticker in enumerate(raw_stickers):
+            file_name, ext, is_animated, is_video = self._resolve_sticker_spec(
+                sticker, f"{pack_name}_{idx}"
+            )
+            if file_name in seen_names:
+                suffix = f"_{idx}"
+                stem = Path(file_name).stem[: 80 - len(ext) - len(suffix)]
+                file_name = f"{stem}{suffix}{ext}"
+            seen_names.add(file_name)
+            tasks.append(
+                asyncio.create_task(_process_one(sticker, file_name, ext, is_animated, is_video))
+            )
+
+        results = await asyncio.gather(*tasks)
+        saved = 0
+        skipped = 0
+        failed = 0
+        manifest_entries: list[dict[str, Any]] = []
+        for status, entry in results:
+            if status == "saved":
+                saved += 1
+                if entry is not None:
+                    manifest_entries.append(entry)
+            elif status == "skipped":
+                skipped += 1
+                if entry is not None:
+                    manifest_entries.append(entry)
+            else:
+                failed += 1
+
+        if manifest_entries:
+            await asyncio.to_thread(
+                save_sticker_pack_manifest,
+                pack_dir,
+                pack_name=pack_name,
+                pack_title=pack_title,
+                entries=manifest_entries,
+            )
+            (self.settings.media_dir / "stickers" / ".no_auto_seed").unlink(missing_ok=True)
+        else:
+            try:
+                pack_dir.rmdir()
+            except OSError:
+                pass
+            return (
+                False,
+                f"❌ Failed to download any stickers from **{pack_title}** (`{pack_name}`).",
+            )
+
+        summary_parts = [f"{saved} saved"]
+        if skipped:
+            summary_parts.append(f"{skipped} skipped")
+        if failed:
+            summary_parts.append(f"{failed} failed")
+        return (
+            True,
+            f"✅ Imported sticker pack **{pack_title}** (`{pack_name}`): {', '.join(summary_parts)}.",
+        )
+
+    @staticmethod
+    def _has_installed_pack_stickers(stickers_root: Path, pack_name: str) -> bool:
+        if not stickers_root.is_dir():
+            return False
+        target_lower = pack_name.lower()
+        for entry in stickers_root.iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            if entry.name.lower() != target_lower:
+                continue
+            if any(
+                f.is_file() and f.suffix.lower() in STICKER_EXTENSIONS and f.stat().st_size > 0
+                for f in entry.iterdir()
+            ):
+                return True
+        return False
+
+    async def ensure_default_sticker_packs(self) -> dict[str, int]:
+        """Sync missing `DEFAULT_STICKER_PACKS` unless dismissed by the owner."""
+        counts = {"imported": 0, "skipped": 0, "failed": 0}
+        if self.client is None or not hasattr(self.client, "get_sticker_set"):
+            return counts
+
+        stickers_root = self.settings.media_dir / "stickers"
+        dismissed = await asyncio.to_thread(load_dismissed_default_packs, stickers_root)
+
+        for raw_ref in self.settings.DEFAULT_STICKER_PACKS:
+            short_name = parse_sticker_set_ref(raw_ref)
+            if short_name is None:
+                logger.warning("Skipping invalid default sticker pack ref: %r", raw_ref)
+                counts["failed"] += 1
+                continue
+
+            pack_name = sanitize_sticker_pack_name(short_name)
+            if short_name.lower() in dismissed or pack_name.lower() in dismissed:
+                counts["skipped"] += 1
+                continue
+
+            already_installed = await asyncio.to_thread(
+                self._has_installed_pack_stickers, stickers_root, pack_name
+            )
+            if already_installed:
+                counts["skipped"] += 1
+                continue
+
+            try:
+                ok, summary = await self.import_sticker_set(short_name)
+                if ok:
+                    counts["imported"] += 1
+                else:
+                    counts["failed"] += 1
+                    logger.warning("Default sticker pack %s not imported: %s", short_name, summary)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                counts["failed"] += 1
+                logger.warning("Failed syncing default sticker pack %s", short_name, exc_info=True)
+
+        return counts
+
+    async def _execute_owner_sticker_command(self, raw_text: str) -> str:
+        parts = raw_text.strip().split(None, 2)
+        subcmd = parts[1].lower() if len(parts) > 1 else "list"
+        arg = parts[2].strip() if len(parts) > 2 else ""
+
+        if subcmd in ("list", "ls"):
+            packs = await asyncio.to_thread(
+                list_sticker_packs,
+                self.settings.media_dir,
+                self.settings.API_PREFIX,
+                auto_seed=False,
+            )
+            if not packs:
+                return (
+                    "No custom stickers installed yet. "
+                    "Send a sticker, paste a `t.me/addstickers/...` link, or run `/stickers add <link|name>`!"
+                )
+            lines = ["Installed sticker packs:"]
+            for pack in packs:
+                title = pack.get("title") or pack["name"]
+                title_part = f"{title} " if title and title != pack["name"] else ""
+                lines.append(f"\n{title_part}[{pack['name']}] ({len(pack['stickers'])})")
+                for st in pack["stickers"]:
+                    em = f"{st['emoji']} " if st.get("emoji") else ""
+                    lines.append(f"- {em}{st['id']}")
+            lines.append(
+                "\nAdd pack: /stickers add <link|name>"
+                "\nSync defaults: /stickers defaults"
+                "\nRemove sticker: /stickers rm <pack/file>"
+                "\nRemove pack: /stickers rmpack <pack>"
+            )
+            return "\n".join(lines)[:4000]
+
+        if subcmd in ("defaults", "sync"):
+            if self.client is None or not hasattr(self.client, "get_sticker_set"):
+                return "❌ Telegram client is not connected."
+            counts = await self.ensure_default_sticker_packs()
+            return (
+                f"🔄 Synced default sticker packs: "
+                f"{counts['imported']} imported, {counts['skipped']} skipped, {counts['failed']} failed."
+            )
+
+        if subcmd in ("add", "pull", "import"):
+            if not arg:
+                return "Usage: /stickers add <t.me/addstickers/... | short_name>"
+            _, msg_text = await self.import_sticker_set(arg)
+            return msg_text
+
+        if subcmd in ("rm", "remove", "del", "delete"):
+            if not arg:
+                return "Usage: /stickers rm <pack/file>"
+            _, msg_text = await asyncio.to_thread(
+                remove_sticker_by_id, self.settings.media_dir, arg
+            )
+            return msg_text
+
+        if subcmd in ("rmpack", "rmdir", "delpack"):
+            if not arg:
+                return "Usage: /stickers rmpack <pack>"
+            _, msg_text = await asyncio.to_thread(
+                remove_sticker_pack, self.settings.media_dir, arg
+            )
+            return msg_text
+
+        return (
+            "Sticker commands:\n"
+            "/stickers list\n"
+            "/stickers add <t.me/addstickers/... | name>\n"
+            "/stickers defaults\n"
+            "/stickers rm <pack/file>\n"
+            "/stickers rmpack <pack>\n\n"
+            "Or send/forward any Telegram sticker or paste a t.me/addstickers/... link to install it."
+        )
 
     async def _resolve_dm_target_post_id(self, msg: Any) -> int | None:
         reply_id = getattr(msg, "reply_to_message_id", None)
