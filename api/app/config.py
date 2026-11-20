@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str | None = None
     GOOGLE_CLIENT_ID: str | None = None
     GOOGLE_CLIENT_SECRET: str | None = None
+    OIDC_ISSUER_URL: str | None = None
+    OIDC_CLIENT_ID: str | None = None
+    OIDC_CLIENT_SECRET: str | None = None
+    OIDC_PROVIDER_NAME: str = "SSO"
+    OIDC_SCOPES: str = "openid email profile"
     TG_LOGIN_BOT_USERNAME: str | None = None
 
     # SMTP Notifications
@@ -129,7 +134,21 @@ class Settings(BaseSettings):
         cleaned = "/" + v.strip("/")
         return "" if cleaned == "/" else cleaned
 
-    @field_validator("FEED_IMAGE_URL", mode="before")
+    @field_validator("OIDC_PROVIDER_NAME", mode="before")
+    @classmethod
+    def _normalize_oidc_provider_name(cls, v: Any) -> str:
+        if v is None:
+            return "SSO"
+        cleaned = str(v).strip()
+        return cleaned or "SSO"
+
+    @field_validator(
+        "FEED_IMAGE_URL",
+        "OIDC_ISSUER_URL",
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        mode="before",
+    )
     @classmethod
     def _empty_str_to_none(cls, v: Any) -> Any:
         if isinstance(v, str) and not v.strip():

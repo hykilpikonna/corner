@@ -16,10 +16,13 @@ from app.auth.captcha import (
 from app.auth.magic import consume_magic_link, create_magic_link
 from app.auth.oauth import (
     OAUTH_STATE_MAX_AGE_SECONDS,
+    SUPPORTED_OAUTH_PROVIDERS,
     OAuthProfile,
     build_oauth_authorize_url,
+    compute_pkce_challenge_s256,
     create_oauth_state_cookie,
     exchange_oauth_code,
+    generate_pkce_verifier,
     upsert_oauth_user,
     verify_oauth_state_cookie,
     verify_telegram_login_payload,
@@ -82,6 +85,12 @@ def get_enabled_providers(settings: Settings) -> list[str]:
         providers.append("github")
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
         providers.append("google")
+    if (
+        settings.OIDC_ISSUER_URL
+        and settings.OIDC_CLIENT_ID
+        and settings.OIDC_CLIENT_SECRET
+    ):
+        providers.append("oidc")
     if settings.TG_BOT_TOKEN and settings.TG_LOGIN_BOT_USERNAME:
         providers.append("telegram")
     providers.append("email")
@@ -130,6 +139,11 @@ async def get_auth_me(
         allow_anon_comments=settings.ALLOW_ANON_COMMENTS,
         telegram_bot_username=(
             settings.TG_LOGIN_BOT_USERNAME if "telegram" in providers else None
+        ),
+        oidc_provider_name=(
+            (settings.OIDC_PROVIDER_NAME.strip() or "SSO")
+            if "oidc" in providers
+            else None
         ),
     )
 
@@ -180,16 +194,28 @@ async def oauth_login(
     settings: SettingsDep,
     next: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
-    if provider not in ("github", "google"):
+    if provider not in SUPPORTED_OAUTH_PROVIDERS:
         raise HTTPException(status_code=404, detail="Unsupported OAuth provider")
 
     safe_next = validate_next_url(next, settings)
+    code_verifier = generate_pkce_verifier() if provider == "oidc" else None
+    code_challenge = (
+        compute_pkce_challenge_s256(code_verifier)
+        if code_verifier is not None
+        else None
+    )
     state, state_cookie = create_oauth_state_cookie(
         provider=provider,
         next_url=safe_next,
         secret_key=settings.SECRET_KEY,
+        code_verifier=code_verifier,
     )
-    authorize_url = build_oauth_authorize_url(provider, state=state, settings=settings)
+    authorize_url = await build_oauth_authorize_url(
+        provider,
+        state=state,
+        settings=settings,
+        code_challenge=code_challenge,
+    )
 
     redirect = RedirectResponse(url=authorize_url, status_code=302)
     set_cookie_secure(
@@ -211,21 +237,30 @@ async def oauth_callback(
     code: Annotated[str | None, Query()] = None,
     state: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
-    if provider not in ("github", "google"):
+    if provider not in SUPPORTED_OAUTH_PROVIDERS:
         raise HTTPException(status_code=404, detail="Unsupported OAuth provider")
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
 
     state_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
-    raw_next = verify_oauth_state_cookie(
+    state_data = verify_oauth_state_cookie(
         state_cookie,
         expected_provider=provider,
         received_state=state,
         secret_key=settings.SECRET_KEY,
     )
-    safe_next = validate_next_url(raw_next, settings)
+    safe_next = validate_next_url(state_data.next_url, settings)
 
-    profile = await exchange_oauth_code(provider, code=code, settings=settings)
+    if state_data.code_verifier is not None:
+        profile = await exchange_oauth_code(
+            provider,
+            code=code,
+            settings=settings,
+            code_verifier=state_data.code_verifier,
+        )
+    else:
+        profile = await exchange_oauth_code(provider, code=code, settings=settings)
+
     user = await upsert_oauth_user(db, profile, settings=settings, is_owner=False)
     session_token = await create_session(db, user.id)
     await db.commit()

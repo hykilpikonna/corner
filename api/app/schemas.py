@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ImageDTO(BaseModel):
@@ -118,6 +118,7 @@ class AuthMeResponse(BaseModel):
     providers: list[str]
     allow_anon_comments: bool
     telegram_bot_username: str | None = None
+    oidc_provider_name: str | None = None
 
 
 class UpdateMeRequest(BaseModel):
@@ -181,6 +182,12 @@ class ReactionToggleResponse(BaseModel):
     reactions: list[MergedReactionDTO]
 
 
+class CommentReactionToggleResponse(BaseModel):
+    post_id: int
+    comment_id: int
+    reactions: list[MergedReactionDTO]
+
+
 class PollVoteRequest(BaseModel):
     option_indices: list[int]
 
@@ -213,6 +220,7 @@ class CommentDTO(BaseModel):
     deleted: bool = False
     is_mine: bool = False
     can_delete: bool = False
+    reactions: list[MergedReactionDTO] = Field(default_factory=list)
 
 
 class CommentsListResponse(BaseModel):

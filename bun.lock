@@ -1195,6 +1195,8 @@
 
     "lodash-unified": ["lodash-unified@1.0.3", "", { "peerDependencies": { "@types/lodash-es": "*", "lodash": "*", "lodash-es": "*" } }, "sha512-WK9qSozxXOD7ZJQlpSqOT+om2ZfcT4yO+03FuzAHD0wF6S0l0090LRPDx3vhTTLZ8cFKpBn+IOcVXK6qOcIlfQ=="],
 
+    "lottie-web": ["lottie-web@5.13.0", "", {}, "sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ=="],
+
     "lru-cache": ["lru-cache@11.5.2", "", {}, "sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g=="],
 
     "lxgw-wenkai-webfont": ["lxgw-wenkai-webfont@1.7.0", "", {}, "sha512-kVJmT4xMAyOLhG6q0w63wJkVU7RP8UMQRGoAWj9tnpzL7sWFFYiEHBdUQyW9myqBQFa5SQfWfa2VLYF4IJBL5g=="],
@@ -1593,7 +1595,7 @@
 
     "text-decoder": ["text-decoder@1.2.7", "", { "dependencies": { "b4a": "^1.6.4" } }, "sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ=="],
 
-    "tg-blog": ["tg-blog@file:../tg-blog", { "dependencies": { "@vue-leaflet/vue-leaflet": "0.10.1", "element-plus": "^2.14.7", "highlight.js": "^11.12.0", "js-file-download": "^0.4.12", "katex": "^0.19.1", "keycode-js": "^3.1.0", "leaflet": "^1.9.4", "linkify-urls": "^5.2.0", "marked": "^18.1.3", "moment": "^2.31.0", "plyr": "^3.8.5", "sanitize-html": "^2.18.1", "url-join": "^5.2.0", "vue": "^3.5.44" }, "devDependencies": { "@eslint/js": "^10.0.1", "@iconify/json": "^2.2.553", "@types/katex": "^0.16.8", "@types/marked": "^6.0.0", "@types/node": "^25.9.9", "@vitejs/plugin-vue": "^6.0.10", "eslint": "10.2.1", "eslint-plugin-vue": "10.9.0", "rimraf": "^6.1.4", "sass": "^1.107.1", "typescript": "^6.0.3", "typescript-eslint": "^8.72.1", "unplugin-auto-import": "^21.1.0", "unplugin-icons": "^23.0.1", "unplugin-vue-components": "^32.1.0", "vite": "^8.3.5", "vue-eslint-parser": "10.4.0", "vue-tsc": "^3.3.14" }, "hasInstallScript": true }],
+    "tg-blog": ["tg-blog@file:../tg-blog", { "dependencies": { "@vue-leaflet/vue-leaflet": "0.10.1", "element-plus": "^2.14.7", "emoji-regex": "^11.0.0", "highlight.js": "^11.12.0", "js-file-download": "^0.4.12", "katex": "^0.19.1", "keycode-js": "^3.1.0", "leaflet": "^1.9.4", "linkify-urls": "^5.2.0", "lottie-web": "^5.13.0", "marked": "^18.1.3", "moment": "^2.31.0", "plyr": "^3.8.5", "sanitize-html": "^2.18.1", "url-join": "^5.2.0", "vue": "^3.5.44" }, "devDependencies": { "@eslint/js": "^10.0.1", "@iconify/json": "^2.2.553", "@types/katex": "^0.16.8", "@types/marked": "^6.0.0", "@types/node": "^25.9.9", "@vitejs/plugin-vue": "^6.0.10", "eslint": "10.2.1", "eslint-plugin-vue": "10.9.0", "rimraf": "^6.1.4", "sass": "^1.107.1", "typescript": "^6.0.3", "typescript-eslint": "^8.72.1", "unplugin-auto-import": "^21.1.0", "unplugin-icons": "^23.0.1", "unplugin-vue-components": "^32.1.0", "vite": "^8.3.5", "vue-eslint-parser": "10.4.0", "vue-tsc": "^3.3.14" }, "hasInstallScript": true }],
 
     "tiny-invariant": ["tiny-invariant@1.3.3", "", {}, "sha512-+FbBPE1o9QAYvviau/qC5SE3caw21q3xkvWKBtja5vgqOWIHHJ3ioaq1VPfn/Szqctz2bU/oYeKd9/z5BL+PVg=="],
 
@@ -2086,6 +2088,8 @@
     "terser/commander": ["commander@2.20.3", "", {}, "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ=="],
 
     "tg-blog/@types/node": ["@types/node@25.9.9", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-b4e2xxj/yMeT2hNlD6x7zNFiQK2Dlmkb9CQ6v3/1G2RezKN4YS2lcEv8lzGm1mhs4f2lM4yNAMI/zUDBZBBt7w=="],
+
+    "tg-blog/emoji-regex": ["emoji-regex@11.0.0", "", {}, "sha512-2qQtc7syPcJmvF7BfKxBvwgvhzDth6u3q23+Jr4JOQUcmMGgmj7B4/ePZ2DmOhrrb77S8kMNHq2kilVASysfqA=="],
 
     "tg-blog/marked": ["marked@18.1.3", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-9ChMH8EVVgjgID49nsL6IWxWk5c6GtAsq/xw7U1ggkjkU5AGuv68oLTVlFRtvcUYZtpbNyjyvGo3YDu0fGapiw=="],
 

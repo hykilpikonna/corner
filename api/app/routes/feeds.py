@@ -25,8 +25,12 @@ async def get_rss_feed(
     await ensure_export_file(session, settings, target)
     return FileResponse(
         path=target,
-        media_type="application/rss+xml; charset=utf-8",
-        headers={"Cache-Control": "public, max-age=60"},
+        media_type="application/xml; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=60",
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -39,8 +43,12 @@ async def get_atom_feed(
     await ensure_export_file(session, settings, target)
     return FileResponse(
         path=target,
-        media_type="application/atom+xml; charset=utf-8",
-        headers={"Cache-Control": "public, max-age=60"},
+        media_type="application/xml; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=60",
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -54,5 +62,9 @@ async def get_json_feed(
     return FileResponse(
         path=target,
         media_type="application/feed+json; charset=utf-8",
-        headers={"Cache-Control": "public, max-age=60"},
+        headers={
+            "Cache-Control": "public, max-age=60",
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

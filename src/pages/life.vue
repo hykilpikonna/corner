@@ -13,13 +13,15 @@
                 <a
                     v-if="life.rssUrl"
                     class="rss-link"
+                    :class="{copied: rssCopied}"
                     :href="life.rssUrl"
                     target="_blank"
                     rel="noopener noreferrer"
-                    title="RSS 订阅"
+                    :title="rssCopied ? '已复制 RSS 链接' : '点击复制 RSS 订阅链接'"
+                    @click.prevent="onRssClick"
                 >
-                    <i class="fas fa-rss" aria-hidden="true"></i>
-                    <span>RSS</span>
+                    <i :class="rssCopied ? 'fas fa-check' : 'fas fa-rss'" aria-hidden="true"></i>
+                    <span>{{ rssCopied ? '已复制 RSS 链接' : 'RSS' }}</span>
                 </a>
             </div>
             <div class="subtitle">
@@ -68,26 +70,26 @@ const lifeMessages: TgBlogMessages = {
     pollExplanation: '解析',
     pollMultipleChoice: '可多选',
 
-    // Interactive: Comments
-    reply: '留言',
+    // Interactive: Chat / Comments
+    reply: '讨论',
     commentsCount: (count) => `${count}`,
-    noComments: '还没有留言，来说点什么吧～',
-    loadingComments: '正在加载留言...',
-    commentsLoadFailed: '留言加载失败',
+    noComments: '还没有消息，来聊两句吧～',
+    loadingComments: '加载消息中...',
+    commentsLoadFailed: '消息加载失败',
     retry: '重试',
-    writeCommentPlaceholder: '写下你的想法...',
+    writeCommentPlaceholder: '发消息...',
     replyingTo: (name) => `回复 @${name}`,
     cancelReply: '取消',
     postComment: '发送',
     postingComment: '发送中...',
     deleteComment: '删除',
     confirmDelete: '确认删除？',
-    commentDeleted: '该留言已删除',
-    signInToComment: '登录后即可参与留言互动',
+    commentDeleted: '该消息已撤回',
+    signInToComment: '登录后即可参与讨论',
     signIn: '登录',
     signOut: '退出登录',
-    commentAsAnonymous: '匿名留言',
-    commentingAnonymously: '当前为匿名留言',
+    commentAsAnonymous: '匿名发送',
+    commentingAnonymously: '匿名模式',
     notifyRepliesOn: '回复邮件提醒：开',
     notifyRepliesOff: '回复邮件提醒：关',
 
@@ -105,10 +107,11 @@ const lifeMessages: TgBlogMessages = {
 
     // Interactive: Auth Modal
     authTitle: '登录',
-    authSubtitle: '登录后可获得已验证标识，并接收留言回复的邮件提醒。',
+    authSubtitle: '登录后可获得已验证标识，并接收讨论回复的邮件提醒。',
     authContinueWithGithub: '使用 GitHub 登录',
     authContinueWithGoogle: '使用 Google 登录',
     authContinueWithTelegram: '使用 Telegram 登录',
+    authContinueWithOidc: (providerName) => `使用 ${providerName} 登录`,
     authOrEmail: '或使用邮箱免密登录',
     authEmailPlaceholder: '输入你的邮箱地址',
     authDisplayNamePlaceholder: '昵称（可选）',
@@ -154,6 +157,60 @@ useHead(() => {
 })
 
 const route = useRoute()
+
+const rssCopied = ref(false)
+let rssCopiedTimer: ReturnType<typeof setTimeout> | null = null
+
+function copyViaTextarea(text: string): boolean {
+    if (typeof document === 'undefined' || !document.body) return false
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    ta.style.top = '0'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    try {
+        ta.focus({preventScroll: true})
+        ta.select()
+        ta.setSelectionRange(0, text.length)
+        return document.execCommand('copy')
+    } catch {
+        return false
+    } finally {
+        document.body.removeChild(ta)
+    }
+}
+
+async function onRssClick() {
+    if (!import.meta.client || !life.rssUrl) return
+    const absUrl = new URL(life.rssUrl, window.location.origin).toString()
+
+    let copied = false
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(absUrl)
+            copied = true
+        } catch {
+            copied = false
+        }
+    }
+    if (!copied) {
+        copied = copyViaTextarea(absUrl)
+    }
+
+    if (copied) {
+        rssCopied.value = true
+        if (rssCopiedTimer) clearTimeout(rssCopiedTimer)
+        rssCopiedTimer = setTimeout(() => {
+            rssCopied.value = false
+            rssCopiedTimer = null
+        }, 2000)
+    } else {
+        window.open(absUrl, '_blank', 'noopener,noreferrer')
+    }
+}
 
 const sharedPostId = computed<number | null>(() => {
     const raw = route.query.shared
@@ -220,6 +277,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+    if (rssCopiedTimer) {
+        clearTimeout(rssCopiedTimer)
+        rssCopiedTimer = null
+    }
     archiveAbortController?.abort()
     archiveAbortController = null
 })
@@ -235,9 +296,14 @@ onUnmounted(() => {
 
 .title-row
     display: flex
-    align-items: baseline
+    align-items: center
     justify-content: space-between
     gap: 12px
+    margin: 0.83em 0 0
+
+    h2
+        margin: 0
+        line-height: 1.2
 
 .rss-link
     display: inline-flex
@@ -256,4 +322,7 @@ onUnmounted(() => {
     &:hover
         color: colors.$color-text-special
         transform: translateY(-1px)
+
+    &.copied
+        color: colors.$color-text-special
 </style>

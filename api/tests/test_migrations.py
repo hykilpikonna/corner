@@ -23,6 +23,8 @@ EXPECTED_TABLES = {
     "sessions",
     "magic_links",
     "comments",
+    "comment_tg_reactions",
+    "comment_web_reactions",
     "notification_queue",
     "original_upload_tokens",
     "used_captcha_salts",

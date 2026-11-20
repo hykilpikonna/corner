@@ -66,6 +66,7 @@ def test_create_app_mounts_all_contract_routes(test_settings: Settings) -> None:
         # Section 2-5: Interactions, Reactions, Polls & Comments
         ("GET", f"{prefix}/interactions"),
         ("POST", f"{prefix}/posts/{{post_id}}/reactions/toggle"),
+        ("POST", f"{prefix}/comments/{{comment_id}}/reactions/toggle"),
         ("POST", f"{prefix}/polls/{{poll_id}}/vote"),
         ("GET", f"{prefix}/posts/{{post_id}}/comments"),
         ("POST", f"{prefix}/posts/{{post_id}}/comments"),

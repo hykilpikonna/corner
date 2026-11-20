@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import unicodedata
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -14,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth.captcha import verify_altcha_payload
 from app.auth.security import (
+    VISITOR_COOKIE_NAME,
     SlidingWindowRateLimiter,
     ensure_visitor_id,
     get_client_ip,
@@ -21,29 +21,37 @@ from app.auth.security import (
     make_anon_tag,
     reject_control_chars,
     render_and_sanitize_comment_html,
+    validate_reaction_emoji,
+    verify_visitor_cookie,
 )
 from app.config import Settings, get_settings
 from app.db.models import (
     Comment,
+    CommentTgReaction,
+    CommentWebReaction,
     NotificationQueue,
     Poll,
     Post,
+    TgReaction,
     User,
     WebPollVote,
     WebReaction,
 )
 from app.db.repo import (
+    compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
     format_iso_utc,
     make_reaction_key,
     resolve_media_url,
+    strip_variation_selectors,
 )
 from app.db.session import get_db_session
 from app.routes.auth import serialize_user_dto
 from app.schemas import (
     CommentAuthorDTO,
     CommentDTO,
+    CommentReactionToggleResponse,
     CommentsListResponse,
     CreateCommentRequest,
     DeleteCommentResponse,
@@ -68,10 +76,8 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 MAX_BATCH_IDS = 200
 MAX_COMMENT_LENGTH = 4000
-MAX_EMOJI_CODEPOINTS = 16
 MAX_WEB_REACTIONS_PER_POST_ACTOR = 5
-
-_KEYCAP_BASE_CHARS = set("0123456789#*")
+MAX_WEB_REACTIONS_PER_ACTOR = MAX_WEB_REACTIONS_PER_POST_ACTOR
 
 
 def _get_sse_bus(request: Request) -> SSEBus:
@@ -111,44 +117,6 @@ def _parse_int_csv(raw: str | None, *, max_items: int = MAX_BATCH_IDS) -> list[i
             if len(out) >= max_items:
                 break
     return out
-
-
-def validate_reaction_emoji(raw_emoji: str) -> str:
-    """Validate that `raw_emoji` is a genuine Unicode emoji sequence (no ASCII/spam)."""
-    emoji = raw_emoji.strip()
-    if not emoji or len(emoji) > MAX_EMOJI_CODEPOINTS:
-        raise HTTPException(status_code=400, detail="Invalid reaction emoji")
-
-    has_keycap = "\u20e3" in emoji
-    has_symbol = False
-
-    for ch in emoji:
-        cp = ord(ch)
-        cat = unicodedata.category(ch)
-        if cat in ("Cc", "Cs", "Zs", "Zl", "Zp") or ch.isspace():
-            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
-        if cp < 128:
-            # Only allow keycap bases (0-9, #, *) when actually forming a keycap emoji
-            if has_keycap and ch in _KEYCAP_BASE_CHARS:
-                continue
-            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
-
-        # Allowed non-ASCII emoji components:
-        # So/Sk symbols, variation selectors (FE0E/FE0F), ZWJ (200D),
-        # combining enclosing keycap (20E3), tag chars (E0020..E007F)
-        if cat in ("So", "Sk"):
-            has_symbol = True
-        elif cp in (0x200D, 0xFE0E, 0xFE0F, 0x20E3):
-            if cp == 0x20E3:
-                has_symbol = True
-        elif 0xE0020 <= cp <= 0xE007F:
-            continue
-        else:
-            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
-
-    if not has_symbol:
-        raise HTTPException(status_code=400, detail="Invalid reaction emoji")
-    return emoji
 
 
 async def _acquire_actor_lock(db: AsyncSession, scope_key: str, actor_key: str) -> None:
@@ -208,6 +176,164 @@ def _to_public_reactions_sse_payload(merged: list[dict[str, Any]]) -> list[dict[
     return [{k: v for k, v in item.items() if k != "reacted"} for item in merged]
 
 
+def _enforce_reaction_rate_limit(request: Request, settings: Settings) -> None:
+    limiter = _get_rate_limiter(request)
+    ip = get_client_ip(request, settings)
+    allowed, _ = limiter.hit("reaction", ip, limit=60, window_seconds=60.0)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many reaction toggles; please slow down",
+        )
+
+
+def _parse_reaction_toggle_request(
+    payload: ReactionToggleRequest,
+) -> tuple[str | None, str | None]:
+    raw_emoji = payload.emoji.strip() if payload.emoji is not None else ""
+    raw_custom = (
+        payload.custom_emoji_id.strip() if payload.custom_emoji_id is not None else ""
+    )
+    if bool(raw_emoji) == bool(raw_custom):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide exactly one of emoji or custom_emoji_id",
+        )
+    if raw_emoji:
+        return validate_reaction_emoji(raw_emoji), None
+    if not raw_custom.isascii() or not raw_custom.isdigit() or len(raw_custom) > 32:
+        raise HTTPException(status_code=400, detail="Invalid custom_emoji_id")
+    return None, raw_custom
+
+
+async def _normalize_reaction_emoji(
+    db: AsyncSession,
+    emoji: str,
+    *,
+    tg_model: type[TgReaction] | type[CommentTgReaction],
+    web_model: type[WebReaction] | type[CommentWebReaction],
+    fk_col_name: str,
+    target_id: int,
+) -> str:
+    """Match variation selectors against existing TG/web reactions on the same target."""
+    stripped_target = strip_variation_selectors(emoji)
+    tg_fk = getattr(tg_model, fk_col_name)
+    tg_emojis = (
+        await db.execute(
+            select(tg_model.emoji).where(
+                tg_fk == target_id,
+                tg_model.emoji.is_not(None),
+            )
+        )
+    ).scalars().all()
+    for existing_emoji in tg_emojis:
+        if (
+            existing_emoji
+            and strip_variation_selectors(existing_emoji) == stripped_target
+        ):
+            return existing_emoji
+
+    web_fk = getattr(web_model, fk_col_name)
+    web_emojis = (
+        await db.execute(
+            select(web_model.emoji)
+            .where(
+                web_fk == target_id,
+                web_model.emoji.is_not(None),
+            )
+            .distinct()
+        )
+    ).scalars().all()
+    for existing_emoji in web_emojis:
+        if (
+            existing_emoji
+            and strip_variation_selectors(existing_emoji) == stripped_target
+        ):
+            return existing_emoji
+    return emoji
+
+
+async def _toggle_web_reaction(
+    db: AsyncSession,
+    *,
+    tg_model: type[TgReaction] | type[CommentTgReaction],
+    web_model: type[WebReaction] | type[CommentWebReaction],
+    fk_col_name: str,
+    target_id: int,
+    target_label: str,
+    lock_scope: str,
+    actor_key: str,
+    emoji: str | None,
+    custom_emoji_id: str | None,
+) -> None:
+    """Serialize, normalize, enforce per-actor cap, and toggle a web reaction row."""
+    await _acquire_actor_lock(db, lock_scope, actor_key)
+
+    web_fk = getattr(web_model, fk_col_name)
+    actor_rows = list(
+        (
+            await db.execute(
+                select(web_model).where(
+                    web_fk == target_id,
+                    web_model.actor_key == actor_key,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    if emoji is not None:
+        stripped_target = strip_variation_selectors(emoji)
+        exact_key = make_reaction_key(emoji=emoji)
+        matching_rows = [
+            row
+            for row in actor_rows
+            if (
+                row.emoji is not None
+                and strip_variation_selectors(row.emoji) == stripped_target
+            )
+            or row.reaction_key == exact_key
+        ]
+    else:
+        target_key = make_reaction_key(custom_emoji_id=custom_emoji_id)
+        matching_rows = [row for row in actor_rows if row.reaction_key == target_key]
+
+    if matching_rows:
+        for row in matching_rows:
+            await db.delete(row)
+        await db.commit()
+        return
+
+    if len(actor_rows) >= MAX_WEB_REACTIONS_PER_ACTOR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maximum {MAX_WEB_REACTIONS_PER_ACTOR} distinct reactions per {target_label} reached",
+        )
+
+    if emoji is not None:
+        emoji = await _normalize_reaction_emoji(
+            db,
+            emoji,
+            tg_model=tg_model,
+            web_model=web_model,
+            fk_col_name=fk_col_name,
+            target_id=target_id,
+        )
+
+    rkey = make_reaction_key(emoji=emoji, custom_emoji_id=custom_emoji_id)
+    db.add(
+        web_model(
+            **{fk_col_name: target_id},
+            reaction_key=rkey,
+            emoji=emoji,
+            custom_emoji_id=custom_emoji_id,
+            actor_key=actor_key,
+        )
+    )
+    await db.commit()
+
+
 def _serialize_comment(
     comment: Comment,
     *,
@@ -215,6 +341,9 @@ def _serialize_comment(
     me: User | None,
     settings: Settings,
     tombstone: bool = False,
+    viewer_anon_tags: set[str] | None = None,
+    actor_key: str | None = None,
+    include_reactions: bool = True,
 ) -> CommentDTO:
     if tombstone or comment.deleted_at is not None:
         return CommentDTO(
@@ -238,6 +367,7 @@ def _serialize_comment(
             deleted=True,
             is_mine=False,
             can_delete=False,
+            reactions=[],
         )
 
     user = users_by_id.get(comment.user_id) if comment.user_id is not None else None
@@ -274,8 +404,27 @@ def _serialize_comment(
             verified=False,
         )
 
-    is_mine = bool(me is not None and comment.user_id is not None and comment.user_id == me.id)
-    can_delete = bool(me is not None and (me.role == "owner" or is_mine))
+    is_mine_user = bool(
+        me is not None and comment.user_id is not None and comment.user_id == me.id
+    )
+    is_mine_anon = bool(
+        comment.user_id is None
+        and comment.source == "web"
+        and viewer_anon_tags
+        and comment.anon_tag is not None
+        and comment.anon_tag in viewer_anon_tags
+    )
+    is_mine = is_mine_user or is_mine_anon
+    can_delete = bool(me is not None and (me.role == "owner" or is_mine_user))
+
+    reactions = (
+        [
+            MergedReactionDTO(**r)
+            for r in compute_merged_comment_reactions(comment, actor_key=actor_key)
+        ]
+        if include_reactions
+        else []
+    )
 
     return CommentDTO(
         id=comment.id,
@@ -291,6 +440,7 @@ def _serialize_comment(
         deleted=False,
         is_mine=is_mine,
         can_delete=can_delete,
+        reactions=reactions,
     )
 
 
@@ -398,33 +548,8 @@ async def toggle_reaction(
     db: DbSessionDep,
     settings: SettingsDep,
 ) -> ReactionToggleResponse:
-    limiter = _get_rate_limiter(request)
-    ip = get_client_ip(request, settings)
-    allowed, _ = limiter.hit("reaction", ip, limit=60, window_seconds=60.0)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many reaction toggles; please slow down",
-        )
-
-    raw_emoji = payload.emoji.strip() if payload.emoji is not None else ""
-    raw_custom = (
-        payload.custom_emoji_id.strip() if payload.custom_emoji_id is not None else ""
-    )
-    if bool(raw_emoji) == bool(raw_custom):
-        raise HTTPException(
-            status_code=400,
-            detail="Provide exactly one of emoji or custom_emoji_id",
-        )
-
-    emoji: str | None = None
-    custom_emoji_id: str | None = None
-    if raw_emoji:
-        emoji = validate_reaction_emoji(raw_emoji)
-    else:
-        if not raw_custom.isascii() or not raw_custom.isdigit() or len(raw_custom) > 32:
-            raise HTTPException(status_code=400, detail="Invalid custom_emoji_id")
-        custom_emoji_id = raw_custom
+    _enforce_reaction_rate_limit(request, settings)
+    emoji, custom_emoji_id = _parse_reaction_toggle_request(payload)
 
     post_exists = (
         await db.execute(
@@ -435,51 +560,19 @@ async def toggle_reaction(
         raise HTTPException(status_code=404, detail="Post not found")
 
     _, actor_key = await _resolve_actor(request, response, db, settings)
-    rkey = make_reaction_key(emoji=emoji, custom_emoji_id=custom_emoji_id)
 
-    # Serialize concurrent toggles for the same (post_id, actor_key)
-    await _acquire_actor_lock(db, f"react:{post_id}", actor_key)
-
-    existing = (
-        await db.execute(
-            select(WebReaction).where(
-                WebReaction.post_id == post_id,
-                WebReaction.reaction_key == rkey,
-                WebReaction.actor_key == actor_key,
-            )
-        )
-    ).scalar_one_or_none()
-
-    if existing is not None:
-        await db.delete(existing)
-    else:
-        actor_count = int(
-            (
-                await db.execute(
-                    select(func.count())
-                    .select_from(WebReaction)
-                    .where(
-                        WebReaction.post_id == post_id,
-                        WebReaction.actor_key == actor_key,
-                    )
-                )
-            ).scalar_one()
-        )
-        if actor_count >= MAX_WEB_REACTIONS_PER_POST_ACTOR:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum {MAX_WEB_REACTIONS_PER_POST_ACTOR} distinct reactions per post reached",
-            )
-        db.add(
-            WebReaction(
-                post_id=post_id,
-                reaction_key=rkey,
-                emoji=emoji,
-                custom_emoji_id=custom_emoji_id,
-                actor_key=actor_key,
-            )
-        )
-    await db.commit()
+    await _toggle_web_reaction(
+        db,
+        tg_model=TgReaction,
+        web_model=WebReaction,
+        fk_col_name="post_id",
+        target_id=post_id,
+        target_label="post",
+        lock_scope=f"react:{post_id}",
+        actor_key=actor_key,
+        emoji=emoji,
+        custom_emoji_id=custom_emoji_id,
+    )
 
     refreshed_post = (
         await db.execute(
@@ -505,6 +598,80 @@ async def toggle_reaction(
 
     return ReactionToggleResponse(
         post_id=post_id,
+        reactions=[MergedReactionDTO(**r) for r in merged],
+    )
+
+
+@router.post(
+    "/comments/{comment_id}/reactions/toggle",
+    response_model=CommentReactionToggleResponse,
+)
+async def toggle_comment_reaction(
+    comment_id: int,
+    payload: ReactionToggleRequest,
+    request: Request,
+    response: Response,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> CommentReactionToggleResponse:
+    _enforce_reaction_rate_limit(request, settings)
+    emoji, custom_emoji_id = _parse_reaction_toggle_request(payload)
+
+    comment_post_id = (
+        await db.execute(
+            select(Comment.post_id)
+            .join(Post, Post.id == Comment.post_id)
+            .where(
+                Comment.id == comment_id,
+                Comment.deleted_at.is_(None),
+                Post.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if comment_post_id is None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    _, actor_key = await _resolve_actor(request, response, db, settings)
+
+    await _toggle_web_reaction(
+        db,
+        tg_model=CommentTgReaction,
+        web_model=CommentWebReaction,
+        fk_col_name="comment_id",
+        target_id=comment_id,
+        target_label="comment",
+        lock_scope=f"react-comment:{comment_id}",
+        actor_key=actor_key,
+        emoji=emoji,
+        custom_emoji_id=custom_emoji_id,
+    )
+
+    refreshed_comment = (
+        await db.execute(
+            select(Comment)
+            .options(
+                selectinload(Comment.tg_reactions),
+                selectinload(Comment.web_reactions),
+            )
+            .where(Comment.id == comment_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+    merged = compute_merged_comment_reactions(refreshed_comment, actor_key=actor_key)
+    _get_sse_bus(request).publish(
+        "comment.reaction.updated",
+        {
+            "post_id": refreshed_comment.post_id,
+            "comment_id": refreshed_comment.id,
+            "reactions": _to_public_reactions_sse_payload(merged),
+        },
+        post_id=refreshed_comment.post_id,
+    )
+
+    return CommentReactionToggleResponse(
+        post_id=refreshed_comment.post_id,
+        comment_id=refreshed_comment.id,
         reactions=[MergedReactionDTO(**r) for r in merged],
     )
 
@@ -654,9 +821,23 @@ async def get_post_comments(
         raise HTTPException(status_code=404, detail="Post not found")
 
     me = await get_current_user_optional(request, db)
+    viewer_anon_tags: set[str] = set()
+    if me is not None:
+        viewer_anon_tags.add(make_anon_tag(post_id, f"u:{me.id}", settings.SECRET_KEY))
+    vid = verify_visitor_cookie(
+        request.cookies.get(VISITOR_COOKIE_NAME), settings.SECRET_KEY
+    )
+    if vid is not None:
+        viewer_anon_tags.add(make_anon_tag(post_id, f"v:{vid}", settings.SECRET_KEY))
+
+    actor_key = f"u:{me.id}" if me is not None else (f"v:{vid}" if vid is not None else None)
 
     comments_stmt = (
         select(Comment)
+        .options(
+            selectinload(Comment.tg_reactions),
+            selectinload(Comment.web_reactions),
+        )
         .where(Comment.post_id == post_id)
         .order_by(Comment.created_at.asc(), Comment.id.asc())
     )
@@ -704,6 +885,8 @@ async def get_post_comments(
             me=me,
             settings=settings,
             tombstone=is_tomb,
+            viewer_anon_tags=viewer_anon_tags or None,
+            actor_key=actor_key,
         )
         for c, is_tomb in visible_comments
     ]
@@ -817,18 +1000,22 @@ async def create_comment(
     await db.commit()
 
     users_by_id = {me.id: me} if (me is not None and comment_user_id == me.id) else {}
-    # Pass `me=me` so owner retains `can_delete=True` even when posting anonymously
+    # Pass `me=me` so owner retains `can_delete=True` even when posting anonymously,
+    # and pass `viewer_anon_tags={anon_tag}` so anonymous comments return `is_mine=True`.
     caller_dto = _serialize_comment(
         comment,
         users_by_id=users_by_id,
         me=me,
         settings=settings,
+        viewer_anon_tags={anon_tag} if anon_tag else None,
+        include_reactions=False,
     )
     public_dto = _serialize_comment(
         comment,
         users_by_id=users_by_id,
         me=None,
         settings=settings,
+        include_reactions=False,
     )
 
     # Publish raw CommentDTO directly on `comment.created` (matches frontend api.ts)

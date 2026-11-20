@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     Channel,
+    Comment,
     Poll,
     PollOption,
     Post,
@@ -635,24 +637,74 @@ async def list_posts(
     return list(res.scalars().all())
 
 
-def compute_merged_reactions(
-    post: Post, *, actor_key: str | None = None
+def strip_variation_selectors(emoji: str) -> str:
+    return emoji.replace("\ufe0f", "").replace("\ufe0e", "")
+
+
+def _canonical_reaction_group_key(
+    *,
+    reaction_key: str,
+    emoji: str | None,
+    custom_emoji_id: str | None,
+) -> str:
+    if emoji:
+        return make_reaction_key(emoji=strip_variation_selectors(emoji))
+    if custom_emoji_id:
+        return make_reaction_key(custom_emoji_id=custom_emoji_id)
+    return reaction_key
+
+
+def _prefer_display_emoji(current: str | None, candidate: str | None) -> str | None:
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    if "\ufe0f" in candidate and "\ufe0f" not in current:
+        return candidate
+    return current
+
+
+def _compute_merged_reactions(
+    tg_reactions: Sequence[Any],
+    web_reactions: Sequence[Any],
+    *,
+    actor_key: str | None = None,
 ) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
+    web_actors_by_group: dict[str, set[str]] = defaultdict(set)
 
-    for tr in post.tg_reactions:
-        merged[tr.reaction_key] = {
-            "reaction_key": tr.reaction_key,
-            "emoji": tr.emoji,
-            "custom_emoji_id": tr.custom_emoji_id,
-            "tg_count": int(tr.count),
-            "web_count": 0,
-            "count": int(tr.count),
-            "reacted": False,
-        }
+    for tr in tg_reactions:
+        gkey = _canonical_reaction_group_key(
+            reaction_key=tr.reaction_key,
+            emoji=tr.emoji,
+            custom_emoji_id=tr.custom_emoji_id,
+        )
+        entry = merged.get(gkey)
+        if entry is None:
+            merged[gkey] = {
+                "reaction_key": tr.reaction_key,
+                "emoji": tr.emoji,
+                "custom_emoji_id": tr.custom_emoji_id,
+                "tg_count": int(tr.count),
+                "web_count": 0,
+                "count": int(tr.count),
+                "reacted": False,
+            }
+        else:
+            entry["tg_count"] += int(tr.count)
+            entry["emoji"] = _prefer_display_emoji(entry["emoji"], tr.emoji)
+            entry["reaction_key"] = make_reaction_key(
+                emoji=entry["emoji"], custom_emoji_id=entry["custom_emoji_id"]
+            )
+            entry["count"] = entry["tg_count"] + entry["web_count"]
 
-    for wr in post.web_reactions:
-        entry = merged.get(wr.reaction_key)
+    for wr in web_reactions:
+        gkey = _canonical_reaction_group_key(
+            reaction_key=wr.reaction_key,
+            emoji=wr.emoji,
+            custom_emoji_id=wr.custom_emoji_id,
+        )
+        entry = merged.get(gkey)
         if entry is None:
             entry = {
                 "reaction_key": wr.reaction_key,
@@ -663,8 +715,16 @@ def compute_merged_reactions(
                 "count": 0,
                 "reacted": False,
             }
-            merged[wr.reaction_key] = entry
-        entry["web_count"] += 1
+            merged[gkey] = entry
+        else:
+            preferred = _prefer_display_emoji(entry["emoji"], wr.emoji)
+            if preferred != entry["emoji"]:
+                entry["emoji"] = preferred
+                entry["reaction_key"] = make_reaction_key(
+                    emoji=entry["emoji"], custom_emoji_id=entry["custom_emoji_id"]
+                )
+        web_actors_by_group[gkey].add(wr.actor_key)
+        entry["web_count"] = len(web_actors_by_group[gkey])
         entry["count"] = entry["tg_count"] + entry["web_count"]
         if actor_key is not None and wr.actor_key == actor_key:
             entry["reacted"] = True
@@ -672,6 +732,26 @@ def compute_merged_reactions(
     result = [item for item in merged.values() if item["count"] > 0]
     result.sort(key=lambda item: (-item["count"], item["reaction_key"]))
     return result
+
+
+def compute_merged_reactions(
+    post: Post, *, actor_key: str | None = None
+) -> list[dict[str, Any]]:
+    return _compute_merged_reactions(
+        post.tg_reactions,
+        post.web_reactions,
+        actor_key=actor_key,
+    )
+
+
+def compute_merged_comment_reactions(
+    comment: Comment, *, actor_key: str | None = None
+) -> list[dict[str, Any]]:
+    return _compute_merged_reactions(
+        comment.tg_reactions,
+        comment.web_reactions,
+        actor_key=actor_key,
+    )
 
 
 def compute_merged_poll(

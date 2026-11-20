@@ -104,7 +104,8 @@ async def test_interactions_reactions_toggle_and_sse_broadcast(
         canonical_id=10,
         date=datetime(2026, 11, 19, 8, 0, tzinfo=UTC),
         text_html="Hello world",
-        tg_reactions=[{"emoji": "❤️", "count": 5}],
+        # Store bare TG heart without FE0F (\u2764) to verify VS-normalized merging with "❤️" (\u2764\ufe0f)
+        tg_reactions=[{"emoji": "\u2764", "count": 5}],
     )
     await db_session.commit()
 
@@ -137,12 +138,13 @@ async def test_interactions_reactions_toggle_and_sse_broadcast(
                 )
             ).status_code == 400
 
-            # Toggle ON merges with TG count -> 6
+            # Toggle ON with "❤️" (\u2764\ufe0f) merges into TG's "\u2764" -> single reaction with count=6!
             r_on = await client.post(
                 "/api/life/posts/10/reactions/toggle",
                 json={"emoji": "❤️"},
             )
             assert r_on.status_code == 200
+            assert len(r_on.json()["reactions"]) == 1
             heart = r_on.json()["reactions"][0]
             assert heart["tg_count"] == 5
             assert heart["web_count"] == 1
@@ -450,6 +452,29 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             anon_tag_post_100 = c2["author"]["display_name"]
 
             # Same anon visitor on same post gets deterministic same tripcode
+            assert c2["is_mine"] is True
+            assert c2["can_delete"] is False
+
+            # Reloading GET /posts/100/comments with the same `life_vid` cookie preserves is_mine=True
+            # for the anon visitor's own comment (and False for Alice's), with can_delete=False!
+            r_anon_reload = await client.get("/api/life/posts/100/comments")
+            assert r_anon_reload.status_code == 200
+            reloaded_by_id = {c["id"]: c for c in r_anon_reload.json()["comments"]}
+            assert reloaded_by_id[c2["id"]]["is_mine"] is True
+            assert reloaded_by_id[c2["id"]]["can_delete"] is False
+            assert reloaded_by_id[c1["id"]]["is_mine"] is False
+
+            # Another anonymous visitor without `life_vid` cookie sees is_mine=False and no cookie minted
+            saved_vid = client.cookies.get("life_vid")
+            client.cookies.clear()
+            r_fresh_anon = await client.get("/api/life/posts/100/comments")
+            assert r_fresh_anon.status_code == 200
+            assert "life_vid" not in r_fresh_anon.headers.get("set-cookie", "")
+            fresh_by_id = {c["id"]: c for c in r_fresh_anon.json()["comments"]}
+            assert fresh_by_id[c2["id"]]["is_mine"] is False
+            if saved_vid:
+                client.cookies.set("life_vid", saved_vid)
+
             ch2 = (await client.get("/api/life/captcha/challenge")).json()
             r_anon2 = await client.post(
                 "/api/life/posts/100/comments",
@@ -508,7 +533,7 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
             )
             assert r_ctrl.status_code == 400
 
-            # Owner posting as_anonymous=True retains can_delete=True consistently
+            # Owner posting as_anonymous=True gets is_mine=True AND retains can_delete=True
             ch_owner = (await client.get("/api/life/captcha/challenge")).json()
             r_owner_anon = await client.post(
                 "/api/life/posts/100/comments",
@@ -519,8 +544,44 @@ async def test_comments_verified_anon_xss_tombstones_bridge_and_notifications(
                 },
             )
             assert r_owner_anon.status_code == 201
-            assert r_owner_anon.json()["is_mine"] is False
+            owner_anon_id = r_owner_anon.json()["id"]
+            assert r_owner_anon.json()["is_mine"] is True
             assert r_owner_anon.json()["can_delete"] is True
+
+            # Regular logged-in user (Bob) posting as_anonymous=True gets is_mine=True, can_delete=False
+            client.cookies.set(SESSION_COOKIE_NAME, bob_token)
+            ch_bob = (await client.get("/api/life/captcha/challenge")).json()
+            r_bob_anon = await client.post(
+                "/api/life/posts/100/comments",
+                json={
+                    "body": "Bob incognito",
+                    "as_anonymous": True,
+                    "altcha_payload": solve_altcha(ch_bob),
+                },
+            )
+            assert r_bob_anon.status_code == 201
+            bob_anon_id = r_bob_anon.json()["id"]
+            assert r_bob_anon.json()["is_mine"] is True
+            assert r_bob_anon.json()["can_delete"] is False
+
+            # Reload as Bob -> Bob's own anon comment has is_mine=True, owner's has is_mine=False
+            bob_reload = {
+                c["id"]: c
+                for c in (await client.get("/api/life/posts/100/comments")).json()["comments"]
+            }
+            assert bob_reload[bob_anon_id]["is_mine"] is True
+            assert bob_reload[bob_anon_id]["can_delete"] is False
+            assert bob_reload[owner_anon_id]["is_mine"] is False
+
+            # Reload as Owner -> Owner's anon comment has is_mine=True and can_delete=True
+            client.cookies.set(SESSION_COOKIE_NAME, owner_token)
+            owner_reload = {
+                c["id"]: c
+                for c in (await client.get("/api/life/posts/100/comments")).json()["comments"]
+            }
+            assert owner_reload[owner_anon_id]["is_mine"] is True
+            assert owner_reload[owner_anon_id]["can_delete"] is True
+            assert owner_reload[bob_anon_id]["is_mine"] is False
 
             # Fetch thread: c1 is tombstone, c2 is visible, leaf_id is omitted!
             thread = (await client.get("/api/life/posts/100/comments")).json()["comments"]
@@ -676,3 +737,49 @@ async def test_reaction_validation_cap_and_concurrent_races(
             assert statuses == [200, 409, 409]
     finally:
         await engine.dispose()
+
+
+def test_telegram_channel_reaction_emojis_validation() -> None:
+    from fastapi import HTTPException
+
+    from app.auth.security import validate_reaction_emoji
+
+    standard_tg_reactions = [
+        "👍", "👎", "❤️", "🔥", "🥰", "👏", "😁", "🤔", "🤯", "😱", "🤬", "😢", "🎉", "🤩",
+        "🤮", "💩", "🙏", "👌", "🕊", "🕊️", "🤡", "🥱", "🥴", "😍", "🐳", "❤️‍🔥", "🌚", "🌭",
+        "💯", "🤣", "⚡", "🍌", "🏆", "💔", "🤨", "😐", "🍓", "🍾", "💋", "🖕", "😈", "😴",
+        "😭", "🤓", "👻", "👨‍💻", "👀", "🎃", "🙈", "😇", "😨", "🤝", "✍️", "🤗", "🫡", "🎅",
+        "🎄", "☃️", "💅", "🤪", "🗿", "🆒", "💘", "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾",
+        "🤷‍♂️", "🤷", "🤷‍♀️", "😡", "😮", "✨", "😂", "1️⃣", "👍🏻", "🇺🇸", "‼️", "⁉️", "ℹ️",
+    ]
+    for emoji in standard_tg_reactions:
+        assert validate_reaction_emoji(emoji) == emoji
+
+    for invalid in (
+        "",
+        " ",
+        "abc",
+        "123",
+        "hello",
+        "a❤️",
+        "❤️ ❤️",
+        "!\x00",
+        "🔥" * 20,
+        "💩" * 16,
+        "❤️❤️",
+        "\u20e3",
+        "12345\u20e3",
+        "🇺",
+        "🇺🇸🇺",
+        "🏻",
+        "\ufe0f",
+        "\u200d",
+        "❤️\u200d",
+        "\u200d❤️",
+        "❤️\u200d\u200d🔥",
+        "👍🏻🏻",
+        "!!!",
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            validate_reaction_emoji(invalid)
+        assert exc_info.value.status_code == 400, f"Should reject {invalid!r}"

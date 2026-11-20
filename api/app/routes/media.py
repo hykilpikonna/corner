@@ -19,6 +19,7 @@ SAFE_INLINE_MIME_TYPES: frozenset[str] = frozenset(
     {
         "image/jpeg",
         "image/png",
+        "image/apng",
         "image/webp",
         "image/gif",
         "image/avif",
@@ -31,6 +32,12 @@ SAFE_INLINE_MIME_TYPES: frozenset[str] = frozenset(
     }
 )
 
+_EXT_INLINE_FALLBACK: dict[str, str] = {
+    ".apng": "image/apng",
+    ".webp": "image/webp",
+    ".webm": "video/webm",
+}
+
 _RAW_PATH_SPLIT_RE = re.compile(r"/|%2[fF]")
 _DISPOSITION_UNSAFE_RE = re.compile(r'[\r\n"\\;]+')
 
@@ -38,6 +45,20 @@ _DISPOSITION_UNSAFE_RE = re.compile(r'[\r\n"\\;]+')
 def _safe_attachment_filename(name: str) -> str:
     cleaned = _DISPOSITION_UNSAFE_RE.sub("_", name).strip()
     return cleaned or "download"
+
+
+def _validate_raw_media_path(request: Request) -> None:
+    """Inspect raw ASGI path segment-by-segment to catch dot-segments before normalization."""
+    raw_path = request.scope.get("raw_path", b"").decode("latin-1", errors="ignore")
+    raw_lower = raw_path.lower()
+    if "\\" in raw_path or "%5c" in raw_lower or "%00" in raw_lower:
+        raise HTTPException(status_code=400, detail="Invalid media path")
+
+    for raw_seg in _RAW_PATH_SPLIT_RE.split(raw_path):
+        once = unquote(raw_seg)
+        twice = unquote(once)
+        if once in (".", "..") or twice in (".", ".."):
+            raise HTTPException(status_code=400, detail="Invalid media path")
 
 
 def resolve_safe_media_path(media_root: Path, requested_path: str) -> Path:
@@ -66,27 +87,13 @@ def resolve_safe_media_path(media_root: Path, requested_path: str) -> Path:
     return candidate
 
 
-@router.get("/media/{path:path}")
-async def serve_media(
-    path: str,
-    request: Request,
-    settings: SettingsDep,
+def _build_safe_media_response(
+    file_path: Path, *, allow_tgsticker: bool = False
 ) -> FileResponse:
-    # Inspect raw ASGI path segment-by-segment to catch dot-segments before normalization,
-    # while allowing legitimate filenames containing consecutive dots (e.g. "photo..jpg").
-    raw_path = request.scope.get("raw_path", b"").decode("latin-1", errors="ignore")
-    raw_lower = raw_path.lower()
-    if "\\" in raw_path or "%5c" in raw_lower or "%00" in raw_lower:
-        raise HTTPException(status_code=400, detail="Invalid media path")
-
-    for raw_seg in _RAW_PATH_SPLIT_RE.split(raw_path):
-        once = unquote(raw_seg)
-        twice = unquote(once)
-        if once in (".", "..") or twice in (".", ".."):
-            raise HTTPException(status_code=400, detail="Invalid media path")
-
-    file_path = resolve_safe_media_path(settings.media_dir, path)
-    guessed_mime, _ = mimetypes.guess_type(str(file_path))
+    suffix = file_path.suffix.lower()
+    guessed_mime = _EXT_INLINE_FALLBACK.get(suffix)
+    if guessed_mime is None:
+        guessed_mime, _ = mimetypes.guess_type(str(file_path))
 
     headers = {
         "Cache-Control": "public, max-age=31536000, immutable",
@@ -94,7 +101,9 @@ async def serve_media(
         "Content-Security-Policy": "default-src 'none'; sandbox",
     }
 
-    if guessed_mime in SAFE_INLINE_MIME_TYPES:
+    if allow_tgsticker and suffix == ".tgs":
+        media_type = "application/x-tgsticker"
+    elif guessed_mime in SAFE_INLINE_MIME_TYPES:
         media_type = guessed_mime
     else:
         media_type = "application/octet-stream"
@@ -106,3 +115,51 @@ async def serve_media(
         media_type=media_type,
         headers=headers,
     )
+
+
+def _epoch_sort_key(entry: Path) -> tuple[int, int, str]:
+    name = entry.name
+    if name.isdigit():
+        return (1, int(name), name)
+    return (0, 0, name)
+
+
+@router.get("/media/{path:path}")
+async def serve_media(
+    path: str,
+    request: Request,
+    settings: SettingsDep,
+) -> FileResponse:
+    _validate_raw_media_path(request)
+    file_path = resolve_safe_media_path(settings.media_dir, path)
+    return _build_safe_media_response(file_path)
+
+
+@router.get("/exports/emoji/{path:path}")
+async def serve_export_emoji(
+    path: str,
+    request: Request,
+    settings: SettingsDep,
+) -> FileResponse:
+    _validate_raw_media_path(request)
+
+    candidate_roots: list[Path] = [settings.exports_dir / "emoji"]
+    epochs_dir = settings.media_dir / "epochs"
+    if epochs_dir.is_dir():
+        sorted_epochs = sorted(
+            (p for p in epochs_dir.iterdir() if p.is_dir()),
+            key=_epoch_sort_key,
+            reverse=True,
+        )
+        candidate_roots.extend(epoch / "emoji" for epoch in sorted_epochs)
+
+    for root in candidate_roots:
+        try:
+            file_path = resolve_safe_media_path(root, path)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                continue
+            raise
+        return _build_safe_media_response(file_path, allow_tgsticker=True)
+
+    raise HTTPException(status_code=404, detail="Emoji file not found")

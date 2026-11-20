@@ -132,6 +132,91 @@ _COMMENT_ALLOWED_ATTRS: dict[str, set[str]] = {
     "a": {"href", "title"},
 }
 
+MAX_EMOJI_CODEPOINTS = 16
+_KEYCAP_EMOJI_RE = re.compile(r"[0-9#*]\ufe0f?\u20e3")
+# Standard Unicode emoji codepoints whose general category is not So/Sk
+_EXTRA_EMOJI_CODEPOINTS: frozenset[int] = frozenset(
+    {
+        0x203C,  # ‼️ DOUBLE EXCLAMATION MARK
+        0x2049,  # ⁉️ EXCLAMATION QUESTION MARK
+        0x2139,  # ℹ️ INFORMATION SOURCE
+        0x2194,  # ↔️ LEFT RIGHT ARROW
+        0x25FB,  # ◻️ WHITE MEDIUM SQUARE
+        0x25FC,  # ◼️ BLACK MEDIUM SQUARE
+        0x25FD,  # ◽ WHITE MEDIUM SMALL SQUARE
+        0x25FE,  # ◾ BLACK MEDIUM SMALL SQUARE
+        0x2934,  # ⤴️ ARROW POINTING RIGHTWARDS THEN CURVING UPWARDS
+        0x2935,  # ⤵️ ARROW POINTING RIGHTWARDS THEN CURVING DOWNWARDS
+        0x3030,  # 〰️ WAVY DASH
+        0x303D,  # 〽️ PART ALTERNATION MARK
+    }
+)
+
+
+def _is_regional_indicator(cp: int) -> bool:
+    return 0x1F1E6 <= cp <= 0x1F1FF
+
+
+def _is_skin_tone_modifier(cp: int) -> bool:
+    return 0x1F3FB <= cp <= 0x1F3FF
+
+
+def validate_reaction_emoji(raw_emoji: str) -> str:
+    """Validate that `raw_emoji` is a single Unicode emoji grapheme (no ASCII/multi-emoji spam)."""
+    emoji = raw_emoji.strip()
+    if not emoji or len(emoji) > MAX_EMOJI_CODEPOINTS:
+        raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+
+    for ch in emoji:
+        cat = unicodedata.category(ch)
+        if cat in ("Cc", "Cs", "Zs", "Zl", "Zp") or ch.isspace():
+            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+
+    # 1. Keycap sequence (e.g. 1️⃣, #️⃣, *️⃣)
+    if "\u20e3" in emoji:
+        if _KEYCAP_EMOJI_RE.fullmatch(emoji) is None:
+            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+        return emoji
+
+    # 2. Regional Indicator flag pair (e.g. 🇺🇸)
+    if any(_is_regional_indicator(ord(ch)) for ch in emoji):
+        if len(emoji) != 2 or not all(_is_regional_indicator(ord(ch)) for ch in emoji):
+            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+        return emoji
+
+    # 3. Single emoji or ZWJ emoji sequence:
+    # Reject ASCII and require each ZWJ segment to have exactly 1 base emoji char.
+    segments = emoji.split("\u200d")
+    if any(not seg for seg in segments):
+        raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+
+    for seg in segments:
+        base_count = 0
+        skin_tone_count = 0
+        vs_count = 0
+        for ch in seg:
+            cp = ord(ch)
+            if cp < 128:
+                raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+            if _is_skin_tone_modifier(cp):
+                skin_tone_count += 1
+                continue
+            if cp in (0xFE0E, 0xFE0F):
+                vs_count += 1
+                continue
+            if 0xE0020 <= cp <= 0xE007F:
+                continue
+            cat = unicodedata.category(ch)
+            if cat in ("So", "Sk") or cp in _EXTRA_EMOJI_CODEPOINTS:
+                base_count += 1
+            else:
+                raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+
+        if base_count != 1 or skin_tone_count > 1 or vs_count > 1:
+            raise HTTPException(status_code=400, detail="Invalid reaction emoji")
+
+    return emoji
+
 
 def sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()

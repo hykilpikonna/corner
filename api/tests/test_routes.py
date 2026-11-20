@@ -103,20 +103,26 @@ async def test_health_posts_exports_feeds_and_media_routes(
     assert (await api_client.get("/api/life/posts/2")).status_code == 404  # deleted
     assert (await api_client.get("/api/life/posts/999")).status_code == 404  # missing
 
-    # 4. Feed endpoints
+    # 4. Feed endpoints (inline browser viewing + nosniff for XML & JSON feeds)
     r_rss = await api_client.get("/api/life/feeds/rss.xml")
     assert r_rss.status_code == 200
-    assert "application/rss+xml" in r_rss.headers["content-type"]
+    assert "application/xml" in r_rss.headers["content-type"]
+    assert r_rss.headers["content-disposition"] == "inline"
+    assert r_rss.headers["x-content-type-options"] == "nosniff"
     ET.fromstring(r_rss.text)
 
     r_atom = await api_client.get("/api/life/feeds/atom.xml")
     assert r_atom.status_code == 200
-    assert "application/atom+xml" in r_atom.headers["content-type"]
+    assert "application/xml" in r_atom.headers["content-type"]
+    assert r_atom.headers["content-disposition"] == "inline"
+    assert r_atom.headers["x-content-type-options"] == "nosniff"
     ET.fromstring(r_atom.text)
 
     r_json = await api_client.get("/api/life/feeds/feed.json")
     assert r_json.status_code == 200
     assert "application/feed+json" in r_json.headers["content-type"]
+    assert r_json.headers["content-disposition"] == "inline"
+    assert r_json.headers["x-content-type-options"] == "nosniff"
     assert r_json.json()["version"] == "https://jsonfeed.org/version/1.1"
 
     # 5. Media serving: safe inline JPEG + security headers + double-dot filename
@@ -198,3 +204,77 @@ def test_config_hardening_and_create_app_settings_override(
                 CORS_ORIGINS=["https://aza.moe"],
                 SECRET_KEY=bad_secret,
             )
+
+
+@pytest.mark.asyncio
+async def test_exports_emoji_serving_epoch_fallback_and_traversal_rejection(
+    api_client: AsyncClient, test_settings: Settings, tmp_path: Path
+) -> None:
+    # 1. Direct file in exports/emoji/ (.webp)
+    export_emoji_dir = test_settings.exports_dir / "emoji"
+    export_emoji_dir.mkdir(parents=True, exist_ok=True)
+    (export_emoji_dir / "1001.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPdirect")
+
+    # 2. Epoch fallback: epoch 2 overrides epoch 1 (sorted descending), plus .tgs & unknown type
+    epoch1_emoji = test_settings.media_dir / "epochs" / "1" / "emoji"
+    epoch2_emoji = test_settings.media_dir / "epochs" / "2" / "emoji"
+    epoch1_emoji.mkdir(parents=True, exist_ok=True)
+    epoch2_emoji.mkdir(parents=True, exist_ok=True)
+    (epoch1_emoji / "2002.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPepoch1")
+    (epoch2_emoji / "2002.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPepoch2")
+    (epoch1_emoji / "3003.tgs").write_bytes(b"\x1f\x8b\x08mock-tgs")
+    (epoch1_emoji / "4004.apng").write_bytes(b"\x89PNGmock-apng")
+    (epoch1_emoji / "evil.svg").write_text("<svg><script>alert(1)</script></svg>")
+
+    outside_secret = tmp_path / "secret_emoji.txt"
+    outside_secret.write_text("SECRET_EMOJI_DO_NOT_LEAK", encoding="utf-8")
+    (export_emoji_dir / "escape.webp").symlink_to(outside_secret)
+
+    # Direct exports/emoji hit
+    r_direct = await api_client.get("/api/life/exports/emoji/1001.webp")
+    assert r_direct.status_code == 200
+    assert r_direct.content == b"RIFF\x00\x00\x00\x00WEBPdirect"
+    assert r_direct.headers["content-type"].startswith("image/webp")
+    assert "immutable" in r_direct.headers["cache-control"]
+    assert r_direct.headers["x-content-type-options"] == "nosniff"
+    assert r_direct.headers["content-security-policy"] == "default-src 'none'; sandbox"
+    assert "content-disposition" not in r_direct.headers
+
+    # Epoch fallback prefers higher epoch (epoch 2 over epoch 1)
+    r_epoch = await api_client.get("/api/life/exports/emoji/2002.webp")
+    assert r_epoch.status_code == 200
+    assert r_epoch.content == b"RIFF\x00\x00\x00\x00WEBPepoch2"
+    assert r_epoch.headers["content-type"].startswith("image/webp")
+
+    # .tgs served with application/x-tgsticker + security headers
+    r_tgs = await api_client.get("/api/life/exports/emoji/3003.tgs")
+    assert r_tgs.status_code == 200
+    assert r_tgs.content == b"\x1f\x8b\x08mock-tgs"
+    assert r_tgs.headers["content-type"] == "application/x-tgsticker"
+    assert r_tgs.headers["x-content-type-options"] == "nosniff"
+    assert r_tgs.headers["content-security-policy"] == "default-src 'none'; sandbox"
+
+    # .apng served inline as image/apng
+    r_apng = await api_client.get("/api/life/exports/emoji/4004.apng")
+    assert r_apng.status_code == 200
+    assert r_apng.headers["content-type"] == "image/apng"
+
+    # Unknown/active types (like .svg) forced to safe attachment download
+    r_svg = await api_client.get("/api/life/exports/emoji/evil.svg")
+    assert r_svg.status_code == 200
+    assert r_svg.headers["content-type"] == "application/octet-stream"
+    assert r_svg.headers["content-disposition"].startswith("attachment;")
+
+    # Missing file -> 404
+    assert (await api_client.get("/api/life/exports/emoji/missing.webp")).status_code == 404
+
+    # Path traversal & symlink escape rejected (400/403/404)
+    for bad_url in (
+        "/api/life/exports/emoji/../../secret_emoji.txt",
+        "/api/life/exports/emoji/%2e%2e/%2e%2e/secret_emoji.txt",
+        "/api/life/exports/emoji/%252e%252e/secret_emoji.txt",
+        "/api/life/exports/emoji/escape.webp",
+    ):
+        resp = await api_client.get(bad_url)
+        assert resp.status_code in (400, 403, 404), f"Failed for {bad_url}: {resp.status_code}"
+        assert "SECRET_EMOJI_DO_NOT_LEAK" not in resp.text

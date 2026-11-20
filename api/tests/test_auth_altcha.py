@@ -581,3 +581,354 @@ async def test_csrf_origin_middleware_and_ip_spoofing_and_smtp_503(
             json={"email": "down@example.com", "altcha_payload": solve_altcha(ch)},
         )
         assert r_smtp_err.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_oidc_discovery_pkce_login_and_callback_flow(
+    test_settings: Settings,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from app.auth.oauth import (
+        clear_oidc_discovery_cache,
+        compute_pkce_challenge_s256,
+    )
+    from app.db.models import UserIdentity
+
+    clear_oidc_discovery_cache()
+
+    issuer = "https://idp.example.com/oauth/"
+    issuer_norm = "https://idp.example.com/oauth"
+    cfg = test_settings.model_copy(
+        update={
+            "OIDC_ISSUER_URL": issuer,
+            "OIDC_CLIENT_ID": "dummy_oidc_client_id",
+            "OIDC_CLIENT_SECRET": "dummy_oidc_client_secret",
+            "OIDC_PROVIDER_NAME": "Logto",
+            "OIDC_SCOPES": "openid email profile",
+        }
+    )
+    _, client = await _make_client(cfg, db_session)
+
+    discovery_hits = 0
+    captured_token_form: dict[str, str] = {}
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal discovery_hits
+        url = str(request.url)
+        if url == f"{issuer_norm}/.well-known/openid-configuration":
+            discovery_hits += 1
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": issuer_norm,
+                    "authorization_endpoint": f"{issuer_norm}/authorize",
+                    "token_endpoint": f"{issuer_norm}/token",
+                    "userinfo_endpoint": f"{issuer_norm}/userinfo",
+                },
+            )
+        if url == f"{issuer_norm}/token" and request.method == "POST":
+            form_qs = parse_qs(request.content.decode("utf-8"))
+            captured_token_form.update({k: v[0] for k, v in form_qs.items()})
+            assert captured_token_form.get("grant_type") == "authorization_code"
+            assert captured_token_form.get("client_id") == "dummy_oidc_client_id"
+            assert captured_token_form.get("client_secret") == "dummy_oidc_client_secret"
+            assert captured_token_form.get("code") == "oidc-auth-code-123"
+            return httpx.Response(
+                200,
+                json={"access_token": "oidc-access-token-xyz", "token_type": "Bearer"},
+            )
+        if url == f"{issuer_norm}/userinfo" and request.method == "GET":
+            assert request.headers.get("authorization") == "Bearer oidc-access-token-xyz"
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "usr_789",
+                    "name": "Clara SSO",
+                    "preferred_username": "clara",
+                    "email": "Clara@Example.com",
+                    "email_verified": True,
+                    "picture": "https://cdn.example.com/clara.png",
+                },
+            )
+        return httpx.Response(404, json={"error": "not_found"})
+
+    mock_transport = httpx.MockTransport(_mock_handler)
+    real_async_client = httpx.AsyncClient
+
+    def _patched_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = mock_transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.auth.oauth.httpx.AsyncClient", _patched_async_client)
+
+    try:
+        async with client:
+            # 1. GET /auth/me advertises "oidc" and oidc_provider_name
+            me_before = (await client.get("/api/life/auth/me")).json()
+            assert "oidc" in me_before["providers"]
+            assert me_before["oidc_provider_name"] == "Logto"
+
+            # 2. OIDC login triggers discovery and redirects with PKCE S256 challenge
+            r_login = await client.get(
+                "/api/life/auth/oauth/oidc/login",
+                params={"next": "/life?shared=9"},
+            )
+            assert r_login.status_code == 302
+            assert discovery_hits == 1
+
+            loc = r_login.headers["location"]
+            assert loc.startswith(f"{issuer_norm}/authorize?")
+            qs = parse_qs(urlsplit(loc).query)
+            state_val = qs["state"][0]
+            code_challenge = qs["code_challenge"][0]
+            assert qs["code_challenge_method"][0] == "S256"
+            assert qs["response_type"][0] == "code"
+            assert qs["client_id"][0] == "dummy_oidc_client_id"
+            assert qs["scope"][0] == "openid email profile"
+
+            # 3. Callback exchanges code + PKCE code_verifier matching code_challenge!
+            r_cb = await client.get(
+                "/api/life/auth/oauth/oidc/callback",
+                params={"code": "oidc-auth-code-123", "state": state_val},
+            )
+            assert r_cb.status_code == 302
+            assert r_cb.headers["location"] == "/life?shared=9"
+            # Discovery document was cached (still only 1 fetch!)
+            assert discovery_hits == 1
+
+            sent_verifier = captured_token_form.get("code_verifier")
+            assert sent_verifier is not None
+            assert compute_pkce_challenge_s256(sent_verifier) == code_challenge
+
+            # 4. User is logged in with provider="oidc" and issuer-scoped provider_user_id
+            me_after = (await client.get("/api/life/auth/me")).json()["user"]
+            assert me_after["display_name"] == "Clara SSO"
+            assert me_after["provider"] == "oidc"
+            assert me_after["email_verified"] is True
+            assert me_after["avatar_url"] == "https://cdn.example.com/clara.png"
+
+            ident = (
+                await db_session.execute(
+                    select(UserIdentity).where(UserIdentity.provider == "oidc")
+                )
+            ).scalar_one()
+            assert ident.provider_user_id == f"{issuer_norm}:usr_789"
+            assert ident.username == "clara"
+
+        # 5. Non-HTTPS remote OIDC issuer URL is rejected (502)
+        clear_oidc_discovery_cache()
+        bad_cfg = cfg.model_copy(update={"OIDC_ISSUER_URL": "http://insecure.example.com"})
+        _, bad_client = await _make_client(bad_cfg, db_session)
+        async with bad_client:
+            r_insecure = await bad_client.get("/api/life/auth/oauth/oidc/login")
+            assert r_insecure.status_code == 502
+    finally:
+        clear_oidc_discovery_cache()
+
+
+@pytest.mark.asyncio
+async def test_oidc_basic_auth_error_handling_and_security_edge_cases(
+    test_settings: Settings,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    from app.auth.oauth import (
+        clear_oidc_discovery_cache,
+        create_oauth_state_cookie,
+    )
+    from app.auth.security import OAUTH_STATE_COOKIE_NAME
+    from app.db.models import UserIdentity
+
+    clear_oidc_discovery_cache()
+    issuer = "https://idp-basic.example.com"
+    real_async_client = httpx.AsyncClient
+
+    # Seed an existing verified user to ensure unverified OIDC emails never hijack their account
+    existing_user = User(
+        role="user",
+        display_name="Victim",
+        email="victim@example.com",
+        email_verified=True,
+        notify_replies=True,
+    )
+    db_session.add(existing_user)
+    await db_session.commit()
+
+    # Whitespace OIDC_PROVIDER_NAME falls back to "SSO"; scopes without "openid" prepend it
+    cfg = test_settings.model_copy(
+        update={
+            "OIDC_ISSUER_URL": issuer,
+            "OIDC_CLIENT_ID": "basic_cid",
+            "OIDC_CLIENT_SECRET": "basic_csecret",
+            "OIDC_PROVIDER_NAME": "   ",
+            "OIDC_SCOPES": "email profile",
+        }
+    )
+
+    mode: dict[str, Any] = {"case": "basic_ok", "userinfo": {}}
+    captured_basic_auth: dict[str, Any] = {}
+
+    def _mock_handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url == f"{issuer}/.well-known/openid-configuration":
+            if mode["case"] == "issuer_mismatch":
+                return httpx.Response(
+                    200,
+                    json={
+                        "issuer": "https://other-idp.example.com",
+                        "authorization_endpoint": f"{issuer}/auth",
+                        "token_endpoint": f"{issuer}/token",
+                        "userinfo_endpoint": f"{issuer}/userinfo",
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": issuer,
+                    "authorization_endpoint": f"{issuer}/auth",
+                    "token_endpoint": f"{issuer}/token",
+                    "userinfo_endpoint": f"{issuer}/userinfo",
+                    "token_endpoint_auth_methods_supported": ["client_secret_basic"],
+                },
+            )
+        if url == f"{issuer}/token":
+            if mode["case"] == "token_timeout":
+                raise httpx.ConnectTimeout("upstream timed out")
+            if mode["case"] == "token_non_json":
+                return httpx.Response(200, text="<html>Bad Gateway</html>")
+            captured_basic_auth["auth_header"] = request.headers.get("authorization")
+            captured_basic_auth["form"] = parse_qs(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"access_token": "tok-basic"})
+        if url == f"{issuer}/userinfo":
+            if mode["case"] == "userinfo_non_json":
+                return httpx.Response(200, text="not-json")
+            return httpx.Response(200, json=mode["userinfo"])
+        return httpx.Response(404)
+
+    mock_transport = httpx.MockTransport(_mock_handler)
+
+    def _patched_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = mock_transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("app.auth.oauth.httpx.AsyncClient", _patched_async_client)
+
+    try:
+        _, client = await _make_client(cfg, db_session)
+        async with client:
+            # 1. Whitespace OIDC_PROVIDER_NAME normalized to "SSO"
+            me_meta = (await client.get("/api/life/auth/me")).json()
+            assert me_meta["oidc_provider_name"] == "SSO"
+
+            # 2. Discovery issuer mismatch -> 502
+            mode["case"] = "issuer_mismatch"
+            r_mismatch = await client.get("/api/life/auth/oauth/oidc/login")
+            assert r_mismatch.status_code == 502
+
+            # 3. Valid login with client_secret_basic + scope normalization ("openid" prepended)
+            clear_oidc_discovery_cache()
+            mode["case"] = "basic_ok"
+            mode["userinfo"] = {
+                "sub": "logto_42",
+                "username": "logto_user",
+                "email": "victim@example.com",
+                "email_verified": False,
+            }
+            r_login = await client.get("/api/life/auth/oauth/oidc/login")
+            assert r_login.status_code == 302
+            qs = parse_qs(urlsplit(r_login.headers["location"]).query)
+            assert qs["scope"][0] == "openid email profile"
+            state_val = qs["state"][0]
+
+            # Callback uses HTTP Basic auth (omits client_secret from body) & does NOT link unverified email
+            r_cb = await client.get(
+                "/api/life/auth/oauth/oidc/callback",
+                params={"code": "c1", "state": state_val},
+            )
+            assert r_cb.status_code == 302
+            expected_basic = "Basic " + base64.b64encode(
+                b"basic_cid:basic_csecret"
+            ).decode("ascii")
+            assert captured_basic_auth["auth_header"] == expected_basic
+            assert "client_secret" not in captured_basic_auth["form"]
+
+            me_unverified = (await client.get("/api/life/auth/me")).json()["user"]
+            assert me_unverified["id"] != existing_user.id
+            assert me_unverified["display_name"] == "logto_user"
+            assert me_unverified["email_verified"] is False
+            ident = (
+                await db_session.execute(
+                    select(UserIdentity).where(
+                        UserIdentity.provider == "oidc",
+                        UserIdentity.provider_user_id == f"{issuer}:logto_42",
+                    )
+                )
+            ).scalar_one()
+            assert ident.username == "logto_user"
+
+            # 4. String "false" email_verified also must NOT link to existing verified user
+            mode["userinfo"] = {
+                "sub": "logto_43",
+                "name": "String False",
+                "email": "victim@example.com",
+                "email_verified": "false",
+            }
+            r_l2 = await client.get("/api/life/auth/oauth/oidc/login")
+            st2 = parse_qs(urlsplit(r_l2.headers["location"]).query)["state"][0]
+            r_cb2 = await client.get(
+                "/api/life/auth/oauth/oidc/callback",
+                params={"code": "c2", "state": st2},
+            )
+            assert r_cb2.status_code == 302
+            me_str_false = (await client.get("/api/life/auth/me")).json()["user"]
+            assert me_str_false["id"] != existing_user.id
+            assert me_str_false["email_verified"] is False
+
+            # 5. Valid state cookie missing PKCE `cv` -> 400
+            st_no_cv, cookie_no_cv = create_oauth_state_cookie(
+                provider="oidc",
+                next_url="/life",
+                secret_key=cfg.SECRET_KEY,
+                code_verifier=None,
+            )
+            client.cookies.set(OAUTH_STATE_COOKIE_NAME, cookie_no_cv)
+            r_no_cv = await client.get(
+                "/api/life/auth/oauth/oidc/callback",
+                params={"code": "c3", "state": st_no_cv},
+            )
+            assert r_no_cv.status_code == 400
+            client.cookies.clear()
+
+            # 6. Upstream network timeout, non-JSON token/userinfo, and whitespace `sub` -> 502
+            for bad_case, bad_info in (
+                ("token_timeout", {}),
+                ("token_non_json", {}),
+                ("userinfo_non_json", {}),
+                ("basic_ok", {"sub": "   "}),
+            ):
+                mode["case"] = bad_case
+                mode["userinfo"] = bad_info
+                r_l = await client.get("/api/life/auth/oauth/oidc/login")
+                st = parse_qs(urlsplit(r_l.headers["location"]).query)["state"][0]
+                r_err = await client.get(
+                    "/api/life/auth/oauth/oidc/callback",
+                    params={"code": "c_err", "state": st},
+                )
+                assert r_err.status_code == 502, f"Expected 502 for {bad_case}/{bad_info}"
+
+        # 7. Embedded URL credentials in OIDC_ISSUER_URL rejected with 502
+        clear_oidc_discovery_cache()
+        cred_cfg = cfg.model_copy(
+            update={"OIDC_ISSUER_URL": "https://user:pass@idp-basic.example.com"}
+        )
+        _, cred_client = await _make_client(cred_cfg, db_session)
+        async with cred_client:
+            r_cred = await cred_client.get("/api/life/auth/oauth/oidc/login")
+            assert r_cred.status_code == 502
+    finally:
+        clear_oidc_discovery_cache()

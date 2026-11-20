@@ -24,6 +24,7 @@ from app.config import Settings
 from app.db.models import (
     Channel,
     Comment,
+    CommentTgReaction,
     NotificationQueue,
     OriginalUploadToken,
     Poll,
@@ -35,6 +36,7 @@ from app.db.models import (
     UserIdentity,
 )
 from app.db.repo import (
+    compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
     ensure_channel,
@@ -692,11 +694,12 @@ class TelegramService:
         async def _on_poll(_client: Any, poll: Any) -> None:
             await self.handle_poll_update(poll)
 
-        reaction_filter = (
-            filters.chat(self.settings.TG_CHANNEL_ID)
-            if self.settings.TG_CHANNEL_ID is not None
-            else None
-        )
+        reaction_chats = [
+            cid
+            for cid in (self.settings.TG_CHANNEL_ID, self.settings.TG_DISCUSSION_CHAT_ID)
+            if cid is not None
+        ]
+        reaction_filter = filters.chat(reaction_chats) if reaction_chats else None
         self.client.add_handler(MessageReactionCountHandler(_on_reaction_count, reaction_filter))
         self.client.add_handler(PollHandler(_on_poll))
         self._handlers_registered = True
@@ -1622,11 +1625,44 @@ class TelegramService:
             "deleted": comment.deleted_at is not None,
             "is_mine": False,
             "can_delete": False,
+            "reactions": [],
         }
 
     # ------------------------------------------------------------------
     # Live Reaction Count & Poll Updates
     # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _replace_tg_reactions(
+        session: AsyncSession,
+        *,
+        model: type[TgReaction] | type[CommentTgReaction],
+        fk_col_name: str,
+        target_id: int,
+        raw_reactions: Sequence[Any],
+    ) -> None:
+        fk_col = getattr(model, fk_col_name)
+        await session.execute(delete(model).where(fk_col == target_id))
+        seen: set[str] = set()
+        for r in raw_reactions:
+            emoji = getattr(r, "emoji", None)
+            cid = getattr(r, "custom_emoji_id", None)
+            cid_str = str(cid) if cid is not None else None
+            if not emoji and not cid_str:
+                continue
+            rkey = make_reaction_key(emoji=emoji, custom_emoji_id=cid_str)
+            if rkey in seen:
+                continue
+            seen.add(rkey)
+            session.add(
+                model(
+                    **{fk_col_name: target_id},
+                    reaction_key=rkey,
+                    emoji=emoji,
+                    custom_emoji_id=cid_str,
+                    count=int(getattr(r, "count", 0) or 0),
+                )
+            )
 
     async def handle_reaction_count_update(self, update: Any) -> None:
         chat_id = getattr(getattr(update, "chat", None), "id", None)
@@ -1634,49 +1670,99 @@ class TelegramService:
         if msg_id is None or chat_id is None:
             return
 
+        chat_id_int = int(chat_id)
+        raw_reactions = getattr(update, "reactions", None) or []
+
         async with self.session_factory() as session:
-            channel = await self._resolve_channel_for_chat(session, int(chat_id))
-            if channel is None:
-                return
-            post = await find_post_by_channel_tg_msg(session, channel.id, int(msg_id))
-            if post is None:
+            channel = await self._resolve_channel_for_chat(session, chat_id_int)
+            if channel is not None:
+                post = await find_post_by_channel_tg_msg(session, channel.id, int(msg_id))
+                if post is None:
+                    # Channel-chat reaction for an untracked/service message must never
+                    # collide with a discussion Comment sharing the same tg_msg_id.
+                    return
+                post_id = post.id
+                await self._replace_tg_reactions(
+                    session,
+                    model=TgReaction,
+                    fk_col_name="post_id",
+                    target_id=post_id,
+                    raw_reactions=raw_reactions,
+                )
+                await session.commit()
+                session.expire_all()
+
+                refreshed = await get_post_by_id(session, post_id, include_deleted=False)
+                if refreshed is None:
+                    return
+                merged = compute_merged_reactions(refreshed)
+                public_reactions = [
+                    {k: v for k, v in item.items() if k != "reacted"} for item in merged
+                ]
+                await self._emit_sse(
+                    "reaction.updated",
+                    {"post_id": refreshed.id, "reactions": public_reactions},
+                )
                 return
 
-            post_id = post.id
-            await session.execute(delete(TgReaction).where(TgReaction.post_id == post_id))
-            seen: set[str] = set()
-            for r in getattr(update, "reactions", None) or []:
-                emoji = getattr(r, "emoji", None)
-                cid = getattr(r, "custom_emoji_id", None)
-                cid_str = str(cid) if cid is not None else None
-                if not emoji and not cid_str:
-                    continue
-                rkey = make_reaction_key(emoji=emoji, custom_emoji_id=cid_str)
-                if rkey in seen:
-                    continue
-                seen.add(rkey)
-                session.add(
-                    TgReaction(
-                        post_id=post_id,
-                        reaction_key=rkey,
-                        emoji=emoji,
-                        custom_emoji_id=cid_str,
-                        count=int(getattr(r, "count", 0) or 0),
-                    )
+            disc_channel = (
+                await session.execute(
+                    select(Channel).where(Channel.tg_discussion_chat_id == chat_id_int)
                 )
+            ).scalar_one_or_none()
+            if disc_channel is None:
+                return
+
+            comment = (
+                await session.execute(
+                    select(Comment)
+                    .join(Post, Post.id == Comment.post_id)
+                    .where(
+                        Comment.channel_id == disc_channel.id,
+                        Comment.tg_msg_id == int(msg_id),
+                        Comment.deleted_at.is_(None),
+                        Post.is_deleted.is_(False),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if comment is None:
+                return
+
+            comment_id = comment.id
+            await self._replace_tg_reactions(
+                session,
+                model=CommentTgReaction,
+                fk_col_name="comment_id",
+                target_id=comment_id,
+                raw_reactions=raw_reactions,
+            )
             await session.commit()
             session.expire_all()
 
-            refreshed = await get_post_by_id(session, post_id, include_deleted=False)
-            if refreshed is None:
+            refreshed_comment = (
+                await session.execute(
+                    select(Comment)
+                    .options(
+                        selectinload(Comment.tg_reactions),
+                        selectinload(Comment.web_reactions),
+                    )
+                    .where(Comment.id == comment_id, Comment.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if refreshed_comment is None:
                 return
-            merged = compute_merged_reactions(refreshed)
+            merged = compute_merged_comment_reactions(refreshed_comment)
             public_reactions = [
                 {k: v for k, v in item.items() if k != "reacted"} for item in merged
             ]
             await self._emit_sse(
-                "reaction.updated",
-                {"post_id": refreshed.id, "reactions": public_reactions},
+                "comment.reaction.updated",
+                {
+                    "post_id": refreshed_comment.post_id,
+                    "comment_id": refreshed_comment.id,
+                    "reactions": public_reactions,
+                },
             )
 
     async def handle_poll_update(self, tg_poll: Any) -> None:
