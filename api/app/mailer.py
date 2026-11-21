@@ -251,7 +251,11 @@ class Mailer:
             comment_ids = [row.comment_id for row in rows]
             comments_stmt = (
                 select(Comment)
-                .where(Comment.id.in_(comment_ids), Comment.deleted_at.is_(None))
+                .where(
+                    Comment.id.in_(comment_ids),
+                    Comment.deleted_at.is_(None),
+                    Comment.moderation_status == "approved",
+                )
                 .order_by(Comment.created_at.asc(), Comment.id.asc())
             )
             comments = list((await db.execute(comments_stmt)).scalars().all())

@@ -12,6 +12,9 @@ from urllib.parse import urlencode, urlsplit
 import httpx
 from fastapi import HTTPException
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from joserfc import jwt
+from joserfc.errors import JoseError
+from joserfc.jwk import KeySet
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,10 +29,14 @@ from app.db.models import User, UserIdentity
 
 OAUTH_STATE_MAX_AGE_SECONDS = 600
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 86400  # 24 hours
+TELEGRAM_OIDC_ISSUER = "https://oauth.telegram.org"
+TELEGRAM_OIDC_JWKS_URL = "https://oauth.telegram.org/.well-known/jwks.json"
+TELEGRAM_JWKS_TTL_SECONDS = 3600.0
 OIDC_DISCOVERY_TTL_SECONDS = 3600.0
 SUPPORTED_OAUTH_PROVIDERS = ("github", "google", "oidc")
 
 _oidc_discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_telegram_jwks_cache: tuple[float, KeySet] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -579,6 +586,145 @@ def verify_telegram_login_payload(
 
     if not constant_time_equals(expected_hash, received_hash):
         raise HTTPException(status_code=400, detail="Invalid Telegram login signature")
+
+
+def resolve_telegram_client_id(settings: Settings) -> str | None:
+    """Resolve numeric Telegram Bot Client ID for OIDC telegram-login.js."""
+    explicit = (settings.TG_LOGIN_CLIENT_ID or "").strip()
+    if explicit:
+        return explicit
+    token = (settings.TG_BOT_TOKEN or "").strip()
+    if ":" in token:
+        prefix = token.split(":", 1)[0].strip()
+        if prefix.isdigit():
+            return prefix
+    return None
+
+
+async def _fetch_telegram_jwks(*, force_refresh: bool = False) -> KeySet:
+    global _telegram_jwks_cache
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _telegram_jwks_cache is not None
+        and _telegram_jwks_cache[0] > now
+    ):
+        return _telegram_jwks_cache[1]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                TELEGRAM_OIDC_JWKS_URL,
+                headers={"Accept": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if not isinstance(data, dict) or not isinstance(data.get("keys"), list):
+            raise ValueError("Invalid Telegram JWKS payload")
+        key_set = KeySet.import_key_set(data)
+    except Exception as exc:
+        if _telegram_jwks_cache is not None:
+            return _telegram_jwks_cache[1]
+        raise HTTPException(
+            status_code=502, detail="Failed to fetch Telegram OIDC signing keys"
+        ) from exc
+
+    _telegram_jwks_cache = (now + TELEGRAM_JWKS_TTL_SECONDS, key_set)
+    return key_set
+
+
+async def verify_telegram_oidc_id_token(
+    id_token: str,
+    *,
+    expected_client_id: str | None,
+    jwks_override: KeySet | None = None,
+    now_ts: int | None = None,
+) -> dict[str, Any]:
+    """Verify Telegram OIDC ID token signature against JWKS and validate claims."""
+    if not expected_client_id:
+        raise HTTPException(status_code=503, detail="Telegram login is not configured")
+
+    token_str = id_token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Missing Telegram ID token")
+
+    key_set = jwks_override if jwks_override is not None else await _fetch_telegram_jwks()
+    try:
+        decoded = jwt.decode(token_str, key_set)
+    except JoseError as exc:
+        if jwks_override is None:
+            refreshed = await _fetch_telegram_jwks(force_refresh=True)
+            try:
+                decoded = jwt.decode(token_str, refreshed)
+            except JoseError as retry_exc:
+                raise HTTPException(
+                    status_code=400, detail="Invalid Telegram ID token signature"
+                ) from retry_exc
+        else:
+            raise HTTPException(
+                status_code=400, detail="Invalid Telegram ID token signature"
+            ) from exc
+
+    claims = decoded.claims if isinstance(decoded.claims, dict) else {}
+    now = int(time.time()) if now_ts is None else int(now_ts)
+
+    iss = claims.get("iss")
+    if not isinstance(iss, str) or _normalize_issuer(iss) != TELEGRAM_OIDC_ISSUER:
+        raise HTTPException(status_code=400, detail="Invalid Telegram ID token issuer")
+
+    aud = claims.get("aud")
+    aud_values: list[str] = []
+    if isinstance(aud, (str, int)) and not isinstance(aud, bool):
+        aud_values = [str(aud)]
+    elif isinstance(aud, list):
+        aud_values = [
+            str(item) for item in aud if isinstance(item, (str, int)) and not isinstance(item, bool)
+        ]
+    if str(expected_client_id) not in aud_values:
+        raise HTTPException(status_code=400, detail="Invalid Telegram ID token audience")
+
+    exp = claims.get("exp")
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+        raise HTTPException(status_code=400, detail="Missing Telegram ID token expiration")
+    if int(exp) < now - 60:
+        raise HTTPException(status_code=400, detail="Telegram ID token expired")
+
+    nbf = claims.get("nbf")
+    if isinstance(nbf, (int, float)) and not isinstance(nbf, bool) and int(nbf) > now + 60:
+        raise HTTPException(status_code=400, detail="Telegram ID token not yet valid")
+
+    raw_id = claims.get("id")
+    tg_id: int | None = None
+    if isinstance(raw_id, int) and not isinstance(raw_id, bool) and raw_id > 0:
+        tg_id = raw_id
+    elif isinstance(raw_id, str) and raw_id.strip().isdigit():
+        tg_id = int(raw_id.strip())
+    if not tg_id:
+        raise HTTPException(status_code=400, detail="Telegram ID token missing user id")
+
+    raw_picture = claims.get("picture")
+    picture = (
+        raw_picture.strip()
+        if isinstance(raw_picture, str) and raw_picture.strip().startswith(("https://", "http://"))
+        else None
+    )
+    raw_name = claims.get("name")
+    raw_given = claims.get("given_name")
+    raw_family = claims.get("family_name")
+    raw_username = claims.get("preferred_username")
+
+    return {
+        "id": tg_id,
+        "name": raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else None,
+        "given_name": raw_given.strip() if isinstance(raw_given, str) and raw_given.strip() else None,
+        "family_name": raw_family.strip() if isinstance(raw_family, str) and raw_family.strip() else None,
+        "preferred_username": (
+            raw_username.strip().lstrip("@")
+            if isinstance(raw_username, str) and raw_username.strip()
+            else None
+        ),
+        "picture": picture,
+    }
 
 
 async def upsert_oauth_user(

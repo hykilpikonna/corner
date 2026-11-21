@@ -4,6 +4,7 @@ import html
 import inspect
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlparse
@@ -14,7 +15,9 @@ from app.auth.security import format_anon_display_name
 from app.config import Settings
 from app.db.models import Channel, Comment, Post, User
 from app.db.repo import get_post_by_id
+from app.media.stickers import lookup_sticker_tg_file_id
 from app.routes.upload import create_upload_token
+from app.tg.avatar_emoji import ensure_sender_avatar_custom_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -212,13 +215,20 @@ class TelegramBridge:
         session_factory: async_sessionmaker[AsyncSession],
         settings: Settings,
         client: Any | None = None,
+        lookup_discussion_root: Callable[[int, int], Awaitable[int | None]] | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.settings = settings
         self.client = client
+        self.lookup_discussion_root = lookup_discussion_root
 
     def set_client(self, client: Any | None) -> None:
         self.client = client
+
+    def set_discussion_lookup(
+        self, fn: Callable[[int, int], Awaitable[int | None]] | None
+    ) -> None:
+        self.lookup_discussion_root = fn
 
     async def _send_with_optional_kwargs(
         self,
@@ -320,6 +330,8 @@ class TelegramBridge:
             comment = await session.get(Comment, comment_id)
             if comment is None or comment.deleted_at is not None:
                 return None
+            if comment.moderation_status != "approved":
+                return None
             if comment.source != "web":
                 return comment.tg_msg_id
             if comment.tg_msg_id is not None:
@@ -333,11 +345,12 @@ class TelegramBridge:
             if channel is None:
                 return None
 
+            user_obj: User | None = None
             author_name = format_anon_display_name(comment.anon_tag)
             if comment.user_id is not None:
-                user = await session.get(User, comment.user_id)
-                if user is not None and user.display_name:
-                    author_name = user.display_name
+                user_obj = await session.get(User, comment.user_id)
+                if user_obj is not None and user_obj.display_name:
+                    author_name = user_obj.display_name
 
             parent_tg_msg_id: int | None = None
             if comment.parent_id is not None:
@@ -345,25 +358,62 @@ class TelegramBridge:
                 if parent_comment is not None and parent_comment.tg_msg_id is not None:
                     parent_tg_msg_id = parent_comment.tg_msg_id
 
-            site_host = _extract_site_host(self.settings.SITE_URL)
+            # Resolve missing discussion root on active channels on demand before falling back to DM
+            if (
+                channel.status == "active"
+                and channel.tg_discussion_chat_id is not None
+                and post.tg_discussion_root_id is None
+                and channel.tg_chat_id is not None
+                and post.tg_msg_id is not None
+                and self.lookup_discussion_root is not None
+            ):
+                try:
+                    resolved_root_id = await self.lookup_discussion_root(
+                        int(channel.tg_chat_id), int(post.tg_msg_id)
+                    )
+                    if resolved_root_id is not None and resolved_root_id > 0:
+                        post.tg_discussion_root_id = int(resolved_root_id)
+                        await session.commit()
+                except Exception:
+                    logger.debug(
+                        "On-demand discussion root lookup failed for post %s",
+                        post.id,
+                        exc_info=True,
+                    )
 
-            # Active epoch with discussion group + linked discussion root -> 2-way bridge
+            # Active epoch with discussion group + linked discussion root -> mautrix-telegram style relay
             if (
                 channel.status == "active"
                 and channel.tg_discussion_chat_id is not None
                 and post.tg_discussion_root_id is not None
             ):
                 reply_to_id = parent_tg_msg_id or post.tg_discussion_root_id
-                header_html = f"💬 {html.escape(author_name)} (via {html.escape(site_host)}):"
+                avatar_emoji = await ensure_sender_avatar_custom_emoji(
+                    session_factory=self.session_factory,
+                    settings=self.settings,
+                    client=self.client,
+                    user=user_obj,
+                    anon_display_name=author_name if user_obj is None else None,
+                )
+                if avatar_emoji is not None:
+                    pfp_cid, pfp_fallback = avatar_emoji
+                    sender_html = (
+                        f'<tg-emoji emoji-id="{pfp_cid}">{html.escape(pfp_fallback)}</tg-emoji> '
+                        f"<b>{html.escape(author_name)}</b>"
+                    )
+                else:
+                    sender_html = f"<b>{html.escape(author_name)}</b>"
                 body_tg_html = _comment_html_to_tg_html(comment.body_html)
                 if not body_tg_html and comment.body_text:
                     body_tg_html = html.escape(comment.body_text)
 
-                full_html = f"{header_html}\n{body_tg_html}" if body_tg_html else header_html
+                full_html = (
+                    f"{sender_html}:\n{body_tg_html}" if body_tg_html else sender_html
+                )
                 plain_fallback = (
-                    f"💬 {author_name} (via {site_host}):\n{comment.body_text}"
+                    f"{author_name}:\n{comment.body_text}"
                     if comment.body_text
-                    else f"💬 {author_name} (via {site_host})"
+                    else author_name
                 )
 
                 media = comment.media if isinstance(comment.media, dict) else None
@@ -371,37 +421,75 @@ class TelegramBridge:
                 local_media = (
                     self._resolve_local_media_file(media.get("url")) if media else None
                 )
+                sticker_file_id = (
+                    lookup_sticker_tg_file_id(
+                        self.settings.media_dir,
+                        media.get("url"),
+                        sticker_id=media.get("sticker_id"),
+                    )
+                    if media and media_type == "sticker"
+                    else None
+                )
 
                 try:
                     sent: Any = None
                     if (
                         media_type == "sticker"
-                        and local_media is not None
+                        and (sticker_file_id is not None or local_media is not None)
                         and hasattr(self.client, "send_sticker")
                     ):
-                        sent = await self._send_with_optional_kwargs(
-                            self.client.send_sticker,
-                            {
-                                "chat_id": channel.tg_discussion_chat_id,
-                                "sticker": str(local_media),
-                            },
-                            {"reply_to_message_id": reply_to_id},
-                        )
-                        if body_tg_html:
-                            follow_reply_id = int(getattr(sent, "id", 0) or 0) or reply_to_id
-                            await self._send_html_or_plain_message(
-                                chat_id=channel.tg_discussion_chat_id,
-                                html_text=full_html,
-                                plain_text=plain_fallback,
-                                reply_to_message_id=follow_reply_id,
+                        sticker_target = sticker_file_id or str(local_media)
+                        try:
+                            sent = await self._send_with_optional_kwargs(
+                                self.client.send_sticker,
+                                {
+                                    "chat_id": channel.tg_discussion_chat_id,
+                                    "sticker": sticker_target,
+                                },
+                                {"reply_to_message_id": reply_to_id},
                             )
+                        except Exception:
+                            if sticker_file_id is None or local_media is None:
+                                raise
+                            logger.warning(
+                                "Telegram send_sticker by file_id failed for comment %s; retrying local file",
+                                comment_id,
+                                exc_info=True,
+                            )
+                            sent = await self._send_with_optional_kwargs(
+                                self.client.send_sticker,
+                                {
+                                    "chat_id": channel.tg_discussion_chat_id,
+                                    "sticker": str(local_media),
+                                },
+                                {"reply_to_message_id": reply_to_id},
+                            )
+                        follow_reply_id = int(getattr(sent, "id", 0) or 0) or reply_to_id
+                        notice_html = (
+                            full_html if body_tg_html else f"{sender_html} sent a sticker"
+                        )
+                        notice_plain = (
+                            plain_fallback if comment.body_text else f"{author_name} sent a sticker"
+                        )
+                        await self._send_html_or_plain_message(
+                            chat_id=channel.tg_discussion_chat_id,
+                            html_text=notice_html,
+                            plain_text=notice_plain,
+                            reply_to_message_id=follow_reply_id,
+                        )
                     elif (
                         media_type == "photo"
                         and local_media is not None
                         and hasattr(self.client, "send_photo")
                     ):
+                        caption_html = (
+                            full_html if body_tg_html else f"{sender_html} sent an image"
+                        )
+                        caption_plain = (
+                            plain_fallback if comment.body_text else f"{author_name} sent an image"
+                        )
                         html_pm = _get_html_parse_mode()
-                        if html_pm is not None and len(full_html) <= _MAX_TG_CAPTION_LEN:
+                        if html_pm is not None and len(caption_html) <= _MAX_TG_CAPTION_LEN:
                             try:
                                 sent = await self._send_with_optional_kwargs(
                                     self.client.send_photo,
@@ -410,7 +498,7 @@ class TelegramBridge:
                                         "photo": str(local_media),
                                     },
                                     {
-                                        "caption": full_html,
+                                        "caption": caption_html,
                                         "parse_mode": html_pm,
                                         "reply_to_message_id": reply_to_id,
                                     },
@@ -426,7 +514,7 @@ class TelegramBridge:
                             disabled_pm = _get_disabled_parse_mode()
                             opt: dict[str, Any] = {
                                 "caption": _truncate_tg_text(
-                                    plain_fallback, limit=_MAX_TG_CAPTION_LEN
+                                    caption_plain, limit=_MAX_TG_CAPTION_LEN
                                 ),
                                 "reply_to_message_id": reply_to_id,
                             }
@@ -466,8 +554,13 @@ class TelegramBridge:
             # Archived epoch (e.g. Epoch 1) or unlinked post -> DM owner alert instead
             if self.settings.OWNER_TG_ID is not None:
                 permalink = _post_permalink(self.settings.SITE_URL, post.id)
+                alert_title = (
+                    "Archived post comment alert"
+                    if channel.status == "archived"
+                    else "Unlinked post comment alert"
+                )
                 dm_text = _truncate_tg_text(
-                    f"Archived post comment alert\n"
+                    f"{alert_title}\n"
                     f"Post #{post.id}: {permalink}\n"
                     f"From: {author_name}\n\n"
                     f"{comment.body_text}"
@@ -572,4 +665,53 @@ class TelegramBridge:
             if sent_id > 0:
                 token_row.dm_msg_id = sent_id
             await session.commit()
+            return sent_id if sent_id > 0 else None
+
+    async def notify_owner_moderation_pending(self, comment_id: int) -> int | None:
+        """Send a safe, zero-payload alert DM to OWNER_TG_ID with a link to the web review modal."""
+        if self.client is None or self.settings.OWNER_TG_ID is None:
+            return None
+
+        async with self.session_factory() as session:
+            comment = await session.get(Comment, comment_id)
+            if comment is None or comment.deleted_at is not None:
+                return None
+            if comment.moderation_status != "pending":
+                return None
+
+            sender_label = format_anon_display_name(comment.anon_tag)
+            if comment.user_id is not None:
+                user = await session.get(User, comment.user_id)
+                if user is not None and user.display_name:
+                    sender_label = user.display_name
+
+            meta = comment.moderation_meta if isinstance(comment.moderation_meta, dict) else {}
+            reason = str(meta.get("reason") or "needs_review")
+            top_cat = meta.get("top_category")
+            top_score = meta.get("top_score")
+            reason_line = f"{reason}"
+            if top_cat and isinstance(top_score, (int, float)) and float(top_score) > 0:
+                reason_line = f"{reason} ({top_cat}: {float(top_score):.0%})"
+
+            site_base = self.settings.SITE_URL.rstrip("/")
+            review_url = f"{site_base}?review={comment.id}"
+            lines = [
+                f"🛡️ Comment #{comment.id} pending review on Post #{comment.post_id}",
+                f"Sender: {sender_label}",
+                f"Reason: {reason_line}",
+                f"Review: {review_url}",
+            ]
+            try:
+                sent = await self._send_plain_message(
+                    chat_id=self.settings.OWNER_TG_ID,
+                    text="\n".join(lines),
+                )
+            except Exception:
+                logger.warning(
+                    "Failed sending moderation alert DM for comment %s",
+                    comment_id,
+                    exc_info=True,
+                )
+                return None
+            sent_id = int(getattr(sent, "id", 0) or 0)
             return sent_id if sent_id > 0 else None

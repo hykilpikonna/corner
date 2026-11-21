@@ -16,8 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.db.models import Comment, NotificationQueue, OriginalUploadToken, Post, User
-from app.db.repo import ensure_channel, get_post_by_id, upsert_post
+from app.db.models import Channel, Comment, NotificationQueue, OriginalUploadToken, Post, User
+from app.db.repo import ensure_channel, get_active_channel, get_post_by_id, upsert_post
 from app.db.session import create_engine_and_factory
 from app.media.optimize import MAX_UPLOAD_BYTES
 from app.sse import SSEBus, SSEEvent
@@ -551,7 +551,7 @@ async def test_discussion_bridge_manual_fwd_loop_guard_entities_and_archived_dm(
     assert sent["reply_to_message_id"] == 8001
     assert sent["parse_mode"] == ParseMode.HTML
     assert sent["disable_web_page_preview"] is True
-    assert "💬 Alice (via aza.moe):" in sent["text"]
+    assert "<b>Alice</b>:" in sent["text"]
     assert "evil.example" not in sent["text"]
 
     # 4. Strict bot echo loop prevention (bot_id match AND is_self=True!)
@@ -1412,3 +1412,768 @@ async def test_dual_bot_and_readonly_user_client_architecture(
         assert user_client.started is False
         assert bot_client.started is False
         await engine.dispose()
+
+
+async def test_crawl_channel_history_uses_bot_get_messages_only(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Startup/CLI channel crawl uses bot get_messages ID ranges and never user_client."""
+    tg_settings = test_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path / "crawl_data",
+            "TG_BOT_TOKEN": "999000:TEST_BOT_TOKEN",
+            "TG_CHANNEL_ID": -1001998877665,
+            "TG_DISCUSSION_CHAT_ID": -1001998877666,
+            "OWNER_TG_ID": 777000,
+        }
+    )
+    engine, factory = create_engine_and_factory(tg_settings)
+
+    def _msg(msg_id: int, text: str, *, media_group_id: str | None = None) -> Any:
+        return SimpleNamespace(
+            id=msg_id,
+            empty=False,
+            chat=SimpleNamespace(id=tg_settings.TG_CHANNEL_ID),
+            date=datetime(2026, 11, 20, 12, 0, tzinfo=UTC),
+            edit_date=None,
+            text=text or None,
+            caption=None,
+            entities=None,
+            caption_entities=None,
+            media_group_id=media_group_id,
+            photo=None,
+            poll=None,
+            reactions=None,
+            views=None,
+            forwards=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            reply_to_message_id=None,
+            quote=None,
+            author_signature=None,
+            service=None,
+            show_caption_above_media=False,
+            has_media_spoiler=False,
+        )
+
+    class _StrictNoCrawlUserClient(FakeTgClient):
+        async def get_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
+            raise AssertionError("user_client.get_messages must not be called for channel crawl")
+
+        async def get_chat_history(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("get_chat_history must never be called")
+
+    bot_client = FakeTgClient(
+        bot_id=999000,
+        chat_map={
+            tg_settings.TG_CHANNEL_ID: SimpleNamespace(
+                id=tg_settings.TG_CHANNEL_ID,
+                title="Active Channel",
+                username="active_chan",
+            )
+        },
+        messages_by_chat={
+            tg_settings.TG_CHANNEL_ID: {
+                1: _msg(1, "First historic post"),
+                2: _msg(2, "Album pic 1", media_group_id="g1"),
+                3: _msg(3, "", media_group_id="g1"),
+                205: _msg(205, "Later historic post"),
+            }
+        },
+    )
+    user_client = _StrictNoCrawlUserClient(bot_id=777888)
+    sse_bus = SSEBus()
+    service = TelegramService(
+        session_factory=factory,
+        settings=tg_settings,
+        sse_publish=sse_bus.publish,
+        client=bot_client,
+        user_client=user_client,
+    )
+
+    try:
+        # Full crawl traverses past empty gap (205 in second batch when batch_size=200)
+        summary = await service.crawl_channel_history(full=True, batch_size=200)
+        assert summary["status"] == "ok"
+        assert summary["crawled_messages"] == 4
+        assert summary["posts_ingested"] == 3
+        assert summary["max_msg_id"] == 205
+
+        async with factory() as session:
+            ch = await get_active_channel(session)
+            assert ch is not None
+            assert isinstance(ch, Channel)
+            assert ch.title == "Active Channel"
+            assert ch.username == "active_chan"
+            assert ch.last_crawled_msg_id == 205
+            posts = list(
+                (
+                    await session.execute(
+                        select(Post).where(Post.channel_id == ch.id).order_by(Post.tg_msg_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert [p.tg_msg_id for p in posts] == [1, 2, 205]
+
+        # Ensure owner DM was NOT spammed during historical backfill
+        assert bot_client.sent_messages == []
+    finally:
+        await service.stop()
+        await engine.dispose()
+
+
+async def test_fallback_process_sticker_and_media_attachments(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Built-in converter preserves video/animated stickers, video, and voice files."""
+    tg_settings = test_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path / "media_data",
+            "TG_BOT_TOKEN": "999000:TEST_BOT_TOKEN",
+            "TG_CHANNEL_ID": -1001998877667,
+            "TG_DISCUSSION_CHAT_ID": -1001998877668,
+            "OWNER_TG_ID": 777000,
+        }
+    )
+    engine, factory = create_engine_and_factory(tg_settings)
+    bot_client = FakeTgClient(
+        bot_id=999000,
+        chat_map={
+            tg_settings.TG_CHANNEL_ID: SimpleNamespace(
+                id=tg_settings.TG_CHANNEL_ID,
+                title="Media Channel",
+                username="media_chan",
+            )
+        },
+        downloads={
+            "sticker.webm": b"WEBM_BYTES",
+            "sticker.tgs": b"TGS_BYTES",
+            "voice.ogg": b"OGG_BYTES",
+        },
+    )
+
+    async def _fake_dl(target: Any, *, file_name: str) -> str:
+        dest = Path(file_name)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"MEDIA_BYTES")
+        return str(dest)
+
+    bot_client.download_media = _fake_dl  # type: ignore[method-assign]
+
+    service = TelegramService(
+        session_factory=factory,
+        settings=tg_settings,
+        client=bot_client,
+    )
+    try:
+        async with factory() as session:
+            await ensure_channel(
+                session,
+                tg_chat_id=tg_settings.TG_CHANNEL_ID,
+                tg_discussion_chat_id=tg_settings.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            await session.commit()
+
+        webm_sticker_msg = SimpleNamespace(
+            id=11,
+            empty=False,
+            chat=SimpleNamespace(id=tg_settings.TG_CHANNEL_ID),
+            date=datetime(2026, 11, 21, 0, 50, tzinfo=UTC),
+            edit_date=None,
+            text=None,
+            caption=None,
+            entities=None,
+            caption_entities=None,
+            media_group_id=None,
+            photo=None,
+            sticker=SimpleNamespace(
+                file_id="st_webm_id",
+                file_name="sticker.webm",
+                mime_type="video/webm",
+                file_size=1234,
+                width=512,
+                height=512,
+                is_animated=False,
+                is_video=True,
+                emoji="🖱",
+                thumbs=None,
+            ),
+            poll=None,
+            reactions=None,
+            views=2,
+            forwards=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            reply_to_message_id=None,
+            quote=None,
+            author_signature=None,
+            service=None,
+            show_caption_above_media=False,
+            has_media_spoiler=False,
+        )
+        tgs_sticker_msg = SimpleNamespace(
+            **{
+                **webm_sticker_msg.__dict__,
+                "id": 12,
+                "sticker": SimpleNamespace(
+                    file_id="st_tgs_id",
+                    file_name="AnimatedSticker.tgs",
+                    mime_type="application/x-tgsticker",
+                    file_size=2222,
+                    width=512,
+                    height=512,
+                    is_animated=True,
+                    is_video=False,
+                    emoji="✨",
+                    thumbs=None,
+                ),
+            }
+        )
+        voice_msg = SimpleNamespace(
+            **{
+                **webm_sticker_msg.__dict__,
+                "id": 13,
+                "sticker": None,
+                "voice": SimpleNamespace(
+                    file_id="voice_id",
+                    mime_type="audio/ogg",
+                    file_size=3333,
+                    duration=4,
+                    thumbs=None,
+                ),
+            }
+        )
+
+        ingested = await service._ingest_channel_messages(
+            [webm_sticker_msg, tgs_sticker_msg, voice_msg],
+            is_edit=False,
+            trigger_prompt=False,
+        )
+        assert len(ingested) == 3
+
+        by_tg = {p.tg_msg_id: p for p in ingested}
+        assert by_tg[11].files is not None
+        assert by_tg[11].files[0]["media_type"] == "sticker"
+        assert by_tg[11].files[0]["url"].endswith("/11.webm")
+        assert by_tg[11].files[0]["sticker_emoji"] == "🖱"
+
+        assert by_tg[12].files is not None
+        assert by_tg[12].files[0]["media_type"] == "sticker"
+        assert by_tg[12].files[0]["url"].endswith("/12.tgs")
+        assert by_tg[12].files[0]["sticker_emoji"] == "✨"
+
+        assert by_tg[13].files is not None
+        assert by_tg[13].files[0]["media_type"] == "voice_message"
+        assert by_tg[13].files[0]["url"].endswith("/13.ogg")
+    finally:
+        await service.stop()
+        await engine.dispose()
+
+
+async def test_autoforward_kurigram_and_ondemand_discussion_root_lookup(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Kurigram `automatic_forward=True` and on-demand `get_discussion_message` resolve active roots."""
+    tg_settings = test_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path / "disc_lookup_data",
+            "SITE_URL": "https://aza.moe/life",
+            "TG_BOT_TOKEN": "999000:TEST_BOT_TOKEN",
+            "TG_CHANNEL_ID": -1001998877771,
+            "TG_DISCUSSION_CHAT_ID": -1001998877772,
+            "OWNER_TG_ID": 777000,
+        }
+    )
+    engine, factory = create_engine_and_factory(tg_settings)
+    bot_client = FakeTgClient(bot_id=999000)
+    user_client = FakeTgClient(bot_id=888000, bot_username="reader_user")
+
+    async def _fake_get_disc(chat_id: int, msg_id: int) -> Any:
+        if chat_id == tg_settings.TG_CHANNEL_ID and msg_id == 77:
+            return SimpleNamespace(
+                id=99077, chat=SimpleNamespace(id=tg_settings.TG_DISCUSSION_CHAT_ID)
+            )
+        return None
+
+    user_client.get_discussion_message = _fake_get_disc  # type: ignore[attr-defined]
+    service = TelegramService(
+        session_factory=factory,
+        settings=tg_settings,
+        client=bot_client,
+        user_client=user_client,
+    )
+
+    try:
+        async with factory() as session:
+            ch = await ensure_channel(
+                session,
+                tg_chat_id=tg_settings.TG_CHANNEL_ID,
+                tg_discussion_chat_id=tg_settings.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            p_kuri = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=76,
+                tg_all_msg_ids=[76],
+                date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+                text_html="Kurigram autoforward target",
+            )
+            p_ondemand = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=77,
+                tg_all_msg_ids=[77],
+                date=datetime(2026, 11, 21, 1, 1, tzinfo=UTC),
+                text_html="Needs on-demand discussion lookup",
+            )
+            c = Comment(
+                post_id=p_ondemand.id,
+                source="web",
+                anon_tag="Anon #9f8f",
+                body_text="测试喵",
+                body_html="<p>测试喵</p>",
+                created_at=datetime(2026, 11, 21, 1, 2, tzinfo=UTC),
+            )
+            session.add(c)
+            await session.commit()
+            kuri_post_id = p_kuri.id
+            ondemand_post_id = p_ondemand.id
+            comment_id = c.id
+
+        # 1. Kurigram `automatic_forward=True` + `forward_origin.sender_chat` links tg_discussion_root_id
+        kuri_autofwd = SimpleNamespace(
+            id=99076,
+            chat=SimpleNamespace(id=tg_settings.TG_DISCUSSION_CHAT_ID),
+            automatic_forward=True,
+            is_automatic_forward=None,
+            forward_origin=SimpleNamespace(
+                sender_chat=SimpleNamespace(id=tg_settings.TG_CHANNEL_ID),
+                message_id=76,
+            ),
+            text="Kurigram autoforward target",
+            date=datetime(2026, 11, 21, 1, 0, 2, tzinfo=UTC),
+        )
+        await service.handle_discussion_message(kuri_autofwd)
+        async with factory() as session:
+            p1 = await session.get(Post, kuri_post_id)
+            assert p1 is not None and p1.tg_discussion_root_id == 99076
+
+        # 2. On-demand lookup resolves missing root 99077 and relays in mautrix/telegram format
+        bridged_id = await service.bridge.bridge_web_comment(comment_id)
+        assert bridged_id is not None
+        assert len(bot_client.sent_messages) == 1
+        relayed = bot_client.sent_messages[0]
+        assert relayed["chat_id"] == tg_settings.TG_DISCUSSION_CHAT_ID
+        assert relayed["reply_to_message_id"] == 99077
+        assert relayed["text"] == "<b>Anon #9f8f</b>:\n测试喵"
+        assert relayed["parse_mode"] == ParseMode.HTML
+        async with factory() as session:
+            p2 = await session.get(Post, ondemand_post_id)
+            assert p2 is not None and p2.tg_discussion_root_id == 99077
+    finally:
+        await service.stop()
+        await engine.dispose()
+
+
+async def test_owner_dm_fullsync_preserves_existing_images_and_updates_edits(
+    test_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """/fullsync crawls from ID #1, updates edits/deletions, and never overwrites existing images."""
+    tg_settings = test_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path / "fullsync_data",
+            "TG_BOT_TOKEN": "999000:TEST_BOT_TOKEN",
+            "TG_CHANNEL_ID": -1001998877773,
+            "TG_DISCUSSION_CHAT_ID": -1001998877774,
+            "OWNER_TG_ID": 777000,
+        }
+    )
+    engine, factory = create_engine_and_factory(tg_settings)
+
+    photo_msg_1 = SimpleNamespace(
+        id=1,
+        empty=False,
+        chat=SimpleNamespace(id=tg_settings.TG_CHANNEL_ID),
+        date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+        edit_date=datetime(2026, 11, 21, 1, 5, tzinfo=UTC),
+        text=None,
+        caption="Edited photo caption",
+        entities=None,
+        caption_entities=None,
+        media_group_id=None,
+        photo=SimpleNamespace(width=800, height=600, file_size=5000),
+        poll=None,
+        reactions=None,
+        views=42,
+        forwards=1,
+        forward_from_chat=None,
+        forward_sender_name=None,
+        reply_to_message_id=None,
+        quote=None,
+        author_signature=None,
+        service=None,
+        show_caption_above_media=False,
+        has_media_spoiler=False,
+    )
+    bot_client = FakeTgClient(
+        bot_id=999000,
+        chat_map={
+            tg_settings.TG_CHANNEL_ID: SimpleNamespace(
+                id=tg_settings.TG_CHANNEL_ID,
+                title="Fullsync Channel",
+                username="fullsync_chan",
+            )
+        },
+        messages_by_chat={tg_settings.TG_CHANNEL_ID: {1: photo_msg_1}},
+    )
+    dl_calls: list[int] = []
+
+    async def _fail_if_existing_photo_dl(msg: Any, *, file_name: str) -> str:
+        dl_calls.append(int(getattr(msg, "id", 0)))
+        raise AssertionError("Must not re-download photo for existing post during /fullsync")
+
+    bot_client.download_media = _fail_if_existing_photo_dl  # type: ignore[method-assign]
+    service = TelegramService(
+        session_factory=factory,
+        settings=tg_settings,
+        client=bot_client,
+    )
+
+    try:
+        async with factory() as session:
+            ch = await ensure_channel(
+                session,
+                tg_chat_id=tg_settings.TG_CHANNEL_ID,
+                tg_discussion_chat_id=tg_settings.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            p1 = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=1,
+                tg_all_msg_ids=[1],
+                date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+                text_html="Original caption",
+                images=[
+                    {
+                        "sort_order": 0,
+                        "tg_msg_id": 1,
+                        "url": f"epochs/{ch.id}/media/1.jpg",
+                        "thumb_url": f"epochs/{ch.id}/media/1_thumb.webp",
+                        "original_url": f"epochs/{ch.id}/originals/1.png",
+                        "original_size": 999999,
+                        "width": 4000,
+                        "height": 3000,
+                        "phash": "abcd1234",
+                    }
+                ],
+            )
+            p_deleted = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=2,
+                tg_all_msg_ids=[2],
+                date=datetime(2026, 11, 21, 1, 2, tzinfo=UTC),
+                text_html="Deleted post",
+            )
+            ch.last_crawled_msg_id = 2
+            await session.commit()
+            p1_id = p1.id
+            p_del_id = p_deleted.id
+
+        dm_msg = SimpleNamespace(
+            id=88001,
+            from_user=SimpleNamespace(id=tg_settings.OWNER_TG_ID),
+            text="/fullsync",
+            entities=None,
+        )
+        await service.handle_owner_dm(dm_msg)
+
+        assert dl_calls == []
+        assert any("Full sync (ok):" in m["text"] for m in bot_client.sent_messages)
+
+        async with factory() as session:
+            after_p1 = await get_post_by_id(session, p1_id, include_deleted=False)
+            assert after_p1 is not None
+            assert after_p1.text_html == "Edited photo caption"
+            assert after_p1.views == 42
+            assert len(after_p1.images) == 1
+            assert after_p1.images[0].url.endswith("/media/1.jpg")
+            assert after_p1.images[0].original_url.endswith("/originals/1.png")
+            assert after_p1.images[0].width == 4000
+            assert after_p1.images[0].phash == "abcd1234"
+
+            after_del = await session.get(Post, p_del_id)
+            assert after_del is not None and after_del.is_deleted is True
+    finally:
+        await service.stop()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_comment_reaction_sync_message_reaction_and_reconciler(
+    db_factory: async_sessionmaker[AsyncSession],
+    tg_settings: Settings,
+) -> None:
+    cfg = tg_settings.model_copy(
+        update={
+            "TG_CHANNEL_ID": -100777100,
+            "TG_DISCUSSION_CHAT_ID": -100777200,
+        }
+    )
+    sse_bus = SSEBus()
+    sub_id, sse_q, _ = sse_bus.subscribe()
+
+    bot_client = FakeTgClient(bot_id=999000)
+    service = TelegramService(
+        session_factory=db_factory,
+        settings=cfg,
+        sse_publish=sse_bus.publish,
+        client=bot_client,
+    )
+    try:
+        async with db_factory() as session:
+            ch = await ensure_channel(
+                session,
+                tg_chat_id=cfg.TG_CHANNEL_ID,
+                tg_discussion_chat_id=cfg.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            post = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=10,
+                tg_all_msg_ids=[10],
+                date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+                text_html="Post 10",
+            )
+            c = Comment(
+                post_id=post.id,
+                channel_id=ch.id,
+                source="web",
+                tg_msg_id=501,
+                body_text="hi",
+                body_html="<p>hi</p>",
+                created_at=datetime(2026, 11, 21, 1, 1, tzinfo=UTC),
+            )
+            session.add(c)
+            await session.commit()
+            c_id = c.id
+
+        # 1. Per-user delta fallback (no user_client) from UpdateBotMessageReaction
+        disc_chat = SimpleNamespace(id=cfg.TG_DISCUSSION_CHAT_ID)
+        await service.handle_message_reaction_update(
+            SimpleNamespace(
+                chat=disc_chat,
+                message_id=501,
+                old_reaction=[],
+                new_reaction=[SimpleNamespace(emoji="❤", custom_emoji_id=None)],
+            )
+        )
+        events = _drain_bus(sse_q)
+        assert any(
+            ev.event == "comment.reaction.updated"
+            and ev.data["comment_id"] == c_id
+            and ev.data["reactions"][0]["emoji"] == "❤"
+            and ev.data["reactions"][0]["count"] == 1
+            for ev in events
+        )
+
+        # 2. PeriodicReconciler picks up authoritative discussion reactions
+        user_client = FakeTgClient(bot_id=888000)
+        ch_obj = SimpleNamespace(id=cfg.TG_CHANNEL_ID)
+        user_client.chat_map[cfg.TG_CHANNEL_ID] = SimpleNamespace(
+            id=cfg.TG_CHANNEL_ID, title="Test", is_banned=False, is_restricted=False, is_deactivated=False
+        )
+        user_client.messages_by_chat[cfg.TG_CHANNEL_ID] = {
+            10: SimpleNamespace(
+                id=10,
+                empty=False,
+                chat=ch_obj,
+                date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+                text="Post 10",
+                views=10,
+            )
+        }
+        user_client.messages_by_chat[cfg.TG_DISCUSSION_CHAT_ID] = {
+            501: SimpleNamespace(
+                id=501,
+                empty=False,
+                chat=disc_chat,
+                reactions=SimpleNamespace(
+                    reactions=[
+                        SimpleNamespace(emoji="❤", custom_emoji_id=None, count=2),
+                        SimpleNamespace(emoji="🔥", custom_emoji_id=None, count=1),
+                    ]
+                ),
+            )
+        }
+        service.user_client = user_client
+        reconciler = PeriodicReconciler(
+            session_factory=db_factory,
+            settings=cfg,
+            client=user_client,
+            telegram_service=service,
+            sse_publish=sse_bus.publish,
+        )
+        stats = await reconciler.reconcile_once()
+        assert stats["updated_comment_reactions"] == 1
+        events2 = _drain_bus(sse_q)
+        assert any(
+            ev.event == "comment.reaction.updated"
+            and ev.data["comment_id"] == c_id
+            and len(ev.data["reactions"]) == 2
+            for ev in events2
+        )
+    finally:
+        sse_bus.unsubscribe(sub_id)
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_sticker_manifest_file_id_and_bridge_native_sticker(
+    db_factory: async_sessionmaker[AsyncSession],
+    tg_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    from pyrogram import enums
+
+    from app.media.stickers import list_sticker_packs, lookup_sticker_tg_file_id
+    from app.tg.bridge import TelegramBridge
+
+    cfg = tg_settings.model_copy(
+        update={
+            "DATA_DIR": tmp_path / "data",
+            "TG_CHANNEL_ID": -100777100,
+            "TG_DISCUSSION_CHAT_ID": -100777200,
+        }
+    )
+
+    sent_stickers: list[dict[str, Any]] = []
+
+    class _StickerClient(FakeTgClient):
+        async def get_sticker_set(self, name: str) -> Any:
+            return SimpleNamespace(
+                name="CatPack",
+                title="Cat Pack",
+                sticker_type=enums.StickerType.REGULAR,
+                stickers=[
+                    SimpleNamespace(
+                        file_id="CAACAgIAAxkBAAIBZ2fStickerFileId123",
+                        file_unique_id="u_cat_1",
+                        emoji="😺",
+                        width=512,
+                        height=512,
+                    )
+                ],
+            )
+
+        async def send_sticker(self, chat_id: int, sticker: str, **kwargs: Any) -> Any:
+            sent_stickers.append({"chat_id": chat_id, "sticker": sticker, **kwargs})
+            self.next_msg_id += 1
+            return SimpleNamespace(id=self.next_msg_id)
+
+    client = _StickerClient(bot_id=999000)
+    client.downloads["CAACAgIAAxkBAAIBZ2fStickerFileId123"] = b"RIFFxxxxWEBP"
+    service = TelegramService(session_factory=db_factory, settings=cfg, client=client)
+
+    try:
+        ok, _ = await service.import_sticker_set("CatPack")
+        assert ok
+
+        assert (
+            lookup_sticker_tg_file_id(cfg.media_dir, "/media/stickers/CatPack/u_cat_1.webp")
+            == "CAACAgIAAxkBAAIBZ2fStickerFileId123"
+        )
+        packs = list_sticker_packs(cfg.media_dir)
+        assert "file_id" not in packs[0]["stickers"][0]
+
+        async with db_factory() as session:
+            ch = await ensure_channel(
+                session,
+                tg_chat_id=cfg.TG_CHANNEL_ID,
+                tg_discussion_chat_id=cfg.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            post = await upsert_post(
+                session,
+                channel=ch,
+                tg_msg_id=10,
+                tg_all_msg_ids=[10],
+                date=datetime(2026, 11, 21, 1, 0, tzinfo=UTC),
+                text_html="Post 10",
+            )
+            post.tg_discussion_root_id = 200
+            c = Comment(
+                post_id=post.id,
+                channel_id=ch.id,
+                source="web",
+                anon_tag="#abcd",
+                body_text="",
+                body_html="",
+                created_at=datetime(2026, 11, 21, 1, 1, tzinfo=UTC),
+                media={
+                    "media_type": "sticker",
+                    "url": "stickers/CatPack/u_cat_1.webp",
+                    "sticker_id": "CatPack/u_cat_1.webp",
+                    "emoji": "😺",
+                },
+            )
+            session.add(c)
+            await session.commit()
+            c_id = c.id
+
+        bridge = TelegramBridge(session_factory=db_factory, settings=cfg, client=client)
+        bridged_id = await bridge.bridge_web_comment(c_id)
+        assert bridged_id is not None
+        assert len(sent_stickers) == 1
+        assert sent_stickers[0]["sticker"] == "CAACAgIAAxkBAAIBZ2fStickerFileId123"
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_custom_emoji_meta_unicode_alt(tmp_path: Path, tg_settings: Settings) -> None:
+    from app.media.stickers import list_custom_emojis
+    from app.tg.reactions_cmd import cache_custom_emoji_stickers
+
+    cfg = tg_settings.model_copy(update={"DATA_DIR": tmp_path / "data"})
+    emoji_dir = cfg.exports_dir / "emoji"
+    emoji_dir.mkdir(parents=True, exist_ok=True)
+    # Pre-existing cached emoji file missing .emoji_meta.json
+    (emoji_dir / "5555555555555555.webp").write_bytes(b"RIFF")
+
+    client = FakeTgClient(bot_id=999000)
+
+    async def _get_custom(ids: list[int]) -> list[Any]:
+        out = []
+        for cid in ids:
+            if cid == 5555555555555555:
+                out.append(SimpleNamespace(custom_emoji_id=cid, emoji="🔥", is_animated=False, is_video=False))
+            elif cid == 6666666666666666:
+                out.append(SimpleNamespace(custom_emoji_id=cid, emoji="❤️", is_animated=False, is_video=False))
+        return out
+
+    async def _dl(sticker: Any, *, file_name: str) -> str:
+        Path(file_name).write_bytes(b"WEBP")
+        return file_name
+
+    client.get_custom_emoji_stickers = _get_custom  # type: ignore[method-assign]
+    client.download_media = _dl  # type: ignore[method-assign]
+
+    await cache_custom_emoji_stickers(
+        client, cfg.exports_dir, ["5555555555555555", "6666666666666666"]
+    )
+    items = list_custom_emojis(cfg)
+    by_id = {it["id"]: it for it in items}
+    assert by_id["5555555555555555"]["alt"] == "🔥"
+    assert by_id["6666666666666666"]["alt"] == "❤️"
+

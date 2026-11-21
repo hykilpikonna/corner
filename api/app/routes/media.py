@@ -171,7 +171,7 @@ async def serve_export_emoji(
     raise HTTPException(status_code=404, detail="Emoji file not found")
 
 
-@router.get("/emojis/custom", response_model=CustomEmojisResponse)
+@router.get("/emojis/custom", response_model=CustomEmojisResponse, response_model_exclude_none=True)
 async def get_custom_emojis(settings: SettingsDep) -> CustomEmojisResponse:
     emojis = await asyncio.to_thread(list_custom_emojis, settings)
     return CustomEmojisResponse(emojis=emojis)

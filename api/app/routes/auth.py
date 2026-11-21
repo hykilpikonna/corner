@@ -23,9 +23,11 @@ from app.auth.oauth import (
     create_oauth_state_cookie,
     exchange_oauth_code,
     generate_pkce_verifier,
+    resolve_telegram_client_id,
     upsert_oauth_user,
     verify_oauth_state_cookie,
     verify_telegram_login_payload,
+    verify_telegram_oidc_id_token,
 )
 from app.auth.security import (
     OAUTH_STATE_COOKIE_NAME,
@@ -153,6 +155,7 @@ async def get_auth_me(
         getattr(request.app.state, "tg_service", None), "bot_username", None
     )
     resolved_tg_bot = _resolve_telegram_bot_username(settings, tg_service_username)
+    resolved_tg_client_id = resolve_telegram_client_id(settings)
     providers = get_enabled_providers(
         settings, bot_username_fallback=tg_service_username
     )
@@ -161,6 +164,7 @@ async def get_auth_me(
         providers=providers,
         allow_anon_comments=settings.ALLOW_ANON_COMMENTS,
         telegram_bot_username=(resolved_tg_bot if "telegram" in providers else None),
+        telegram_client_id=(resolved_tg_client_id if "telegram" in providers else None),
         oidc_provider_name=(
             (settings.OIDC_PROVIDER_NAME.strip() or "SSO")
             if "oidc" in providers
@@ -305,25 +309,57 @@ async def telegram_login_callback(
     db: DbSessionDep,
     settings: SettingsDep,
 ) -> UpdateMeResponse:
-    verify_telegram_login_payload(
-        payload.model_dump(exclude_none=True),
-        bot_token=settings.TG_BOT_TOKEN,
-    )
+    if payload.id_token:
+        claims = await verify_telegram_oidc_id_token(
+            payload.id_token,
+            expected_client_id=resolve_telegram_client_id(settings),
+        )
+        tg_id = int(claims["id"])
+        username = claims.get("preferred_username")
+        full_name = claims.get("name") or " ".join(
+            part
+            for part in (
+                claims.get("given_name") or "",
+                claims.get("family_name") or "",
+            )
+            if part
+        )
+        photo_url = claims.get("picture")
+    elif (
+        payload.id is not None
+        and payload.first_name is not None
+        and payload.auth_date is not None
+        and payload.hash is not None
+    ):
+        verify_telegram_login_payload(
+            payload.model_dump(exclude_none=True),
+            bot_token=settings.TG_BOT_TOKEN,
+        )
+        tg_id = payload.id
+        username = payload.username
+        full_name = " ".join(
+            part
+            for part in (
+                payload.first_name.strip(),
+                (payload.last_name or "").strip(),
+            )
+            if part
+        )
+        photo_url = payload.photo_url
+    else:
+        raise HTTPException(
+            status_code=400, detail="Missing Telegram login credentials"
+        )
 
-    is_owner = settings.OWNER_TG_ID is not None and payload.id == settings.OWNER_TG_ID
-    full_name = " ".join(
-        part
-        for part in (payload.first_name.strip(), (payload.last_name or "").strip())
-        if part
-    )
+    is_owner = settings.OWNER_TG_ID is not None and tg_id == settings.OWNER_TG_ID
     profile = OAuthProfile(
         provider="telegram",
-        provider_user_id=str(payload.id),
-        display_name=full_name or payload.username or f"tg_{payload.id}",
-        username=payload.username,
+        provider_user_id=str(tg_id),
+        display_name=full_name or username or f"tg_{tg_id}",
+        username=username,
         email=None,
         email_verified=False,
-        avatar_url=payload.photo_url,
+        avatar_url=photo_url,
     )
     user = await upsert_oauth_user(db, profile, settings=settings, is_owner=is_owner)
     session_token = await create_session(db, user.id)

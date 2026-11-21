@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
@@ -32,6 +33,14 @@ def _extract_origin(url: str) -> str | None:
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    app_logger = logging.getLogger("app")
+    if not logging.getLogger().handlers and not app_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        app_logger.addHandler(handler)
+    if app_logger.level == logging.NOTSET:
+        app_logger.setLevel(logging.INFO)
+
     cfg = settings or get_settings()
     sse_bus = SSEBus()
     rate_limiter = SlidingWindowRateLimiter()

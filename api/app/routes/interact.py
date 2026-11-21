@@ -32,6 +32,7 @@ from app.db.models import (
     Comment,
     CommentTgReaction,
     CommentWebReaction,
+    ModerationWhitelist,
     NotificationQueue,
     Poll,
     Post,
@@ -60,6 +61,12 @@ from app.media.optimize import (
     InvalidImageError,
     process_comment_image_upload,
 )
+from app.moderation import (
+    evaluate_comment_moderation,
+    is_sender_whitelisted,
+    resolve_sender_whitelist_identity,
+    upsert_moderation_whitelist,
+)
 from app.routes.auth import serialize_user_dto
 from app.routes.media import resolve_safe_media_path
 from app.schemas import (
@@ -76,6 +83,11 @@ from app.schemas import (
     MergedPollDTO,
     MergedPollOptionDTO,
     MergedReactionDTO,
+    ModerationCommentDTO,
+    ModerationDecisionRequest,
+    ModerationDecisionResponse,
+    ModerationQueueResponse,
+    ModerationWhitelistEntryDTO,
     PollVoteRequest,
     PollVoteResponse,
     PostInteractionDTO,
@@ -558,6 +570,32 @@ def _normalize_comment_media_input(
     return out
 
 
+def _is_comment_owned_by_viewer(
+    comment: Comment,
+    *,
+    me: User | None,
+    viewer_actor_hashes: set[str] | None,
+    viewer_anon_tags: set[str] | None,
+) -> bool:
+    is_mine_user = bool(
+        me is not None and comment.user_id is not None and comment.user_id == me.id
+    )
+    is_mine_hash = bool(
+        viewer_actor_hashes
+        and comment.actor_key_hash is not None
+        and comment.actor_key_hash in viewer_actor_hashes
+    )
+    is_mine_legacy_anon_tag = bool(
+        comment.actor_key_hash is None
+        and comment.user_id is None
+        and comment.source == "web"
+        and viewer_anon_tags
+        and comment.anon_tag is not None
+        and comment.anon_tag in viewer_anon_tags
+    )
+    return is_mine_user or is_mine_hash or is_mine_legacy_anon_tag
+
+
 def _serialize_comment(
     comment: Comment,
     *,
@@ -592,6 +630,7 @@ def _serialize_comment(
             deleted=True,
             is_mine=False,
             can_delete=False,
+            moderation_status="approved",
             reactions=[],
         )
 
@@ -629,23 +668,12 @@ def _serialize_comment(
             verified=False,
         )
 
-    is_mine_user = bool(
-        me is not None and comment.user_id is not None and comment.user_id == me.id
+    is_mine = _is_comment_owned_by_viewer(
+        comment,
+        me=me,
+        viewer_actor_hashes=viewer_actor_hashes,
+        viewer_anon_tags=viewer_anon_tags,
     )
-    is_mine_hash = bool(
-        viewer_actor_hashes
-        and comment.actor_key_hash is not None
-        and comment.actor_key_hash in viewer_actor_hashes
-    )
-    is_mine_legacy_anon_tag = bool(
-        comment.actor_key_hash is None
-        and comment.user_id is None
-        and comment.source == "web"
-        and viewer_anon_tags
-        and comment.anon_tag is not None
-        and comment.anon_tag in viewer_anon_tags
-    )
-    is_mine = is_mine_user or is_mine_hash or is_mine_legacy_anon_tag
     can_delete = bool(is_mine or (me is not None and me.role == "owner"))
 
     reactions = (
@@ -671,57 +699,71 @@ def _serialize_comment(
         deleted=False,
         is_mine=is_mine,
         can_delete=can_delete,
+        moderation_status=comment.moderation_status,
         reactions=reactions,
     )
 
 
-def _schedule_tg_bridge(request: Request, comment_id: int) -> None:
+def _schedule_tg_bridge_method(
+    request: Request,
+    *,
+    method_name: str,
+    comment_id: int,
+    task_prefix: str,
+    allow_callable: bool = False,
+) -> None:
     tg_bridge = getattr(request.app.state, "tg_bridge", None)
     if tg_bridge is None:
         return
 
     async def _run() -> None:
         try:
-            if callable(tg_bridge):
+            if allow_callable and callable(tg_bridge):
                 res = tg_bridge(comment_id)
                 if inspect.isawaitable(res):
                     await res
-            elif hasattr(tg_bridge, "bridge_web_comment"):
-                res = tg_bridge.bridge_web_comment(comment_id)
+            elif hasattr(tg_bridge, method_name):
+                res = getattr(tg_bridge, method_name)(comment_id)
                 if inspect.isawaitable(res):
                     await res
         except Exception:
-            logger.exception("tg_bridge callback failed for comment_id=%s", comment_id)
+            logger.exception("%s failed for comment_id=%s", task_prefix, comment_id)
 
-    task = asyncio.create_task(_run(), name=f"tg-bridge-comment-{comment_id}")
+    task = asyncio.create_task(_run(), name=f"{task_prefix}-{comment_id}")
     tasks: set[asyncio.Task[Any]] | None = getattr(
         request.app.state, "background_tasks", None
     )
     if tasks is not None:
         tasks.add(task)
         task.add_done_callback(tasks.discard)
+
+
+def _schedule_tg_bridge(request: Request, comment_id: int) -> None:
+    _schedule_tg_bridge_method(
+        request,
+        method_name="bridge_web_comment",
+        comment_id=comment_id,
+        task_prefix="tg-bridge-comment",
+        allow_callable=True,
+    )
 
 
 def _schedule_tg_delete(request: Request, comment_id: int) -> None:
-    tg_bridge = getattr(request.app.state, "tg_bridge", None)
-    if tg_bridge is None or not hasattr(tg_bridge, "delete_bridged_comment"):
-        return
-
-    async def _run() -> None:
-        try:
-            res = tg_bridge.delete_bridged_comment(comment_id)
-            if inspect.isawaitable(res):
-                await res
-        except Exception:
-            logger.exception("tg_bridge delete failed for comment_id=%s", comment_id)
-
-    task = asyncio.create_task(_run(), name=f"tg-delete-comment-{comment_id}")
-    tasks: set[asyncio.Task[Any]] | None = getattr(
-        request.app.state, "background_tasks", None
+    _schedule_tg_bridge_method(
+        request,
+        method_name="delete_bridged_comment",
+        comment_id=comment_id,
+        task_prefix="tg-delete-comment",
     )
-    if tasks is not None:
-        tasks.add(task)
-        task.add_done_callback(tasks.discard)
+
+
+def _schedule_moderation_ping(request: Request, comment_id: int) -> None:
+    _schedule_tg_bridge_method(
+        request,
+        method_name="notify_owner_moderation_pending",
+        comment_id=comment_id,
+        task_prefix="tg-mod-alert",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -756,7 +798,11 @@ async def get_interactions(
 
         counts_stmt = (
             select(Comment.post_id, func.count(Comment.id))
-            .where(Comment.post_id.in_(post_ids), Comment.deleted_at.is_(None))
+            .where(
+                Comment.post_id.in_(post_ids),
+                Comment.deleted_at.is_(None),
+                Comment.moderation_status == "approved",
+            )
             .group_by(Comment.post_id)
         )
         comment_counts = {
@@ -1010,6 +1056,7 @@ async def toggle_comment_reaction(
             .where(
                 Comment.id == comment_id,
                 Comment.deleted_at.is_(None),
+                Comment.moderation_status == "approved",
                 Post.is_deleted.is_(False),
             )
         )
@@ -1226,11 +1273,25 @@ async def get_post_comments(
     )
     all_comments = list((await db.execute(comments_stmt)).scalars().all())
 
-    # Iterative O(N) upward walk from live comments to mark ancestors that need tombstones
+    def _is_visible_to_viewer(c: Comment) -> bool:
+        if c.deleted_at is not None:
+            return False
+        if c.moderation_status == "approved":
+            return True
+        if c.moderation_status == "pending":
+            return _is_comment_owned_by_viewer(
+                c,
+                me=me,
+                viewer_actor_hashes=viewer_hashes or None,
+                viewer_anon_tags=viewer_anon_tags or None,
+            )
+        return False
+
+    # Iterative O(N) upward walk from live visible comments to mark ancestors that need tombstones
     by_id = {c.id: c for c in all_comments}
     has_live_descendant: set[int] = set()
     for c in all_comments:
-        if c.deleted_at is not None:
+        if not _is_visible_to_viewer(c):
             continue
         curr_parent = c.parent_id
         while curr_parent is not None and curr_parent not in has_live_descendant:
@@ -1240,9 +1301,9 @@ async def get_post_comments(
 
     visible_comments: list[tuple[Comment, bool]] = []
     for c in all_comments:
-        if c.deleted_at is None:
+        if _is_visible_to_viewer(c):
             visible_comments.append((c, False))
-        elif c.id in has_live_descendant:
+        elif c.deleted_at is not None and c.id in has_live_descendant:
             visible_comments.append((c, True))
 
     user_ids = {
@@ -1414,6 +1475,21 @@ async def create_comment(
     body_html = render_and_sanitize_comment_html(stripped_body) if stripped_body else ""
     now = datetime.now(UTC)
 
+    is_owner = me is not None and me.role == "owner"
+    whitelisted = await is_sender_whitelisted(
+        db,
+        user_id=comment_user_id,
+        actor_key_hash=actor_key_hash,
+    )
+    mod_decision = await evaluate_comment_moderation(
+        settings=settings,
+        body_text=stripped_body,
+        media=media_payload,
+        is_anonymous=is_anonymous,
+        is_owner=is_owner,
+        is_whitelisted=whitelisted,
+    )
+
     comment = Comment(
         post_id=post_id,
         parent_id=payload.parent_id,
@@ -1425,31 +1501,21 @@ async def create_comment(
         body_text=stripped_body,
         body_html=body_html,
         media=media_payload,
+        moderation_status=mod_decision.status,
+        moderation_meta=mod_decision.meta,
         created_at=now,
     )
     db.add(comment)
     await db.flush()
 
-    if (
-        parent_comment is not None
-        and parent_comment.user_id is not None
-        and parent_comment.user_id != comment_user_id
-    ):
-        parent_user = await db.get(User, parent_comment.user_id)
-        if (
-            parent_user is not None
-            and parent_user.email
-            and parent_user.email_verified
-            and parent_user.notify_replies
-        ):
-            db.add(
-                NotificationQueue(
-                    recipient_user_id=parent_user.id,
-                    comment_id=comment.id,
-                    post_id=post_id,
-                    send_after=now + timedelta(seconds=settings.EMAIL_DEBOUNCE_SECONDS),
-                )
-            )
+    if mod_decision.status == "approved":
+        await _enqueue_parent_reply_notification(
+            db,
+            parent_comment=parent_comment,
+            comment=comment,
+            now=now,
+            settings=settings,
+        )
 
     await db.commit()
 
@@ -1463,21 +1529,24 @@ async def create_comment(
         viewer_actor_hashes={actor_key_hash},
         include_reactions=False,
     )
-    public_dto = _serialize_comment(
-        comment,
-        users_by_id=users_by_id,
-        me=None,
-        settings=settings,
-        include_reactions=False,
-    )
 
-    # Publish raw CommentDTO directly on `comment.created` (matches frontend api.ts)
-    _get_sse_bus(request).publish(
-        "comment.created",
-        public_dto.model_dump(),
-        post_id=post_id,
-    )
-    _schedule_tg_bridge(request, comment.id)
+    if mod_decision.status == "approved":
+        public_dto = _serialize_comment(
+            comment,
+            users_by_id=users_by_id,
+            me=None,
+            settings=settings,
+            include_reactions=False,
+        )
+        # Publish raw CommentDTO directly on `comment.created` (matches frontend api.ts)
+        _get_sse_bus(request).publish(
+            "comment.created",
+            public_dto.model_dump(),
+            post_id=post_id,
+        )
+        _schedule_tg_bridge(request, comment.id)
+    elif mod_decision.status == "pending":
+        _schedule_moderation_ping(request, comment.id)
 
     return caller_dto
 
@@ -1540,3 +1609,270 @@ async def delete_comment(
         post_id=comment.post_id,
         comment_id=comment.id,
     )
+
+
+# ---------------------------------------------------------------------------
+# 5. Owner Moderation Queue & Sender Whitelist
+# ---------------------------------------------------------------------------
+
+
+async def _require_owner(request: Request, db: AsyncSession) -> User:
+    me = await get_current_user_optional(request, db)
+    if me is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if me.role != "owner":
+        raise HTTPException(status_code=403, detail="Owner privileges required")
+    return me
+
+
+async def _enqueue_parent_reply_notification(
+    db: AsyncSession,
+    *,
+    parent_comment: Comment | None,
+    comment: Comment,
+    now: datetime,
+    settings: Settings,
+) -> None:
+    if (
+        parent_comment is None
+        or parent_comment.user_id is None
+        or parent_comment.user_id == comment.user_id
+    ):
+        return
+    parent_user = await db.get(User, parent_comment.user_id)
+    if (
+        parent_user is not None
+        and parent_user.email
+        and parent_user.email_verified
+        and parent_user.notify_replies
+    ):
+        db.add(
+            NotificationQueue(
+                recipient_user_id=parent_user.id,
+                comment_id=comment.id,
+                post_id=comment.post_id,
+                send_after=now + timedelta(seconds=settings.EMAIL_DEBOUNCE_SECONDS),
+            )
+        )
+
+
+def _format_whitelist_label(comment: Comment, users_by_id: dict[int, User]) -> str:
+    if comment.user_id is not None and comment.user_id in users_by_id:
+        u = users_by_id[comment.user_id]
+        return f"{u.display_name} (user #{u.id})"
+    tag = format_anon_display_name(comment.anon_tag)
+    short_hash = (comment.actor_key_hash or "")[:8]
+    return f"{tag} [{short_hash}]" if short_hash else tag
+
+
+@router.get("/moderation/comments", response_model=ModerationQueueResponse)
+async def get_moderation_queue(
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> ModerationQueueResponse:
+    await _require_owner(request, db)
+
+    pending_rows = list(
+        (
+            await db.execute(
+                select(Comment)
+                .where(
+                    Comment.moderation_status == "pending",
+                    Comment.deleted_at.is_(None),
+                )
+                .order_by(Comment.created_at.desc(), Comment.id.desc())
+                .limit(200)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    whitelist_rows = list(
+        (
+            await db.execute(
+                select(ModerationWhitelist).order_by(
+                    ModerationWhitelist.created_at.desc(),
+                    ModerationWhitelist.id.desc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    wl_keys = {(w.kind, w.key) for w in whitelist_rows}
+
+    user_ids = {c.user_id for c in pending_rows if c.user_id is not None}
+    users_by_id: dict[int, User] = {}
+    if user_ids:
+        u_rows = (
+            await db.execute(
+                select(User)
+                .options(selectinload(User.identities))
+                .where(User.id.in_(user_ids))
+            )
+        ).scalars().all()
+        users_by_id = {u.id: u for u in u_rows}
+
+    comments_out: list[ModerationCommentDTO] = []
+    for c in pending_rows:
+        base_dto = _serialize_comment(
+            c,
+            users_by_id=users_by_id,
+            me=None,
+            settings=settings,
+            include_reactions=False,
+        )
+        ident = resolve_sender_whitelist_identity(c)
+        comments_out.append(
+            ModerationCommentDTO(
+                id=c.id,
+                post_id=c.post_id,
+                parent_id=c.parent_id,
+                source=c.source,
+                author=base_dto.author,
+                body_text=c.body_text,
+                body_html=c.body_html,
+                media=base_dto.media,
+                created_at=format_iso_utc(c.created_at),
+                moderation_status=c.moderation_status,
+                moderation_meta=c.moderation_meta if isinstance(c.moderation_meta, dict) else None,
+                sender_whitelisted=bool(ident is not None and ident in wl_keys),
+                can_whitelist=ident is not None,
+                whitelist_kind=ident[0] if ident else None,
+                whitelist_label=_format_whitelist_label(c, users_by_id) if ident else None,
+            )
+        )
+
+    whitelist_out = [
+        ModerationWhitelistEntryDTO(
+            id=w.id,
+            kind=w.kind,
+            key=w.key,
+            label=w.label,
+            created_at=format_iso_utc(w.created_at),
+        )
+        for w in whitelist_rows
+    ]
+    return ModerationQueueResponse(
+        pending_count=len(comments_out),
+        comments=comments_out,
+        whitelist=whitelist_out,
+    )
+
+
+@router.post(
+    "/moderation/comments/{comment_id}/decision",
+    response_model=ModerationDecisionResponse,
+)
+async def decide_moderation_comment(
+    comment_id: int,
+    payload: ModerationDecisionRequest,
+    request: Request,
+    db: DbSessionDep,
+    settings: SettingsDep,
+) -> ModerationDecisionResponse:
+    owner = await _require_owner(request, db)
+    comment = await db.get(Comment, comment_id)
+    if comment is None or comment.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
+    now = datetime.now(UTC)
+    meta = dict(comment.moderation_meta) if isinstance(comment.moderation_meta, dict) else {}
+    meta["reviewed_by_user_id"] = owner.id
+    meta["reviewed_at"] = format_iso_utc(now)
+    whitelisted = False
+
+    if payload.action == "approve":
+        was_pending = comment.moderation_status != "approved"
+        comment.moderation_status = "approved"
+        comment.moderation_meta = meta
+
+        if payload.whitelist_sender:
+            ident = resolve_sender_whitelist_identity(comment)
+            if ident is not None:
+                users_by_id: dict[int, User] = {}
+                if comment.user_id is not None:
+                    u = await db.get(User, comment.user_id)
+                    if u is not None:
+                        users_by_id[u.id] = u
+                await upsert_moderation_whitelist(
+                    db,
+                    kind=ident[0],
+                    key=ident[1],
+                    label=_format_whitelist_label(comment, users_by_id),
+                    created_by_user_id=owner.id,
+                )
+                whitelisted = True
+
+        parent_comment = (
+            await db.get(Comment, comment.parent_id)
+            if comment.parent_id is not None
+            else None
+        )
+        if was_pending:
+            await _enqueue_parent_reply_notification(
+                db,
+                parent_comment=parent_comment,
+                comment=comment,
+                now=now,
+                settings=settings,
+            )
+
+        await db.commit()
+
+        if was_pending:
+            users_by_id_pub: dict[int, User] = {}
+            if comment.user_id is not None:
+                u = (
+                    await db.execute(
+                        select(User)
+                        .options(selectinload(User.identities))
+                        .where(User.id == comment.user_id)
+                    )
+                ).scalar_one_or_none()
+                if u is not None:
+                    users_by_id_pub[u.id] = u
+            public_dto = _serialize_comment(
+                comment,
+                users_by_id=users_by_id_pub,
+                me=None,
+                settings=settings,
+                include_reactions=False,
+            )
+            _get_sse_bus(request).publish(
+                "comment.created",
+                public_dto.model_dump(),
+                post_id=comment.post_id,
+            )
+            _schedule_tg_bridge(request, comment.id)
+    else:
+        comment.moderation_status = "rejected"
+        comment.moderation_meta = meta
+        comment.deleted_at = now
+        await db.commit()
+        if comment.tg_msg_id is not None and comment.channel_id is not None:
+            _schedule_tg_delete(request, comment.id)
+
+    return ModerationDecisionResponse(
+        ok=True,
+        comment_id=comment.id,
+        post_id=comment.post_id,
+        moderation_status=comment.moderation_status,
+        whitelisted=whitelisted,
+    )
+
+
+@router.delete("/moderation/whitelist/{entry_id}")
+async def remove_moderation_whitelist_entry(
+    entry_id: int,
+    request: Request,
+    db: DbSessionDep,
+) -> dict[str, Any]:
+    await _require_owner(request, db)
+    row = await db.get(ModerationWhitelist, entry_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Whitelist entry not found")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True, "id": entry_id}

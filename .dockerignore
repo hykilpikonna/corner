@@ -1,0 +1,12 @@
+node_modules
+.nuxt
+.output
+.git
+.astro
+dist
+api
+.env
+.env.*
+test-results
+playwright-report
+*.log

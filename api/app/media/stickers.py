@@ -20,9 +20,45 @@ _SAFE_FILE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 _STICKER_SET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _STICKER_SET_HOSTS = frozenset({"t.me", "www.t.me", "telegram.me", "www.telegram.me"})
 _DISMISSED_DEFAULTS_FILENAME = ".dismissed_defaults.json"
+_EMOJI_META_FILENAME = ".emoji_meta.json"
 _DEFAULT_PACK_ORDER: dict[str, int] = {
     name.lower(): idx for idx, name in enumerate(DEFAULT_STICKER_PACKS)
 }
+
+
+def load_custom_emoji_meta(emoji_dir: Path) -> dict[str, str]:
+    """Load `custom_emoji_id -> unicode_emoji` fallback metadata from `.emoji_meta.json`."""
+    meta_path = emoji_dir / _EMOJI_META_FILENAME
+    if not meta_path.is_file():
+        return {}
+    try:
+        raw = json.loads(meta_path.read_text("utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        ks = str(k).strip()
+        if ks.isascii() and ks.isdigit() and isinstance(v, str) and v.strip():
+            out[ks] = v.strip()
+    return out
+
+
+def upsert_custom_emoji_meta(emoji_dir: Path, updates: dict[str, str]) -> dict[str, str]:
+    """Persist merged `custom_emoji_id -> unicode_emoji` mappings in `emoji_dir/.emoji_meta.json`."""
+    emoji_dir.mkdir(parents=True, exist_ok=True)
+    current = load_custom_emoji_meta(emoji_dir)
+    changed = False
+    for raw_id, raw_alt in updates.items():
+        cid = str(raw_id).strip()
+        alt = str(raw_alt).strip() if raw_alt else ""
+        if cid.isascii() and cid.isdigit() and alt and current.get(cid) != alt:
+            current[cid] = alt
+            changed = True
+    if changed:
+        _atomic_write_json(emoji_dir / _EMOJI_META_FILENAME, current)
+    return current
 
 
 def _epoch_sort_key(entry: Path) -> tuple[int, int, str]:
@@ -32,7 +68,7 @@ def _epoch_sort_key(entry: Path) -> tuple[int, int, str]:
     return (0, 0, name)
 
 
-def list_custom_emojis(settings: Settings) -> list[dict[str, str]]:
+def list_custom_emojis(settings: Settings) -> list[dict[str, str | None]]:
     """Enumerate locally cached custom emoji assets across exports and epochs."""
     candidate_roots: list[Path] = [settings.exports_dir / "emoji"]
     epochs_dir = settings.media_dir / "epochs"
@@ -45,10 +81,13 @@ def list_custom_emojis(settings: Settings) -> list[dict[str, str]]:
         candidate_roots.extend(epoch / "emoji" for epoch in sorted_epochs)
 
     prefix = settings.API_PREFIX.rstrip("/")
-    seen: dict[str, dict[str, str]] = {}
+    seen: dict[str, dict[str, str | None]] = {}
+    meta_by_id: dict[str, str] = {}
     for root in candidate_roots:
         if not root.is_dir():
             continue
+        for cid, alt in load_custom_emoji_meta(root).items():
+            meta_by_id.setdefault(cid, alt)
         for entry in sorted(root.iterdir(), key=lambda p: p.name):
             if not entry.is_file():
                 continue
@@ -64,9 +103,14 @@ def list_custom_emojis(settings: Settings) -> list[dict[str, str]]:
                 "id": stem,
                 "url": f"{prefix}/exports/emoji/{entry.name}",
                 "format": ext.lstrip("."),
+                "alt": meta_by_id.get(stem),
             }
 
-    return sorted(seen.values(), key=lambda item: int(item["id"]))
+    for stem, item in seen.items():
+        if not item.get("alt") and stem in meta_by_id:
+            item["alt"] = meta_by_id[stem]
+
+    return sorted(seen.values(), key=lambda item: int(str(item["id"])))
 
 
 def _atomic_write_json(target: Path, payload: dict[str, Any]) -> None:
@@ -327,8 +371,10 @@ def _normalize_manifest_entry(
     height: int | None = None,
     is_animated: bool = False,
     is_video: bool = False,
+    file_id: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    clean_fid = str(file_id).strip() if file_id is not None else ""
+    entry: dict[str, Any] = {
         "file": file_name,
         "emoji": emoji or None,
         "width": int(width) if width is not None else 512,
@@ -336,6 +382,55 @@ def _normalize_manifest_entry(
         "is_animated": bool(is_animated),
         "is_video": bool(is_video),
     }
+    if clean_fid:
+        entry["file_id"] = clean_fid
+    return entry
+
+
+def lookup_sticker_tg_file_id(
+    media_dir: Path,
+    rel_or_url: str | None,
+    *,
+    sticker_id: str | None = None,
+) -> str | None:
+    """Resolve stored Telegram `file_id` from `media_dir/stickers/<pack>/manifest.json`."""
+    candidates: list[tuple[str, str]] = []
+    if sticker_id:
+        cleaned = str(sticker_id).strip().lstrip("/")
+        if "/" in cleaned and "\\" not in cleaned and ".." not in cleaned:
+            p, f = cleaned.split("/", 1)
+            if p and f and "/" not in f:
+                candidates.append((p, f))
+
+    if rel_or_url:
+        raw_path = urlsplit(str(rel_or_url)).path.strip("/")
+        marker = "stickers/"
+        idx = raw_path.find(marker)
+        if idx >= 0:
+            tail = raw_path[idx + len(marker) :]
+            if "/" in tail and "\\" not in tail and ".." not in tail:
+                p, f = tail.split("/", 1)
+                if p and f and "/" not in f:
+                    candidates.append((p, f))
+
+    if not candidates:
+        return None
+
+    stickers_root = (media_dir / "stickers").resolve()
+    for pack_part, file_part in candidates:
+        if pack_part.startswith("."):
+            continue
+        pack_dir = (stickers_root / pack_part).resolve()
+        if pack_dir == stickers_root or not pack_dir.is_relative_to(stickers_root):
+            continue
+        manifest = _load_pack_manifest(pack_dir)
+        for item in manifest.get("stickers") or []:
+            if not isinstance(item, dict) or item.get("file") != file_part:
+                continue
+            fid = str(item.get("file_id") or "").strip()
+            if fid:
+                return fid
+    return None
 
 
 def save_sticker_pack_manifest(
@@ -352,6 +447,11 @@ def save_sticker_pack_manifest(
         or manifest.get("title")
         or pack_name.replace("_", " ").title()
     )
+    existing_fids = {
+        str(item["file"]): str(item.get("file_id") or "").strip()
+        for item in (manifest.get("stickers") or [])
+        if isinstance(item, dict) and item.get("file")
+    }
     normalized_new: list[dict[str, Any]] = []
     seen_files: set[str] = set()
     for raw in entries:
@@ -367,6 +467,7 @@ def save_sticker_pack_manifest(
                 height=raw.get("height"),
                 is_animated=bool(raw.get("is_animated", False)),
                 is_video=bool(raw.get("is_video", False)),
+                file_id=raw.get("file_id") or existing_fids.get(fname),
             )
         )
 
@@ -400,6 +501,7 @@ def upsert_sticker_manifest_entry(
     is_animated: bool = False,
     is_video: bool = False,
     pack_title: str | None = None,
+    file_id: str | None = None,
 ) -> None:
     manifest = _load_pack_manifest(pack_dir)
     title = str(
@@ -420,6 +522,7 @@ def upsert_sticker_manifest_entry(
             height=height,
             is_animated=is_animated,
             is_video=is_video,
+            file_id=file_id,
         )
     )
     _atomic_write_json(

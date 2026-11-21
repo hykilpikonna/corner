@@ -85,6 +85,7 @@ export default defineNuxtConfig({
     },
     prerender: {
       crawlLinks: true,
+      ignore: ['/api/life', '/api/life/**'],
       routes: [
         '/',
         '/api/photos.json',

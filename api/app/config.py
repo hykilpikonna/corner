@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     OIDC_PROVIDER_NAME: str = "SSO"
     OIDC_SCOPES: str = "openid email profile"
     TG_LOGIN_BOT_USERNAME: str | None = None
+    TG_LOGIN_CLIENT_ID: str | None = None
 
     # SMTP Notifications
     SMTP_HOST: str | None = None
@@ -119,6 +120,14 @@ class Settings(BaseSettings):
     RECONCILE_INTERVAL_SECONDS: int = 900
     EMAIL_DEBOUNCE_SECONDS: int = 120
     ALTCHA_MAX_NUMBER: int = 100000
+
+    # Comment Moderation (OpenAI Moderation API + Owner Review Queue)
+    OPENAI_API_KEY: str | None = None
+    MODERATION_ENABLED: bool = True
+    OPENAI_MODERATION_MODEL: str = "omni-moderation-latest"
+    MODERATION_SCORE_THRESHOLD: float = 0.25
+    MODERATION_HOLD_ANON_LINKS: bool = True
+    MODERATION_HOLD_ANON_PHOTOS: bool = True
 
     # Exports & Feeds
     EXPORT_PAGE_SIZE: int = 50
@@ -170,6 +179,7 @@ class Settings(BaseSettings):
         "OIDC_CLIENT_SECRET",
         "TG_USER_SESSION_STRING",
         "TG_USER_SESSION_NAME",
+        "OPENAI_API_KEY",
         mode="before",
     )
     @classmethod

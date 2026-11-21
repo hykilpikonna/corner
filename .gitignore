@@ -5,6 +5,7 @@ node_modules
 /.output
 /test-results
 /playwright-report
+/.docker-tg-blog
 
 
 # local env files

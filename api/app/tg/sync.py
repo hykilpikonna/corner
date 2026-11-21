@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.config import Settings
-from app.db.models import Poll, PollOption, Post, TgReaction
+from app.db.models import Comment, CommentTgReaction, Poll, PollOption, Post, TgReaction
 from app.db.repo import (
+    compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
     find_post_by_channel_tg_msg,
@@ -146,12 +147,19 @@ class PeriodicReconciler:
 
     async def _loop(self) -> None:
         interval = max(1, int(self.settings.RECONCILE_INTERVAL_SECONDS))
+        # Run a quick catch-up reconciliation shortly after startup before entering the periodic sleep
+        first_timeout = min(5, interval)
+        first_pass = True
         while not self._stop_event.is_set():
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=first_timeout if first_pass else interval,
+                )
                 break
             except TimeoutError:
                 pass
+            first_pass = False
 
             try:
                 stats = await self.reconcile_once()
@@ -219,6 +227,11 @@ class PeriodicReconciler:
 
             chat_id = int(channel.tg_chat_id)
             channel_id = channel.id
+            disc_chat_id = (
+                int(channel.tg_discussion_chat_id)
+                if channel.tg_discussion_chat_id is not None
+                else None
+            )
 
             # 1. Channel banned / restricted guard
             try:
@@ -589,10 +602,156 @@ class PeriodicReconciler:
             if exports_dirty:
                 await generate_exports(session, self.settings)
 
+            updated_comment_reactions = await self._reconcile_comment_reactions(
+                session,
+                tg_client=tg_client,
+                channel_id=channel_id,
+                disc_chat_id=disc_chat_id,
+            )
+
             return {
                 "status": "ok",
                 "checked_messages": len(fetched_msgs),
                 "updated_posts": len(updated_post_ids),
+                "updated_comment_reactions": updated_comment_reactions,
                 "new_posts": new_post_count,
                 "deleted_posts": len(deleted_post_ids),
             }
+
+    async def _reconcile_comment_reactions(
+        self,
+        session: AsyncSession,
+        *,
+        tg_client: Any,
+        channel_id: int,
+        disc_chat_id: int | None,
+    ) -> int:
+        if disc_chat_id is None or not hasattr(tg_client, "get_messages"):
+            return 0
+
+        recent_comments = list(
+            (
+                await session.execute(
+                    select(Comment)
+                    .options(selectinload(Comment.tg_reactions))
+                    .join(Post, Post.id == Comment.post_id)
+                    .where(
+                        Comment.channel_id == channel_id,
+                        Comment.tg_msg_id.is_not(None),
+                        Comment.deleted_at.is_(None),
+                        Post.is_deleted.is_(False),
+                    )
+                    .order_by(Comment.tg_msg_id.desc())
+                    .limit(self.overlap_posts)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not recent_comments:
+            return 0
+
+        by_tg_id = {int(c.tg_msg_id): c for c in recent_comments if c.tg_msg_id is not None}
+        tg_ids = sorted(by_tg_id)
+        is_user_client = (
+            self.telegram_service is not None
+            and tg_client is self.telegram_service.user_client
+        )
+
+        fetched_msgs: list[Any] = []
+        for idx in range(0, len(tg_ids), self.batch_size):
+            chunk = tg_ids[idx : idx + self.batch_size]
+            try:
+                batch = await tg_client.get_messages(disc_chat_id, chunk)
+            except Exception:
+                logger.debug(
+                    "Discussion reaction reconcile skipped for chat %s batch %s",
+                    disc_chat_id,
+                    chunk,
+                    exc_info=True,
+                )
+                return 0
+            if isinstance(batch, list):
+                fetched_msgs.extend(batch)
+            elif batch is not None:
+                fetched_msgs.append(batch)
+
+        changed_comment_ids: list[int] = []
+        for msg in fetched_msgs:
+            if msg is None or getattr(msg, "empty", False):
+                continue
+            mid = getattr(msg, "id", None)
+            if mid is None:
+                continue
+            comment = by_tg_id.get(int(mid))
+            if comment is None:
+                continue
+
+            extracted = _extract_reactions_list(msg)
+            if extracted is None:
+                if not is_user_client:
+                    continue
+                extracted = []
+
+            existing_map = {r.reaction_key: int(r.count) for r in comment.tg_reactions}
+            incoming_map: dict[str, tuple[str | None, str | None, int]] = {}
+            for r in extracted:
+                rkey = make_reaction_key(
+                    emoji=r.get("emoji"), custom_emoji_id=r.get("custom_emoji_id")
+                )
+                incoming_map[rkey] = (
+                    r.get("emoji"),
+                    r.get("custom_emoji_id"),
+                    int(r.get("count") or 0),
+                )
+            if {k: v[2] for k, v in incoming_map.items()} == existing_map:
+                continue
+
+            await session.execute(
+                delete(CommentTgReaction).where(CommentTgReaction.comment_id == comment.id)
+            )
+            for rkey, (emoji, cid, cnt) in incoming_map.items():
+                session.add(
+                    CommentTgReaction(
+                        comment_id=comment.id,
+                        reaction_key=rkey,
+                        emoji=emoji,
+                        custom_emoji_id=cid,
+                        count=cnt,
+                    )
+                )
+            changed_comment_ids.append(comment.id)
+
+        if not changed_comment_ids:
+            return 0
+
+        await session.commit()
+        session.expire_all()
+
+        for cid in changed_comment_ids:
+            refreshed = (
+                await session.execute(
+                    select(Comment)
+                    .options(
+                        selectinload(Comment.tg_reactions),
+                        selectinload(Comment.web_reactions),
+                    )
+                    .where(Comment.id == cid, Comment.deleted_at.is_(None))
+                )
+            ).scalar_one_or_none()
+            if refreshed is None:
+                continue
+            merged = compute_merged_comment_reactions(refreshed)
+            public_reactions = [
+                {k: v for k, v in item.items() if k != "reacted"} for item in merged
+            ]
+            await self._emit_sse(
+                "comment.reaction.updated",
+                {
+                    "post_id": refreshed.post_id,
+                    "comment_id": refreshed.id,
+                    "reactions": public_reactions,
+                },
+            )
+
+        return len(changed_comment_ids)

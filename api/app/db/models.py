@@ -339,6 +339,7 @@ class Comment(Base):
         Index("ix_comments_post_created", "post_id", "created_at"),
         Index("ix_comments_parent_id", "parent_id"),
         Index("ix_comments_post_actor_hash", "post_id", "actor_key_hash"),
+        Index("ix_comments_moderation_status", "moderation_status", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -366,6 +367,10 @@ class Comment(Base):
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     body_html: Mapped[str] = mapped_column(Text, nullable=False)
     media: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    moderation_status: Mapped[str] = mapped_column(
+        Text, nullable=False, default="approved", server_default=sa_text("'approved'")
+    )  # 'approved' | 'pending' | 'rejected'
+    moderation_meta: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -465,5 +470,37 @@ class SiteSetting(Base):
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ModerationWhitelist(Base):
+    __tablename__ = "moderation_whitelist"
+    __table_args__ = (
+        UniqueConstraint("kind", "key", name="uq_moderation_whitelist_kind_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # 'user' | 'actor'
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class AvatarCustomEmoji(Base):
+    __tablename__ = "avatar_custom_emojis"
+
+    source_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    custom_emoji_id: Mapped[str] = mapped_column(Text, nullable=False)
+    pack_name: Mapped[str] = mapped_column(Text, nullable=False)
+    fallback_emoji: Mapped[str] = mapped_column(
+        Text, nullable=False, default="👤", server_default=sa_text("'👤'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

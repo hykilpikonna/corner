@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import html
+import inspect
 import json
 import logging
+import mimetypes
 import os
 import shutil
 import uuid
@@ -61,8 +63,10 @@ from app.media.optimize import (
     validate_image_file,
 )
 from app.media.stickers import (
+    EMOJI_EXTENSIONS,
     STICKER_EXTENSIONS,
     list_sticker_packs,
+    load_custom_emoji_meta,
     load_dismissed_default_packs,
     parse_sticker_set_ref,
     parse_sticker_set_url,
@@ -565,7 +569,10 @@ class TelegramService:
             session_factory=session_factory,
             settings=settings,
             client=client,
+            lookup_discussion_root=self.lookup_discussion_root_id,
         )
+        if bridge is not None and getattr(bridge, "lookup_discussion_root", None) is None:
+            bridge.set_discussion_lookup(self.lookup_discussion_root_id)
         self.client = client
         # Read-only MTProto user client: strictly for listening to polls, reactions, and deletions.
         # Never attach self.bridge or outbound write calls to user_client.
@@ -580,6 +587,8 @@ class TelegramService:
         self._handlers_registered = False
         self._user_handlers_registered = False
         self._default_stickers_task: asyncio.Task[Any] | None = None
+        self._emoji_meta_task: asyncio.Task[Any] | None = None
+        self._crawl_task: asyncio.Task[Any] | None = None
 
         self.album_buffer = AlbumBuffer(
             on_flush=self._on_album_flushed,
@@ -639,6 +648,13 @@ class TelegramService:
                 "Configured user_client (%s) is a bot account; expected a user session for full poll/reaction/deletion events.",
                 getattr(user_me, "id", None),
             )
+        if hasattr(self.user_client, "get_chat"):
+            for cid in (self.settings.TG_CHANNEL_ID, self.settings.TG_DISCUSSION_CHAT_ID):
+                if cid is not None:
+                    try:
+                        await self.user_client.get_chat(cid)
+                    except Exception:
+                        logger.debug("user_client get_chat(%s) warmup failed", cid, exc_info=True)
         self._register_user_handlers()
         self._user_started = True
         logger.info(
@@ -698,6 +714,7 @@ class TelegramService:
                     commands = [
                         BotCommand("reactions", "View or edit allowed web reaction emojis"),
                         BotCommand("stickers", "List, import, or remove custom web stickers"),
+                        BotCommand("fullsync", "Crawl and sync all active channel posts from start"),
                         BotCommand("help", "Show bot command help"),
                     ]
                     if scope is not None:
@@ -727,7 +744,247 @@ class TelegramService:
                 name="ensure_default_sticker_packs",
             )
 
+        if self.client is not None and hasattr(self.client, "get_custom_emoji_stickers"):
+            self._emoji_meta_task = asyncio.create_task(
+                self.ensure_custom_emoji_meta(),
+                name="ensure_custom_emoji_meta",
+            )
+
+        if self.client is not None and self.settings.TG_CHANNEL_ID is not None:
+            try:
+                from pyrogram import Client as PyroClient
+
+                is_real_client = isinstance(self.client, PyroClient)
+            except Exception:
+                is_real_client = False
+            if is_real_client:
+                self._crawl_task = asyncio.create_task(
+                    self._run_startup_crawl(),
+                    name="crawl_channel_history",
+                )
+
+    async def _run_startup_crawl(self) -> None:
+        try:
+            summary = await self.crawl_channel_history(trigger_prompt=False)
+            logger.info("Startup bot channel crawl completed: %s", summary)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Startup bot channel crawl failed")
+
+    async def lookup_discussion_root_id(self, tg_chat_id: int, tg_msg_id: int) -> int | None:
+        """Read-only single-post discussion root lookup via `user_client.get_discussion_message`."""
+        if self.user_client is None or not hasattr(self.user_client, "get_discussion_message"):
+            return None
+        try:
+            disc_msg = await self.user_client.get_discussion_message(
+                int(tg_chat_id), int(tg_msg_id)
+            )
+        except Exception:
+            logger.debug(
+                "get_discussion_message(%s, %s) failed", tg_chat_id, tg_msg_id, exc_info=True
+            )
+            return None
+        disc_id = int(getattr(disc_msg, "id", 0) or 0) if disc_msg is not None else 0
+        return disc_id if disc_id > 0 else None
+
+    async def crawl_channel_history(
+        self,
+        chat_id: int | None = None,
+        *,
+        start_id: int | None = None,
+        full: bool = False,
+        batch_size: int = 200,
+        trigger_prompt: bool = False,
+        preserve_existing_images: bool | None = None,
+    ) -> dict[str, Any]:
+        """Catch up / backfill channel posts using ONLY the bot client's ID-range get_messages (TelegramBackup style)."""
+        target_chat_id = chat_id if chat_id is not None else self.settings.TG_CHANNEL_ID
+        if self.client is None or target_chat_id is None:
+            return {"status": "skipped", "reason": "no_bot_client_or_channel"}
+        if not hasattr(self.client, "get_chat") or not hasattr(self.client, "get_messages"):
+            return {"status": "skipped", "reason": "client_missing_get_messages"}
+
+        preserve_imgs = full if preserve_existing_images is None else preserve_existing_images
+
+        chat = await self.client.get_chat(target_chat_id)
+        if chat is None:
+            return {"status": "skipped", "reason": "chat_not_found"}
+
+        existing_ids_before: set[int] = set()
+        async with self.session_factory() as session:
+            channel = await ensure_channel(
+                session,
+                tg_chat_id=int(target_chat_id),
+                tg_discussion_chat_id=self.settings.TG_DISCUSSION_CHAT_ID,
+                title=getattr(chat, "title", None),
+                username=getattr(chat, "username", None),
+                status="active",
+            )
+            last_crawled = int(channel.last_crawled_msg_id or 0)
+            existing_ids_before = set(
+                (
+                    await session.execute(
+                        select(Post.id).where(
+                            Post.channel_id == channel.id,
+                            Post.is_deleted.is_(False),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            await session.commit()
+
+        curr_idx = (
+            max(1, int(start_id))
+            if start_id is not None
+            else (1 if full else max(1, last_crawled + 1))
+        )
+        effective_batch = max(1, min(200, int(batch_size)))
+        get_messages_fn = self.client.get_messages
+        try:
+            supports_replies = "replies" in inspect.signature(get_messages_fn).parameters
+        except (TypeError, ValueError):
+            supports_replies = False
+
+        msgs: list[Any] = []
+        max_seen_id = last_crawled
+        first_batch = True
+
+        while True:
+            if not first_batch:
+                await asyncio.sleep(0.2)
+            first_batch = False
+            end_idx = curr_idx + effective_batch
+            id_range = range(curr_idx, end_idx)
+
+            additional_msgs: Any = None
+            for attempt in range(2):
+                try:
+                    if supports_replies:
+                        additional_msgs = await get_messages_fn(
+                            chat.id, id_range, replies=0
+                        )
+                    else:
+                        additional_msgs = await get_messages_fn(chat.id, list(id_range))
+                    break
+                except Exception as exc:
+                    wait_sec = getattr(exc, "value", None)
+                    if (
+                        type(exc).__name__ == "FloodWait"
+                        and isinstance(wait_sec, (int, float))
+                        and attempt == 0
+                        and float(wait_sec) <= 30.0
+                    ):
+                        await asyncio.sleep(float(wait_sec))
+                        continue
+                    raise
+
+            batch_items = (
+                list(additional_msgs)
+                if isinstance(additional_msgs, (list, tuple))
+                else ([additional_msgs] if additional_msgs is not None else [])
+            )
+            non_empty = [
+                m
+                for m in batch_items
+                if m is not None and not getattr(m, "empty", False)
+            ]
+            if not non_empty:
+                break
+
+            msgs.extend(non_empty)
+            max_batch_id = max(int(getattr(m, "id", 0) or 0) for m in non_empty)
+            max_seen_id = max(max_seen_id, max_batch_id)
+
+            if not full and (end_idx - 1) - max_batch_id > 20:
+                break
+            curr_idx = end_idx
+
+        posts_ingested = 0
+        posts_created = 0
+        posts_updated = 0
+        deleted_posts = 0
+        if msgs:
+            ingested = await self._ingest_channel_messages(
+                msgs,
+                is_edit=False,
+                trigger_prompt=trigger_prompt,
+                preserve_existing_images=preserve_imgs,
+            )
+            posts_ingested = len(ingested)
+            posts_created = sum(1 for p in ingested if p.id not in existing_ids_before)
+            posts_updated = posts_ingested - posts_created
+
+            present_tg_ids = {int(getattr(m, "id", 0) or 0) for m in msgs}
+            async with self.session_factory() as session:
+                ch = await self._resolve_channel_for_chat(session, int(target_chat_id))
+                if ch is not None:
+                    if max_seen_id > int(ch.last_crawled_msg_id or 0):
+                        ch.last_crawled_msg_id = max_seen_id
+                    if full and start_id is None:
+                        active_posts = list(
+                            (
+                                await session.execute(
+                                    select(Post).where(
+                                        Post.channel_id == ch.id,
+                                        Post.is_deleted.is_(False),
+                                        Post.tg_msg_id.is_not(None),
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        candidates: list[Post] = []
+                        for p in active_posts:
+                            post_ids = {int(x) for x in (p.tg_all_msg_ids or [])}
+                            if p.tg_msg_id is not None:
+                                post_ids.add(int(p.tg_msg_id))
+                            if post_ids and not (post_ids & present_tg_ids):
+                                candidates.append(p)
+                        # Mass-deletion safety circuit breaker (>50% missing -> abort deletions)
+                        if not (
+                            len(active_posts) >= 4
+                            and len(candidates) / len(active_posts) > 0.50
+                        ):
+                            for p in candidates:
+                                p.is_deleted = True
+                            deleted_posts = len(candidates)
+                        else:
+                            logger.warning(
+                                "Fullsync skipped %d/%d candidate deletions due to >50%% circuit breaker",
+                                len(candidates),
+                                len(active_posts),
+                            )
+                    await session.commit()
+                    if deleted_posts:
+                        await generate_exports(session, self.settings)
+                        for p in candidates:
+                            await self._emit_sse("post.deleted", {"post_id": p.id})
+
+        return {
+            "status": "ok",
+            "crawled_messages": len(msgs),
+            "posts_ingested": posts_ingested,
+            "posts_created": posts_created,
+            "posts_updated": posts_updated,
+            "deleted_posts": deleted_posts,
+            "max_msg_id": max_seen_id,
+        }
+
     async def stop(self) -> None:
+        if self._crawl_task is not None:
+            if not self._crawl_task.done():
+                self._crawl_task.cancel()
+            try:
+                await self._crawl_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Channel crawl task exited with error", exc_info=True)
+            self._crawl_task = None
         if self._default_stickers_task is not None:
             if not self._default_stickers_task.done():
                 self._default_stickers_task.cancel()
@@ -738,6 +995,16 @@ class TelegramService:
             except Exception:
                 logger.debug("Default sticker sync task exited with error", exc_info=True)
             self._default_stickers_task = None
+        if self._emoji_meta_task is not None:
+            if not self._emoji_meta_task.done():
+                self._emoji_meta_task.cancel()
+            try:
+                await self._emoji_meta_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("Custom emoji meta sync task exited with error", exc_info=True)
+            self._emoji_meta_task = None
         await self.album_buffer.close()
         await self.dm_buffer.close()
         if self._user_started and self.user_client is not None:
@@ -766,6 +1033,7 @@ class TelegramService:
             EditedMessageHandler,
             MessageHandler,
             MessageReactionCountHandler,
+            MessageReactionHandler,
             PollHandler,
         )
 
@@ -810,6 +1078,9 @@ class TelegramService:
         async def _on_reaction_count(_client: Any, update: Any) -> None:
             await self.handle_reaction_count_update(update)
 
+        async def _on_message_reaction(_client: Any, update: Any) -> None:
+            await self.handle_message_reaction_update(update)
+
         async def _on_poll(_client: Any, poll: Any) -> None:
             await self.handle_poll_update(poll)
 
@@ -820,6 +1091,7 @@ class TelegramService:
         ]
         reaction_filter = filters.chat(reaction_chats) if reaction_chats else None
         self.client.add_handler(MessageReactionCountHandler(_on_reaction_count, reaction_filter))
+        self.client.add_handler(MessageReactionHandler(_on_message_reaction, reaction_filter))
         self.client.add_handler(PollHandler(_on_poll))
         self._handlers_registered = True
 
@@ -830,7 +1102,6 @@ class TelegramService:
         if not hasattr(self.user_client, "add_handler"):
             return
 
-        from pyrogram import filters
         from pyrogram.handlers import (
             DeletedMessagesHandler,
             PollHandler,
@@ -847,15 +1118,9 @@ class TelegramService:
         async def _on_user_deleted(_client: Any, messages: Any) -> None:
             await self.handle_user_deleted(messages)
 
-        watched_chats = [
-            cid
-            for cid in (self.settings.TG_CHANNEL_ID, self.settings.TG_DISCUSSION_CHAT_ID)
-            if cid is not None
-        ]
-        delete_filter = filters.chat(watched_chats) if watched_chats else None
         self.user_client.add_handler(PollHandler(_on_user_poll))
         self.user_client.add_handler(RawUpdateHandler(_on_user_raw))
-        self.user_client.add_handler(DeletedMessagesHandler(_on_user_deleted, delete_filter))
+        self.user_client.add_handler(DeletedMessagesHandler(_on_user_deleted))
         self._user_handlers_registered = True
 
     # ------------------------------------------------------------------
@@ -880,6 +1145,8 @@ class TelegramService:
         self,
         msgs: list[Any],
         channel: Channel,
+        *,
+        skip_photo_msg_ids: set[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Convert Kurigram messages using `tgc.pyro.crawl.process_messages` if installed, else built-in fallback."""
         epoch_dir = self.settings.media_dir / "epochs" / str(channel.id)
@@ -887,7 +1154,7 @@ class TelegramService:
         url_prefix = f"epochs/{channel.id}"
 
         tgc_proc = _try_import_tgc_process_messages()
-        if tgc_proc is not None and self.client is not None:
+        if tgc_proc is not None and self.client is not None and not skip_photo_msg_ids:
             try:
                 from pyrogram import Client as PyroClient
 
@@ -906,7 +1173,183 @@ class TelegramService:
                     "tgc.pyro.crawl.process_messages failed; falling back to built-in converter"
                 )
 
-        return await self._fallback_process_messages(msgs, epoch_dir, url_prefix=url_prefix)
+        return await self._fallback_process_messages(
+            msgs,
+            epoch_dir,
+            url_prefix=url_prefix,
+            skip_photo_msg_ids=skip_photo_msg_ids,
+        )
+
+    @staticmethod
+    def _infer_fallback_media_ext(
+        attr_name: str,
+        media_obj: Any,
+        default_ext: str,
+    ) -> str:
+        if attr_name == "sticker":
+            if getattr(media_obj, "is_animated", False):
+                return ".tgs"
+            if getattr(media_obj, "is_video", False):
+                return ".webm"
+        raw_name = getattr(media_obj, "file_name", None)
+        if raw_name:
+            suffix = Path(str(raw_name)).suffix.lower()
+            if suffix and 2 <= len(suffix) <= 8 and suffix[1:].isalnum():
+                return suffix
+        mime_type = str(getattr(media_obj, "mime_type", "") or "").lower().strip()
+        if mime_type:
+            mime_overrides = {
+                "application/x-tgsticker": ".tgs",
+                "video/webm": ".webm",
+                "image/webp": ".webp",
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "audio/ogg": ".ogg",
+                "audio/mpeg": ".mp3",
+                "video/mp4": ".mp4",
+            }
+            if mime_type in mime_overrides:
+                return mime_overrides[mime_type]
+            guessed = mimetypes.guess_extension(mime_type)
+            if guessed:
+                return guessed
+        return default_ext
+
+    async def _download_fallback_thumb(
+        self,
+        media_obj: Any,
+        *,
+        msg_id: int,
+        media_dir: Path,
+        url_prefix: str,
+    ) -> str | None:
+        if self.client is None or not hasattr(self.client, "download_media"):
+            return None
+        thumbs = getattr(media_obj, "thumbs", None) or getattr(media_obj, "thumb", None)
+        if not thumbs:
+            return None
+        thumb_obj = (
+            max(thumbs, key=lambda t: int(getattr(t, "file_size", 0) or 0))
+            if isinstance(thumbs, (list, tuple))
+            else thumbs
+        )
+        file_id = getattr(thumb_obj, "file_id", None)
+        if not file_id:
+            return None
+        raw_thumb_dest = media_dir / f"{msg_id}_thumb_raw.jpg"
+        try:
+            dl = await self.client.download_media(file_id, file_name=str(raw_thumb_dest))
+            if not dl:
+                return None
+            dl_path = Path(str(dl))
+            if not dl_path.is_file():
+                return None
+            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, dl_path)
+            if webp_p is not None and webp_p.is_file():
+                return f"{url_prefix}/media/{webp_p.name}"
+            return f"{url_prefix}/media/{dl_path.name}"
+        except Exception:
+            logger.debug("Could not download thumbnail for msg %s", msg_id, exc_info=True)
+            return None
+
+    async def _extract_fallback_file_attachment(
+        self,
+        msg: Any,
+        *,
+        msg_id: int,
+        media_dir: Path,
+        url_prefix: str,
+    ) -> dict[str, Any] | None:
+        media_specs: tuple[tuple[str, str | None, str, str], ...] = (
+            ("sticker", "sticker", ".webp", "image/webp"),
+            ("animation", "animation", ".mp4", "video/mp4"),
+            ("video", "video_file", ".mp4", "video/mp4"),
+            ("video_note", "video_file", ".mp4", "video/mp4"),
+            ("audio", "audio_file", ".mp3", "audio/mpeg"),
+            ("voice", "voice_message", ".ogg", "audio/ogg"),
+            ("document", None, ".bin", "application/octet-stream"),
+        )
+        for attr_name, tg_media_type, default_ext, default_mime in media_specs:
+            media_obj = getattr(msg, attr_name, None)
+            if media_obj is None:
+                continue
+
+            ext = self._infer_fallback_media_ext(attr_name, media_obj, default_ext)
+            dest_path = media_dir / f"{msg_id}{ext}"
+            downloaded_path: Path | None = None
+            if self.client is not None and hasattr(self.client, "download_media"):
+                try:
+                    dl = await self.client.download_media(msg, file_name=str(dest_path))
+                    if dl:
+                        downloaded_path = Path(str(dl))
+                except Exception:
+                    logger.exception("Failed to download %s for msg %s", attr_name, msg_id)
+
+            effective_name = (
+                downloaded_path.name
+                if downloaded_path is not None and downloaded_path.is_file()
+                else dest_path.name
+            )
+            file_size = (
+                downloaded_path.stat().st_size
+                if downloaded_path is not None and downloaded_path.is_file()
+                else getattr(media_obj, "file_size", None)
+            )
+            rel_thumb = await self._download_fallback_thumb(
+                media_obj,
+                msg_id=msg_id,
+                media_dir=media_dir,
+                url_prefix=url_prefix,
+            )
+
+            file_dict: dict[str, Any] = {
+                "tg_msg_id": msg_id,
+                "url": f"{url_prefix}/media/{effective_name}",
+                "mime_type": getattr(media_obj, "mime_type", None) or default_mime,
+                "original_name": getattr(media_obj, "file_name", None) or effective_name,
+                "size": file_size,
+            }
+            if tg_media_type is not None:
+                file_dict["media_type"] = tg_media_type
+            if rel_thumb is not None:
+                file_dict["thumb"] = rel_thumb
+            if getattr(msg, "has_media_spoiler", False):
+                file_dict["spoiler"] = True
+            for opt_key in ("width", "height", "duration", "title", "performer"):
+                val = getattr(media_obj, opt_key, None)
+                if val is not None:
+                    file_dict[opt_key] = val
+            if attr_name == "sticker":
+                emoji_val = getattr(media_obj, "emoji", None)
+                if emoji_val:
+                    file_dict["sticker_emoji"] = str(emoji_val)
+            return file_dict
+
+        venue = getattr(msg, "venue", None)
+        if venue is not None and getattr(venue, "location", None) is not None:
+            return {
+                "media_type": "location",
+                "latitude": venue.location.latitude,
+                "longitude": venue.location.longitude,
+                "title": getattr(venue, "title", "") or "",
+                "address": getattr(venue, "address", "") or "",
+            }
+        loc = getattr(msg, "location", None)
+        if loc is not None:
+            return {
+                "media_type": "location",
+                "latitude": loc.latitude,
+                "longitude": loc.longitude,
+            }
+        contact = getattr(msg, "contact", None)
+        if contact is not None:
+            return {
+                "media_type": "contact",
+                "phone_number": getattr(contact, "phone_number", "") or "",
+                "first_name": getattr(contact, "first_name", "") or "",
+                "last_name": getattr(contact, "last_name", None),
+            }
+        return None
 
     async def _fallback_process_messages(
         self,
@@ -914,6 +1357,7 @@ class TelegramService:
         epoch_dir: Path,
         *,
         url_prefix: str,
+        skip_photo_msg_ids: set[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Built-in message converter & album grouper matching `tgc` output shape."""
         media_dir = epoch_dir / "media"
@@ -949,7 +1393,7 @@ class TelegramService:
             files: list[dict[str, Any]] = []
 
             photo = getattr(msg, "photo", None)
-            if photo is not None:
+            if photo is not None and not (skip_photo_msg_ids and msg_id in skip_photo_msg_ids):
                 dest_path = media_dir / f"{msg_id}.jpg"
                 downloaded_path: Path | None = None
                 if self.client is not None and hasattr(self.client, "download_media"):
@@ -990,6 +1434,35 @@ class TelegramService:
                         "spoiler": bool(getattr(msg, "has_media_spoiler", False)),
                     }
                 )
+
+            # Extract non-photo media attachments uniformly for tg-blog FileView
+            extra_file = await self._extract_fallback_file_attachment(
+                msg,
+                msg_id=msg_id,
+                media_dir=media_dir,
+                url_prefix=url_prefix,
+            )
+            if extra_file is not None:
+                files.append(extra_file)
+
+            # Cache custom emoji stickers referenced in text/caption/quote entities
+            custom_emoji_ids: list[str] = []
+            for ent_src in (
+                getattr(msg, "entities", None),
+                getattr(msg, "caption_entities", None),
+                getattr(getattr(msg, "quote", None), "entities", None),
+            ):
+                for ent in ent_src or []:
+                    cid = getattr(ent, "custom_emoji_id", None)
+                    if cid is not None and str(cid).strip().isdigit():
+                        custom_emoji_ids.append(str(cid).strip())
+            if custom_emoji_ids and self.client is not None and hasattr(self.client, "get_custom_emoji_stickers"):
+                try:
+                    await cache_custom_emoji_stickers(
+                        self.client, self.settings.exports_dir, custom_emoji_ids
+                    )
+                except Exception:
+                    logger.debug("Could not cache custom emojis for msg %s", msg_id, exc_info=True)
 
             poll_dict = _extract_poll_dict(msg)
             reactions = _extract_reactions_list(msg)
@@ -1166,6 +1639,7 @@ class TelegramService:
         *,
         is_edit: bool = False,
         trigger_prompt: bool = True,
+        preserve_existing_images: bool = False,
     ) -> list[Post]:
         if not msgs:
             return []
@@ -1177,7 +1651,38 @@ class TelegramService:
                 logger.warning("No matching channel found for incoming chat_id=%s", first_chat_id)
                 return []
 
-            converted = await self._convert_channel_messages(msgs, channel)
+            skip_photo_msg_ids: set[int] = set()
+            if preserve_existing_images:
+                posts_with_imgs = list(
+                    (
+                        await session.execute(
+                            select(Post)
+                            .options(selectinload(Post.images))
+                            .where(
+                                Post.channel_id == channel.id,
+                                Post.is_deleted.is_(False),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for p in posts_with_imgs:
+                    if not p.images:
+                        continue
+                    if p.tg_msg_id is not None:
+                        skip_photo_msg_ids.add(int(p.tg_msg_id))
+                    for mid in p.tg_all_msg_ids or []:
+                        skip_photo_msg_ids.add(int(mid))
+                    for im in p.images:
+                        if im.tg_msg_id is not None:
+                            skip_photo_msg_ids.add(int(im.tg_msg_id))
+
+            converted = await self._convert_channel_messages(
+                msgs,
+                channel,
+                skip_photo_msg_ids=skip_photo_msg_ids or None,
+            )
             if not converted:
                 return []
 
@@ -1221,7 +1726,9 @@ class TelegramService:
                     raw_images = [raw_post["image"]]
 
                 images_payload: list[dict[str, Any]] | None = None
-                if raw_images:
+                if preserve_existing_images and existing is not None and existing.images:
+                    images_payload = None
+                elif raw_images:
                     existing_sorted = (
                         sorted(existing.images, key=lambda i: i.sort_order)
                         if existing is not None
@@ -1416,7 +1923,11 @@ class TelegramService:
                     files=(
                         other_files
                         if other_files
-                        else (existing.files if (is_edit or merged_split_album) and existing else None)
+                        else (
+                            existing.files
+                            if (is_edit or merged_split_album or preserve_existing_images) and existing
+                            else None
+                        )
                     ),
                     show_caption_above_media=bool(
                         raw_post.get("show_caption_above_media")
@@ -1971,7 +2482,10 @@ class TelegramService:
         if channel.tg_chat_id is None:
             return None
 
-        is_auto = bool(getattr(msg, "is_automatic_forward", False))
+        is_auto = bool(
+            getattr(msg, "automatic_forward", False)
+            or getattr(msg, "is_automatic_forward", False)
+        )
         if not is_auto:
             return None
 
@@ -1979,7 +2493,11 @@ class TelegramService:
         fwd_msg_id = getattr(msg, "forward_from_message_id", None)
 
         origin = getattr(msg, "forward_origin", None)
-        origin_chat = getattr(origin, "chat", None) if origin is not None else None
+        origin_chat = (
+            getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
+            if origin is not None
+            else None
+        )
         origin_msg_id = getattr(origin, "message_id", None) if origin is not None else None
 
         src_chat_id = (
@@ -2181,6 +2699,12 @@ class TelegramService:
 
         deleted_posts = await self.handle_channel_deleted(channel_msgs) if channel_msgs else []
         deleted_comments = await self.handle_discussion_deleted(disc_msgs) if disc_msgs else []
+        if deleted_posts or deleted_comments:
+            logger.info(
+                "user_client processed deletions: posts=%s comments=%s",
+                deleted_posts,
+                deleted_comments,
+            )
         return deleted_posts, deleted_comments
 
     # ------------------------------------------------------------------
@@ -2272,6 +2796,159 @@ class TelegramService:
                 )
             )
 
+    @classmethod
+    def _build_delta_reaction_items(
+        cls,
+        existing_rows: Sequence[TgReaction | CommentTgReaction],
+        *,
+        old_reactions: Sequence[Any],
+        new_reactions: Sequence[Any],
+    ) -> list[Any]:
+        counts: dict[str, tuple[str | None, str | None, int]] = {
+            r.reaction_key: (r.emoji, r.custom_emoji_id, int(r.count))
+            for r in existing_rows
+            if int(r.count) > 0
+        }
+        for rkey, _emoji, _cid, _cnt in cls._normalize_reaction_rows(old_reactions):
+            cur = counts.get(rkey)
+            if cur is None:
+                continue
+            next_cnt = cur[2] - 1
+            if next_cnt <= 0:
+                counts.pop(rkey, None)
+            else:
+                counts[rkey] = (cur[0], cur[1], next_cnt)
+        for rkey, emoji, cid, _cnt in cls._normalize_reaction_rows(new_reactions):
+            cur = counts.get(rkey)
+            if cur is None:
+                counts[rkey] = (emoji, cid, 1)
+            else:
+                counts[rkey] = (cur[0] or emoji, cur[1] or cid, cur[2] + 1)
+        return [
+            SimpleNamespace(emoji=emoji, custom_emoji_id=cid, count=cnt)
+            for emoji, cid, cnt in counts.values()
+            if cnt > 0
+        ]
+
+    async def _persist_post_reactions(
+        self,
+        session: AsyncSession,
+        *,
+        post: Post,
+        raw_reactions: Sequence[Any],
+    ) -> None:
+        post_id = post.id
+        incoming_rows = self._normalize_reaction_rows(raw_reactions)
+        incoming_map = {rkey: count for rkey, _, _, count in incoming_rows}
+        existing_map = {r.reaction_key: int(r.count) for r in post.tg_reactions}
+        if existing_map == incoming_map:
+            return
+        await self._replace_tg_reactions(
+            session,
+            model=TgReaction,
+            fk_col_name="post_id",
+            target_id=post_id,
+            raw_reactions=raw_reactions,
+        )
+        await session.commit()
+        session.expire_all()
+
+        refreshed = await get_post_by_id(session, post_id, include_deleted=False)
+        if refreshed is None:
+            return
+        merged = compute_merged_reactions(refreshed)
+        public_reactions = [
+            {k: v for k, v in item.items() if k != "reacted"} for item in merged
+        ]
+        await self._emit_sse(
+            "reaction.updated",
+            {"post_id": refreshed.id, "reactions": public_reactions},
+        )
+
+    async def _persist_comment_reactions(
+        self,
+        session: AsyncSession,
+        *,
+        comment: Comment,
+        raw_reactions: Sequence[Any],
+    ) -> None:
+        comment_id = comment.id
+        incoming_rows = self._normalize_reaction_rows(raw_reactions)
+        incoming_map = {rkey: count for rkey, _, _, count in incoming_rows}
+        existing_map = {r.reaction_key: int(r.count) for r in comment.tg_reactions}
+        if existing_map == incoming_map:
+            return
+        await self._replace_tg_reactions(
+            session,
+            model=CommentTgReaction,
+            fk_col_name="comment_id",
+            target_id=comment_id,
+            raw_reactions=raw_reactions,
+        )
+        await session.commit()
+        session.expire_all()
+
+        refreshed_comment = (
+            await session.execute(
+                select(Comment)
+                .options(
+                    selectinload(Comment.tg_reactions),
+                    selectinload(Comment.web_reactions),
+                )
+                .where(Comment.id == comment_id, Comment.deleted_at.is_(None))
+            )
+        ).scalar_one_or_none()
+        if refreshed_comment is None:
+            return
+        merged = compute_merged_comment_reactions(refreshed_comment)
+        public_reactions = [
+            {k: v for k, v in item.items() if k != "reacted"} for item in merged
+        ]
+        await self._emit_sse(
+            "comment.reaction.updated",
+            {
+                "post_id": refreshed_comment.post_id,
+                "comment_id": refreshed_comment.id,
+                "reactions": public_reactions,
+            },
+        )
+
+    async def _find_reaction_target(
+        self,
+        session: AsyncSession,
+        *,
+        chat_id_int: int,
+        msg_id: int,
+    ) -> tuple[Post | None, Comment | None]:
+        channel = await self._resolve_channel_for_chat(session, chat_id_int)
+        if channel is not None:
+            post = await find_post_by_channel_tg_msg(session, channel.id, msg_id)
+            return post, None
+
+        disc_channel = (
+            await session.execute(
+                select(Channel).where(Channel.tg_discussion_chat_id == chat_id_int)
+            )
+        ).scalar_one_or_none()
+        if disc_channel is None:
+            return None, None
+
+        comment = (
+            await session.execute(
+                select(Comment)
+                .options(selectinload(Comment.tg_reactions))
+                .join(Post, Post.id == Comment.post_id)
+                .where(
+                    Comment.channel_id == disc_channel.id,
+                    Comment.tg_msg_id == msg_id,
+                    Comment.deleted_at.is_(None),
+                    Post.is_deleted.is_(False),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return None, comment
+
     async def _apply_reaction_count_update(
         self,
         *,
@@ -2279,107 +2956,81 @@ class TelegramService:
         msg_id: int,
         raw_reactions: Sequence[Any],
     ) -> None:
-        incoming_rows = self._normalize_reaction_rows(raw_reactions)
-        incoming_map = {rkey: count for rkey, _, _, count in incoming_rows}
-
         async with self.session_factory() as session:
-            channel = await self._resolve_channel_for_chat(session, chat_id_int)
-            if channel is not None:
-                post = await find_post_by_channel_tg_msg(session, channel.id, msg_id)
-                if post is None:
-                    # Channel-chat reaction for an untracked/service message must never
-                    # collide with a discussion Comment sharing the same tg_msg_id.
-                    return
-                post_id = post.id
-                existing_map = {r.reaction_key: int(r.count) for r in post.tg_reactions}
-                if existing_map == incoming_map:
-                    return
-                await self._replace_tg_reactions(
-                    session,
-                    model=TgReaction,
-                    fk_col_name="post_id",
-                    target_id=post_id,
-                    raw_reactions=raw_reactions,
-                )
-                await session.commit()
-                session.expire_all()
-
-                refreshed = await get_post_by_id(session, post_id, include_deleted=False)
-                if refreshed is None:
-                    return
-                merged = compute_merged_reactions(refreshed)
-                public_reactions = [
-                    {k: v for k, v in item.items() if k != "reacted"} for item in merged
-                ]
-                await self._emit_sse(
-                    "reaction.updated",
-                    {"post_id": refreshed.id, "reactions": public_reactions},
-                )
-                return
-
-            disc_channel = (
-                await session.execute(
-                    select(Channel).where(Channel.tg_discussion_chat_id == chat_id_int)
-                )
-            ).scalar_one_or_none()
-            if disc_channel is None:
-                return
-
-            comment = (
-                await session.execute(
-                    select(Comment)
-                    .options(selectinload(Comment.tg_reactions))
-                    .join(Post, Post.id == Comment.post_id)
-                    .where(
-                        Comment.channel_id == disc_channel.id,
-                        Comment.tg_msg_id == msg_id,
-                        Comment.deleted_at.is_(None),
-                        Post.is_deleted.is_(False),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if comment is None:
-                return
-
-            comment_id = comment.id
-            existing_comment_map = {r.reaction_key: int(r.count) for r in comment.tg_reactions}
-            if existing_comment_map == incoming_map:
-                return
-            await self._replace_tg_reactions(
-                session,
-                model=CommentTgReaction,
-                fk_col_name="comment_id",
-                target_id=comment_id,
-                raw_reactions=raw_reactions,
+            post, comment = await self._find_reaction_target(
+                session, chat_id_int=chat_id_int, msg_id=msg_id
             )
-            await session.commit()
-            session.expire_all()
-
-            refreshed_comment = (
-                await session.execute(
-                    select(Comment)
-                    .options(
-                        selectinload(Comment.tg_reactions),
-                        selectinload(Comment.web_reactions),
-                    )
-                    .where(Comment.id == comment_id, Comment.deleted_at.is_(None))
+            if post is not None:
+                await self._persist_post_reactions(session, post=post, raw_reactions=raw_reactions)
+            elif comment is not None:
+                await self._persist_comment_reactions(
+                    session, comment=comment, raw_reactions=raw_reactions
                 )
-            ).scalar_one_or_none()
-            if refreshed_comment is None:
-                return
-            merged = compute_merged_comment_reactions(refreshed_comment)
-            public_reactions = [
-                {k: v for k, v in item.items() if k != "reacted"} for item in merged
-            ]
-            await self._emit_sse(
-                "comment.reaction.updated",
-                {
-                    "post_id": refreshed_comment.post_id,
-                    "comment_id": refreshed_comment.id,
-                    "reactions": public_reactions,
-                },
+
+    async def _apply_reaction_user_delta_update(
+        self,
+        *,
+        chat_id_int: int,
+        msg_id: int,
+        old_reactions: Sequence[Any],
+        new_reactions: Sequence[Any],
+    ) -> None:
+        async with self.session_factory() as session:
+            post, comment = await self._find_reaction_target(
+                session, chat_id_int=chat_id_int, msg_id=msg_id
             )
+            if post is not None:
+                updated_rows = self._build_delta_reaction_items(
+                    post.tg_reactions,
+                    old_reactions=old_reactions,
+                    new_reactions=new_reactions,
+                )
+                await self._persist_post_reactions(session, post=post, raw_reactions=updated_rows)
+            elif comment is not None:
+                updated_rows = self._build_delta_reaction_items(
+                    comment.tg_reactions,
+                    old_reactions=old_reactions,
+                    new_reactions=new_reactions,
+                )
+                await self._persist_comment_reactions(
+                    session, comment=comment, raw_reactions=updated_rows
+                )
+
+    async def handle_message_reaction_update(self, update: Any) -> None:
+        """Handle bot `UpdateBotMessageReaction` (e.g. reactions on discussion group comments)."""
+        chat_id = getattr(getattr(update, "chat", None), "id", None)
+        msg_id = getattr(update, "message_id", None)
+        if chat_id is None or msg_id is None:
+            return
+        chat_id_int = int(chat_id)
+        msg_id_int = int(msg_id)
+
+        if self.user_client is not None and hasattr(self.user_client, "get_messages"):
+            try:
+                res = await self.user_client.get_messages(chat_id_int, [msg_id_int])
+                msg = res[0] if isinstance(res, list) and res else (res if not isinstance(res, list) else None)
+                if msg is not None and not getattr(msg, "empty", False):
+                    raw_reactions = _extract_reactions_list(msg) or []
+                    await self._apply_reaction_count_update(
+                        chat_id_int=chat_id_int,
+                        msg_id=msg_id_int,
+                        raw_reactions=raw_reactions,
+                    )
+                    return
+            except Exception:
+                logger.debug(
+                    "Authoritative reaction fetch failed for %s/%s; using delta fallback",
+                    chat_id_int,
+                    msg_id_int,
+                    exc_info=True,
+                )
+
+        await self._apply_reaction_user_delta_update(
+            chat_id_int=chat_id_int,
+            msg_id=msg_id_int,
+            old_reactions=getattr(update, "old_reaction", None) or [],
+            new_reactions=getattr(update, "new_reaction", None) or [],
+        )
 
     async def handle_reaction_count_update(self, update: Any) -> None:
         chat_id = getattr(getattr(update, "chat", None), "id", None)
@@ -2476,6 +3127,36 @@ class TelegramService:
         raw_text = str(getattr(msg, "text", None) or "").strip()
         if raw_text.startswith("/"):
             cmd_head = raw_text.split(None, 1)[0].split("@", 1)[0].lower()
+            if cmd_head in ("/fullsync", "/sync"):
+                if self.client is not None:
+                    await self.client.send_message(
+                        chat_id=self.settings.OWNER_TG_ID,
+                        text="🔄 Running full channel sync from ID #1 (existing images preserved)...",
+                    )
+                try:
+                    summary = await self.crawl_channel_history(
+                        full=True,
+                        trigger_prompt=False,
+                        preserve_existing_images=True,
+                    )
+                    reply_text = (
+                        f"✅ Full sync ({summary.get('status')}): "
+                        f"crawled {summary.get('crawled_messages', 0)} messages, "
+                        f"created {summary.get('posts_created', 0)}, "
+                        f"updated {summary.get('posts_updated', 0)}, "
+                        f"deleted {summary.get('deleted_posts', 0)}, "
+                        f"max TG ID #{summary.get('max_msg_id', 0)}."
+                    )
+                except Exception as exc:
+                    logger.exception("/fullsync command failed")
+                    reply_text = f"❌ Full sync failed: {exc}"
+                if self.client is not None:
+                    await self.client.send_message(
+                        chat_id=self.settings.OWNER_TG_ID,
+                        text=reply_text,
+                    )
+                return
+
             if cmd_head in ("/stickers", "/sticker"):
                 reply_text = await self._execute_owner_sticker_command(raw_text)
                 if self.client is not None:
@@ -2631,6 +3312,7 @@ class TelegramService:
             height=int(height) if height is not None else 512,
             is_animated=is_animated,
             is_video=is_video,
+            file_id=getattr(sticker, "file_id", None) or None,
         )
         (self.settings.media_dir / "stickers" / ".no_auto_seed").unlink(missing_ok=True)
 
@@ -2694,6 +3376,7 @@ class TelegramService:
                 "height": int(height) if height is not None else 512,
                 "is_animated": is_animated,
                 "is_video": is_video,
+                "file_id": getattr(sticker, "file_id", None) or None,
             }
             if dest.is_file() and dest.stat().st_size > 0:
                 return "skipped", entry
@@ -2785,6 +3468,30 @@ class TelegramService:
                 return True
         return False
 
+    @staticmethod
+    def _pack_missing_file_ids(stickers_root: Path, pack_name: str) -> bool:
+        if not stickers_root.is_dir():
+            return False
+        target_lower = pack_name.lower()
+        for entry in stickers_root.iterdir():
+            if not entry.is_dir() or entry.name.startswith(".") or entry.name.lower() != target_lower:
+                continue
+            manifest_path = entry / "manifest.json"
+            if not manifest_path.is_file():
+                return False
+            try:
+                manifest = json.loads(manifest_path.read_text("utf-8"))
+            except Exception:
+                return False
+            stickers = manifest.get("stickers") if isinstance(manifest, dict) else None
+            if not isinstance(stickers, list) or not stickers:
+                return False
+            return any(
+                isinstance(item, dict) and not str(item.get("file_id") or "").strip()
+                for item in stickers
+            )
+        return False
+
     async def ensure_default_sticker_packs(self) -> dict[str, int]:
         """Sync missing `DEFAULT_STICKER_PACKS` unless dismissed by the owner."""
         counts = {"imported": 0, "skipped": 0, "failed": 0}
@@ -2810,6 +3517,13 @@ class TelegramService:
                 self._has_installed_pack_stickers, stickers_root, pack_name
             )
             if already_installed:
+                if await asyncio.to_thread(self._pack_missing_file_ids, stickers_root, pack_name):
+                    try:
+                        await self.import_sticker_set(short_name)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug("Failed backfilling sticker file_ids for %s", short_name, exc_info=True)
                 counts["skipped"] += 1
                 continue
 
@@ -2827,6 +3541,87 @@ class TelegramService:
                 logger.warning("Failed syncing default sticker pack %s", short_name, exc_info=True)
 
         return counts
+
+    async def ensure_custom_emoji_meta(self) -> int:
+        """Backfill `.emoji_meta.json` Unicode fallbacks from DB posts and Telegram API."""
+        import re
+
+        from app.media.stickers import upsert_custom_emoji_meta
+
+        candidate_roots: list[Path] = [self.settings.exports_dir / "emoji"]
+        epochs_dir = self.settings.media_dir / "epochs"
+        if epochs_dir.is_dir():
+            candidate_roots.extend(
+                p / "emoji" for p in sorted(epochs_dir.iterdir()) if p.is_dir()
+            )
+
+        existing_roots = [r for r in candidate_roots if r.is_dir()]
+        if not existing_roots:
+            return 0
+
+        # 1. Seed from existing post HTML (<i class="custom-emoji" emoji-src=".../emoji/{id}.ext">🔥</i>)
+        db_alts: dict[str, str] = {}
+        if self.session_factory is not None:
+            pattern = re.compile(
+                r'<i\b[^>]*\bclass=["\'][^"\']*\bcustom-emoji\b[^"\']*["\'][^>]*'
+                r'(?:data-custom-emoji-id=["\'](\d{1,32})["\']|emoji-src=["\'][^"\']*/emoji/(\d{1,32})\.[a-z0-9]+["\'])'
+                r'[^>]*>([^<]{1,16})</i>',
+                re.IGNORECASE,
+            )
+            try:
+                async with self.session_factory() as session:
+                    rows = (
+                        await session.execute(
+                            select(Post.text_html).where(Post.text_html.like("%custom-emoji%"))
+                        )
+                    ).scalars().all()
+                for raw_html in rows:
+                    if not raw_html:
+                        continue
+                    for m in pattern.finditer(raw_html):
+                        cid = (m.group(1) or m.group(2) or "").strip()
+                        alt_text = html.unescape(m.group(3)).strip()
+                        if cid and alt_text and alt_text != "✦":
+                            db_alts.setdefault(cid, alt_text)
+            except Exception:
+                logger.debug("Failed seeding custom emoji alts from DB", exc_info=True)
+
+        refreshed = 0
+        for root in existing_roots:
+            existing_meta = await asyncio.to_thread(load_custom_emoji_meta, root)
+            all_ids = [
+                p.stem
+                for p in sorted(root.iterdir(), key=lambda x: x.name)
+                if p.is_file()
+                and p.suffix.lower() in EMOJI_EXTENSIONS
+                and p.stem.isascii()
+                and p.stem.isdigit()
+            ]
+            if db_alts:
+                seed_updates = {
+                    cid: db_alts[cid]
+                    for cid in all_ids
+                    if cid in db_alts and not existing_meta.get(cid)
+                }
+                if seed_updates:
+                    await asyncio.to_thread(upsert_custom_emoji_meta, root, seed_updates)
+                    existing_meta.update(seed_updates)
+                    refreshed += len(seed_updates)
+
+            missing_ids = [cid for cid in all_ids if not existing_meta.get(cid)]
+            if (
+                missing_ids
+                and self.client is not None
+                and hasattr(self.client, "get_custom_emoji_stickers")
+            ):
+                try:
+                    await cache_custom_emoji_stickers(self.client, root.parent, missing_ids)
+                    refreshed += len(missing_ids)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("Failed backfilling custom emoji meta in %s", root, exc_info=True)
+        return refreshed
 
     async def _execute_owner_sticker_command(self, raw_text: str) -> str:
         parts = raw_text.strip().split(None, 2)

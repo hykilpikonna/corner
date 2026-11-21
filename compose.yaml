@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-corner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-corner}
+      POSTGRES_DB: ${POSTGRES_DB:-corner}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-corner} -d ${POSTGRES_DB:-corner}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://corner:corner@postgres:5432/corner}
+      DATA_DIR: /data
+      BASE_URL: ${BASE_URL:-http://localhost:3000}
+      SITE_URL: ${SITE_URL:-http://localhost:3000/life}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      ALLOW_ANON_COMMENTS: ${ALLOW_ANON_COMMENTS:-true}
+      ALTCHA_MAX_NUMBER: ${ALTCHA_MAX_NUMBER:-50000}
+      RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-900}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-["127.0.0.1","::1","172.16.0.0/12","10.0.0.0/8","192.168.0.0/16"]}
+    volumes:
+      - corner_data:/data
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NUXT_PUBLIC_LIFE_API_URL: ${NUXT_PUBLIC_LIFE_API_URL:-/api/life}
+        NUXT_PUBLIC_CONTENT_HOST: ${NUXT_PUBLIC_CONTENT_HOST:-}
+        LIFE_PREVIEW_POSTS_URL: ${LIFE_PREVIEW_POSTS_URL:-}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:80"
+
+volumes:
+  pgdata:
+  corner_data:

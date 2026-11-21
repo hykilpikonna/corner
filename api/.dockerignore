@@ -1,0 +1,15 @@
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.git
+.env
+.env.*
+data
+pgdata
+config.yml
+credentials.json
+tests
+*.session
+*.session-journal

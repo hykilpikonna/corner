@@ -1232,6 +1232,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_comments.add_argument("--discussion-chat-id", type=int, default=None)
 
     sub.add_parser("rebuild-exports", help="Atomically regenerate posts.json, pages/, and feeds")
+    p_crawl = sub.add_parser(
+        "crawl-channel",
+        help="Backfill active channel posts using the bot account (TelegramBackup ID-range method)",
+    )
+    p_crawl.add_argument("--start-id", type=int, default=None)
+    p_crawl.add_argument("--full", action="store_true")
+    p_crawl.add_argument("--batch-size", type=int, default=200)
     sub.add_parser(
         "login-tg-user",
         help="Interactively log in to a read-only Telegram user account and print TG_USER_SESSION_STRING",
@@ -1291,6 +1298,37 @@ async def _run_cli(args: argparse.Namespace) -> None:
             elif args.command == "rebuild-exports":
                 meta = await generate_exports(session, settings)
                 print(json.dumps(meta, indent=2))
+            elif args.command == "crawl-channel":
+                from pyrogram import Client
+
+                from app.tg.client import TelegramService
+
+                if not settings.TG_API_ID or not settings.TG_API_HASH or not settings.TG_BOT_TOKEN:
+                    raise SystemExit("TG_API_ID, TG_API_HASH, and TG_BOT_TOKEN must be configured.")
+                if settings.TG_CHANNEL_ID is None:
+                    raise SystemExit("TG_CHANNEL_ID must be configured.")
+                settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+                bot_client = Client(
+                    name=settings.TG_SESSION_NAME,
+                    api_id=int(settings.TG_API_ID),
+                    api_hash=str(settings.TG_API_HASH),
+                    bot_token=settings.TG_BOT_TOKEN,
+                    workdir=str(settings.DATA_DIR),
+                )
+                svc = TelegramService(
+                    session_factory=factory,
+                    settings=settings,
+                    client=bot_client,
+                )
+                async with bot_client:
+                    svc.bridge.set_client(bot_client)
+                    summary = await svc.crawl_channel_history(
+                        start_id=args.start_id,
+                        full=args.full,
+                        batch_size=args.batch_size,
+                        trigger_prompt=False,
+                    )
+                print(json.dumps(summary, indent=2))
     finally:
         await close_db()
 

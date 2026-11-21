@@ -307,6 +307,116 @@ async def test_magic_link_full_flow_open_redirect_and_owner_reserved_names(
 
 
 @pytest.mark.asyncio
+async def test_telegram_oidc_id_token_callback(
+    test_settings: Settings,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from joserfc import jwt
+    from joserfc.jwk import KeySet, RSAKey
+
+    from app.auth import oauth as oauth_mod
+
+    rsa_key = RSAKey.generate_key(2048, {"kid": "tg-test-1", "alg": "RS256", "use": "sig"})
+    public_jwks = KeySet.import_key_set({"keys": [rsa_key.as_dict(private=False)]})
+
+    async def fake_fetch_jwks(*, force_refresh: bool = False) -> KeySet:
+        return public_jwks
+
+    monkeypatch.setattr(oauth_mod, "_fetch_telegram_jwks", fake_fetch_jwks)
+
+    cfg = test_settings.model_copy(
+        update={
+            "TG_BOT_TOKEN": "123456789:DUMMY_TEST_BOT_TOKEN_NOT_REAL",
+            "TG_LOGIN_BOT_USERNAME": "dummy_test_bot",
+            "OWNER_TG_ID": 777001,
+        }
+    )
+    _, client = await _make_client(cfg, db_session)
+
+    now = int(time.time())
+    async with client:
+        # 1. Expired ID token -> 400
+        expired_tok = jwt.encode(
+            {"alg": "RS256", "kid": "tg-test-1"},
+            {
+                "iss": "https://oauth.telegram.org",
+                "aud": "123456789",
+                "sub": "pair-1",
+                "iat": now - 7200,
+                "exp": now - 300,
+                "id": 777001,
+                "name": "Owner",
+            },
+            rsa_key,
+        )
+        assert (
+            await client.post("/api/life/auth/telegram/callback", json={"id_token": expired_tok})
+        ).status_code == 400
+
+        # 2. Wrong aud -> 400
+        wrong_aud_tok = jwt.encode(
+            {"alg": "RS256", "kid": "tg-test-1"},
+            {
+                "iss": "https://oauth.telegram.org",
+                "aud": "999999999",
+                "sub": "pair-1",
+                "iat": now,
+                "exp": now + 600,
+                "id": 777001,
+                "name": "Owner",
+            },
+            rsa_key,
+        )
+        assert (
+            await client.post("/api/life/auth/telegram/callback", json={"id_token": wrong_aud_tok})
+        ).status_code == 400
+
+        # 3. Wrong signature -> 400
+        other_key = RSAKey.generate_key(2048, {"kid": "tg-test-1", "alg": "RS256", "use": "sig"})
+        bad_sig_tok = jwt.encode(
+            {"alg": "RS256", "kid": "tg-test-1"},
+            {
+                "iss": "https://oauth.telegram.org",
+                "aud": "123456789",
+                "sub": "pair-1",
+                "iat": now,
+                "exp": now + 600,
+                "id": 777001,
+                "name": "Owner",
+            },
+            other_key,
+        )
+        assert (
+            await client.post("/api/life/auth/telegram/callback", json={"id_token": bad_sig_tok})
+        ).status_code == 400
+
+        # 4. Valid OIDC ID token -> 200 and owner role
+        valid_tok = jwt.encode(
+            {"alg": "RS256", "kid": "tg-test-1"},
+            {
+                "iss": "https://oauth.telegram.org",
+                "aud": "123456789",
+                "sub": "pair-owner-1",
+                "iat": now,
+                "exp": now + 600,
+                "id": 777001,
+                "name": "Owner OIDC",
+                "preferred_username": "siteowner",
+                "picture": "https://cdn4.telesco.pe/file/avatar.jpg",
+            },
+            rsa_key,
+        )
+        r_ok = await client.post("/api/life/auth/telegram/callback", json={"id_token": valid_tok})
+        assert r_ok.status_code == 200
+        user = r_ok.json()["user"]
+        assert user["role"] == "owner"
+        assert user["provider"] == "telegram"
+        assert user["display_name"] == "Owner OIDC"
+        assert user["avatar_url"] == "https://cdn4.telesco.pe/file/avatar.jpg"
+
+
+@pytest.mark.asyncio
 async def test_telegram_login_widget_and_owner_role_and_unsubscribe(
     test_settings: Settings,
     db_session: AsyncSession,
@@ -366,10 +476,11 @@ async def test_telegram_login_widget_and_owner_role_and_unsubscribe(
         assert owner_user["provider"] == "telegram"
         assert owner_user["display_name"] == "Owner"
 
-        # GET /auth/me exposes telegram_bot_username when telegram is enabled
+        # GET /auth/me exposes telegram_bot_username and telegram_client_id when telegram is enabled
         me_tg = (await client.get("/api/life/auth/me")).json()
         assert "telegram" in me_tg["providers"]
         assert me_tg["telegram_bot_username"] == "dummy_test_bot"
+        assert me_tg["telegram_client_id"] == "123456789"
 
         # Auto-detected bot_username from running TelegramService works without TG_LOGIN_BOT_USERNAME
         cfg_auto = test_settings.model_copy(

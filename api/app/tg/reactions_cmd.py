@@ -197,7 +197,8 @@ def _help_text() -> str:
         "/reactions reset — restore default Telegram list\n"
         "/stickers — list or manage custom web stickers (or send a sticker / t.me/addstickers/... link)\n"
         "/stickers add <t.me/addstickers/...> — import an entire Telegram sticker pack\n"
-        "/stickers rmpack <pack> — remove an entire sticker pack\n\n"
+        "/stickers rmpack <pack> — remove an entire sticker pack\n"
+        "/fullsync — crawl and update all active channel posts from ID #1 (keeps existing images)\n\n"
         "You can send standard emojis, Telegram custom emojis, or `c:<id>` tokens."
     )
 
@@ -486,45 +487,68 @@ async def cache_custom_emoji_stickers(
     exports_dir: Path,
     custom_emoji_ids: Sequence[str],
 ) -> None:
-    """Best-effort download of TG custom emoji assets into `exports_dir/emoji/{id}.{ext}`."""
+    """Best-effort download of TG custom emoji assets and Unicode fallback meta."""
+    from app.media.stickers import load_custom_emoji_meta, upsert_custom_emoji_meta
+
     if client is None or not custom_emoji_ids:
         return
     get_fn = getattr(client, "get_custom_emoji_stickers", None)
     dl_fn = getattr(client, "download_media", None)
-    if not callable(get_fn) or not callable(dl_fn):
+    if not callable(get_fn):
         return
 
     emoji_dir = exports_dir / "emoji"
     emoji_dir.mkdir(parents=True, exist_ok=True)
-    missing_ids: list[int] = []
+    existing_meta = load_custom_emoji_meta(emoji_dir)
+    ids_to_fetch: list[int] = []
+    seen_req: set[str] = set()
     for raw_id in custom_emoji_ids:
-        if not raw_id.isdigit():
+        cid_str = str(raw_id).strip()
+        if not cid_str.isdigit() or cid_str in seen_req:
             continue
-        if any((emoji_dir / f"{raw_id}{ext}").is_file() for ext in (".webp", ".webm", ".tgs", ".png", ".apng", ".gif")):
+        seen_req.add(cid_str)
+        has_file = any(
+            (emoji_dir / f"{cid_str}{ext}").is_file()
+            for ext in (".webp", ".webm", ".tgs", ".png", ".apng", ".gif")
+        )
+        has_meta = bool(existing_meta.get(cid_str))
+        if has_file and has_meta:
             continue
-        missing_ids.append(int(raw_id))
+        ids_to_fetch.append(int(cid_str))
 
-    if not missing_ids:
+    if not ids_to_fetch:
         return
 
-    try:
-        stickers = await get_fn(missing_ids)
-    except Exception:
-        logger.debug("Failed to fetch custom emoji stickers %s", missing_ids, exc_info=True)
-        return
-
-    for sticker in stickers or []:
-        cid = getattr(sticker, "custom_emoji_id", None)
-        if cid is None:
-            continue
-        cid_str = str(cid)
-        is_animated = bool(getattr(sticker, "is_animated", False))
-        is_video = bool(getattr(sticker, "is_video", False))
-        ext = ".tgs" if is_animated else (".webm" if is_video else ".webp")
-        dest = emoji_dir / f"{cid_str}{ext}"
-        if dest.is_file():
-            continue
+    meta_updates: dict[str, str] = {}
+    for offset in range(0, len(ids_to_fetch), 50):
+        chunk = ids_to_fetch[offset : offset + 50]
         try:
-            await dl_fn(sticker, file_name=str(dest))
+            stickers = await get_fn(chunk)
         except Exception:
-            logger.debug("Failed to download custom emoji %s", cid_str, exc_info=True)
+            logger.warning("Failed to fetch custom emoji stickers batch (len=%d)", len(chunk), exc_info=True)
+            continue
+
+        for sticker in stickers or []:
+            cid = getattr(sticker, "custom_emoji_id", None)
+            if cid is None:
+                continue
+            cid_str = str(cid)
+            alt_emoji = getattr(sticker, "emoji", None)
+            if isinstance(alt_emoji, str) and alt_emoji.strip():
+                meta_updates[cid_str] = alt_emoji.strip()
+
+            if not callable(dl_fn):
+                continue
+            is_animated = bool(getattr(sticker, "is_animated", False))
+            is_video = bool(getattr(sticker, "is_video", False))
+            ext = ".tgs" if is_animated else (".webm" if is_video else ".webp")
+            dest = emoji_dir / f"{cid_str}{ext}"
+            if dest.is_file():
+                continue
+            try:
+                await dl_fn(sticker, file_name=str(dest))
+            except Exception:
+                logger.debug("Failed to download custom emoji %s", cid_str, exc_info=True)
+
+    if meta_updates:
+        upsert_custom_emoji_meta(emoji_dir, meta_updates)

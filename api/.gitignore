@@ -19,3 +19,6 @@ config.toml
 
 # Local runtime data
 data/
+pgdata/
+config.yml
+credentials.json

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -118,6 +118,7 @@ class AuthMeResponse(BaseModel):
     providers: list[str]
     allow_anon_comments: bool
     telegram_bot_username: str | None = None
+    telegram_client_id: str | None = None
     oidc_provider_name: str | None = None
 
 
@@ -135,13 +136,14 @@ class OkResponse(BaseModel):
 
 
 class TelegramAuthPayload(BaseModel):
-    id: int
-    first_name: str
+    id_token: str | None = None
+    id: int | None = None
+    first_name: str | None = None
     last_name: str | None = None
     username: str | None = None
     photo_url: str | None = None
-    auth_date: int
-    hash: str
+    auth_date: int | None = None
+    hash: str | None = None
 
 
 class MagicLinkRequest(BaseModel):
@@ -255,6 +257,7 @@ class CommentDTO(BaseModel):
     deleted: bool = False
     is_mine: bool = False
     can_delete: bool = False
+    moderation_status: str = "approved"
     reactions: list[MergedReactionDTO] = Field(default_factory=list)
 
 
@@ -282,6 +285,7 @@ class CustomEmojiDTO(BaseModel):
     id: str
     url: str
     format: str
+    alt: str | None = None
 
 
 class CustomEmojisResponse(BaseModel):
@@ -306,6 +310,51 @@ class StickerPackDTO(BaseModel):
     name: str
     title: str
     stickers: list[StickerItemDTO]
+
+
+class ModerationWhitelistEntryDTO(BaseModel):
+    id: int
+    kind: str
+    key: str
+    label: str | None = None
+    created_at: str
+
+
+class ModerationCommentDTO(BaseModel):
+    id: int
+    post_id: int
+    parent_id: int | None = None
+    source: str
+    author: CommentAuthorDTO
+    body_text: str
+    body_html: str
+    media: CommentMediaDTO | dict[str, Any] | None = None
+    created_at: str
+    moderation_status: str
+    moderation_meta: dict[str, Any] | None = None
+    sender_whitelisted: bool = False
+    can_whitelist: bool = False
+    whitelist_kind: str | None = None
+    whitelist_label: str | None = None
+
+
+class ModerationQueueResponse(BaseModel):
+    pending_count: int
+    comments: list[ModerationCommentDTO]
+    whitelist: list[ModerationWhitelistEntryDTO]
+
+
+class ModerationDecisionRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    whitelist_sender: bool = False
+
+
+class ModerationDecisionResponse(BaseModel):
+    ok: bool = True
+    comment_id: int
+    post_id: int
+    moderation_status: str
+    whitelisted: bool = False
 
 
 class StickersResponse(BaseModel):
