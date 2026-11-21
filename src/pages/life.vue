@@ -8,23 +8,37 @@
         :messages="lifeMessages"
         :anonAvatars="anonAvatars"
     >
-        <div class="title">
-            <div class="title-row">
-                <h2>生活</h2>
-                <a
-                    v-if="life.rssUrl"
-                    class="rss-link"
-                    :class="{copied: rssCopied}"
-                    :href="life.rssUrl"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    :title="rssCopied ? '已复制 RSS 链接' : '点击复制 RSS 订阅链接'"
-                    @click.prevent="onRssClick"
-                >
-                    <i :class="rssCopied ? 'fas fa-check' : 'fas fa-rss'" aria-hidden="true"></i>
-                    <span>{{ rssCopied ? '已复制 RSS 链接' : 'RSS' }}</span>
-                </a>
-            </div>
+        <template #default="{ isOwner, pendingReviewCount, openModeration }">
+            <div class="title">
+                <div class="title-row">
+                    <h2>生活</h2>
+                    <div class="title-actions">
+                        <button
+                            v-if="isOwner"
+                            type="button"
+                            class="rss-link mod-queue-btn clickable"
+                            :class="{ 'has-pending': pendingReviewCount > 0 }"
+                            @click="openModeration()"
+                        >
+                            <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                            <span>{{ lifeMessages.reviewQueueBtn }}</span>
+                            <span v-if="pendingReviewCount > 0" class="mod-pending-count">{{ pendingReviewCount }}</span>
+                        </button>
+                        <a
+                            v-if="life.rssUrl"
+                            class="rss-link"
+                            :class="{copied: rssCopied}"
+                            :href="life.rssUrl"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            :title="rssCopied ? '已复制 RSS 链接' : '点击复制 RSS 订阅链接'"
+                            @click.prevent="onRssClick"
+                        >
+                            <i :class="rssCopied ? 'fas fa-check' : 'fas fa-rss'" aria-hidden="true"></i>
+                            <span>{{ rssCopied ? '已复制 RSS 链接' : 'RSS' }}</span>
+                        </a>
+                    </div>
+                </div>
             <div class="subtitle">
                 <p>
                     在这个时间只会正向流动的世界里，每当秒针划过刻度线，就不可能再回到那里了——每一刻都是我们的第一次、也是最后一次。二十岁，人生中最有趣的这段时光，只匆匆忙忙地经历一次太可惜了。但是或许可以通过这里的照片和文字，让未来的自己能够重新体验这些心情起伏——这是这个频道的初衷。
@@ -34,6 +48,7 @@
                 </p>
             </div>
         </div>
+        </template>
     </TgBlog>
 </template>
 
@@ -309,17 +324,26 @@ onUnmounted(() => {
         margin: 0
         line-height: 1.2
 
+.title-actions
+    display: inline-flex
+    align-items: center
+    gap: 8px
+    flex-shrink: 0
+
 .rss-link
     display: inline-flex
     align-items: center
     gap: 5px
     padding: 3px 10px
+    border: none
     border-radius: 999px
+    font-family: inherit
     font-size: 0.82em
     line-height: 1.4
     color: colors.$color-text-light
     background: colors.$color-card
     text-decoration: none
+    cursor: pointer
     box-shadow: 0 2px 4px -1px rgb(0 0 0 / 8%)
     transition: color 0.2s ease, transform 0.2s ease
 
@@ -329,4 +353,22 @@ onUnmounted(() => {
 
     &.copied
         color: colors.$color-text-special
+
+    &.mod-queue-btn.has-pending
+        color: #92400e
+        background: #fef3c7
+
+.mod-pending-count
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    min-width: 16px
+    height: 16px
+    padding: 0 5px
+    border-radius: 999px
+    background: #d97706
+    color: #fff
+    font-size: 0.85em
+    font-weight: 600
+    line-height: 1
 </style>

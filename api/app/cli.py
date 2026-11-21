@@ -8,19 +8,20 @@ import logging
 import os
 import re
 import shutil
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import nh3
 from dateutil import parser as date_parser
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db.models import Channel, Comment, Post
-from app.db.repo import ensure_channel, sanitize_post_html, upsert_post
+from app.db.models import Channel, Comment, CommentTgReaction, Post
+from app.db.repo import ensure_channel, make_reaction_key, sanitize_post_html, upsert_post
 from app.db.session import close_db, init_db
 from app.exports import generate_exports
 from app.media.fingerprint import compute_image_fingerprint
@@ -544,6 +545,8 @@ class _ParsedDiscussionMsg:
     body_text: str
     body_html: str
     media: dict[str, Any] | None
+    tg_reactions: list[tuple[str, str | None, str | None, int]] = field(default_factory=list)
+    media_rel_paths: list[str] = field(default_factory=list)
 
 
 def _load_discussion_dump(
@@ -779,8 +782,87 @@ def _render_telethon_text(text: str, entities: list[dict[str, Any]] | None) -> t
     return text.strip(), sanitize_comment_html("".join(parts))
 
 
+def _safe_tdesktop_rel_path(raw_val: Any) -> str | None:
+    if not isinstance(raw_val, str):
+        return None
+    cleaned = raw_val.strip().replace("\\", "/")
+    if not cleaned or cleaned.startswith("(") or cleaned.startswith("/"):
+        return None
+    parts = PurePosixPath(cleaned).parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return None
+    return "/".join(parts)
+
+
+def _normalize_tdesktop_comment_media(
+    raw: dict[str, Any], *, media_prefix: str
+) -> tuple[dict[str, Any] | None, list[str]]:
+    rel_paths: list[str] = []
+    prefix = media_prefix.strip("/")
+
+    rel_photo = _safe_tdesktop_rel_path(raw.get("photo"))
+    rel_thumb = _safe_tdesktop_rel_path(raw.get("thumbnail"))
+    if rel_photo:
+        rel_paths.append(rel_photo)
+        out: dict[str, Any] = {
+            "media_type": "photo",
+            "url": f"{prefix}/{rel_photo}",
+        }
+        if rel_thumb:
+            rel_paths.append(rel_thumb)
+            out["thumb"] = f"{prefix}/{rel_thumb}"
+        for k_src, k_dst in (("width", "width"), ("height", "height"), ("photo_file_size", "size")):
+            if raw.get(k_src) is not None:
+                out[k_dst] = raw[k_src]
+        return out, rel_paths
+
+    rel_file = _safe_tdesktop_rel_path(raw.get("file"))
+    if not rel_file:
+        return None, []
+    rel_paths.append(rel_file)
+    raw_kind = str(raw.get("media_type") or "").strip().lower()
+    lower_file = rel_file.lower()
+
+    if raw_kind == "sticker":
+        mtype = "sticker"
+    elif raw_kind == "animation":
+        mtype = "animation"
+    elif raw_kind in ("video_file", "video_message"):
+        mtype = "video"
+    else:
+        mtype = "document"
+
+    out = {
+        "media_type": mtype,
+        "url": f"{prefix}/{rel_file}",
+    }
+    if rel_thumb:
+        rel_paths.append(rel_thumb)
+        out["thumb"] = f"{prefix}/{rel_thumb}"
+    if mtype == "sticker":
+        if raw.get("sticker_emoji"):
+            out["emoji"] = str(raw["sticker_emoji"])
+        out["is_animated"] = lower_file.endswith(".tgs")
+        out["is_video"] = lower_file.endswith(".webm")
+    if raw.get("file_name"):
+        out["file_name"] = str(raw["file_name"])
+    elif mtype in ("document", "video", "animation"):
+        out["file_name"] = PurePosixPath(rel_file).name
+    if raw.get("mime_type"):
+        out["mime_type"] = str(raw["mime_type"])
+    if raw.get("file_size") is not None:
+        out["size"] = raw["file_size"]
+    for dim in ("width", "height"):
+        if raw.get(dim) is not None:
+            out[dim] = raw[dim]
+    return out, rel_paths
+
+
 def _parse_discussion_message(
-    raw: dict[str, Any], users_map: dict[int, dict[str, Any]]
+    raw: dict[str, Any],
+    users_map: dict[int, dict[str, Any]],
+    *,
+    media_prefix: str = "comments/epoch1",
 ) -> _ParsedDiscussionMsg | None:
     # Skip service messages
     if raw.get("type") == "service" or raw.get("_") == "MessageService":
@@ -799,6 +881,8 @@ def _parse_discussion_message(
 
     fwd_channel_id: int | None = None
     fwd_from_name: str | None = None
+    tg_reactions: list[tuple[str, str | None, str | None, int]] = []
+    media_rel_paths: list[str] = []
 
     if is_tdesktop:
         created_at = _parse_datetime(raw.get("date_unixtime") or raw.get("date"))
@@ -844,11 +928,26 @@ def _parse_discussion_message(
         author_username = raw.get("from_username")
 
         body_text, body_html = _render_tdesktop_text(raw.get("text"), raw.get("text_entities"))
-        media: dict[str, Any] | None = None
-        for mkey in ("photo", "file", "sticker_emoji", "media_type", "thumbnail"):
-            if raw.get(mkey):
-                media = media or {}
-                media[mkey] = raw[mkey]
+        media, media_rel_paths = _normalize_tdesktop_comment_media(raw, media_prefix=media_prefix)
+
+        seen_rkeys: dict[str, tuple[str, str | None, str | None, int]] = {}
+        for rx in raw.get("reactions") or []:
+            if not isinstance(rx, dict):
+                continue
+            cnt = _parse_optional_int(rx.get("count")) or 0
+            if cnt <= 0:
+                continue
+            if rx.get("type") == "emoji" and rx.get("emoji"):
+                em = str(rx["emoji"])
+                rkey = make_reaction_key(emoji=em)
+                prev = seen_rkeys.get(rkey)
+                seen_rkeys[rkey] = (
+                    rkey,
+                    em,
+                    None,
+                    (prev[3] + cnt) if prev is not None else cnt,
+                )
+        tg_reactions = list(seen_rkeys.values())
     else:
         # Telethon raw to_dict() format
         created_at = _parse_datetime(raw.get("date"))
@@ -910,15 +1009,14 @@ def _parse_discussion_message(
 
         raw_media = raw.get("media")
         media = _sanitize_media_metadata(raw_media) if isinstance(raw_media, dict) else None
-
-    if not body_text and media is not None:
-        media_kind = (
-            media.get("media_type")
-            or media.get("_")
-            or ("sticker" if media.get("sticker_emoji") else "media")
-        )
-        body_text = f"[{media_kind}]"
-        body_html = sanitize_comment_html(f"<em>{html.escape(body_text)}</em>")
+        if not body_text and media is not None:
+            media_kind = (
+                media.get("media_type")
+                or media.get("_")
+                or ("sticker" if media.get("sticker_emoji") else "media")
+            )
+            body_text = f"[{media_kind}]"
+            body_html = sanitize_comment_html(f"<em>{html.escape(body_text)}</em>")
 
     return _ParsedDiscussionMsg(
         tg_msg_id=tg_msg_id,
@@ -936,6 +1034,8 @@ def _parse_discussion_message(
         body_text=body_text,
         body_html=body_html,
         media=media,
+        tg_reactions=tg_reactions,
+        media_rel_paths=media_rel_paths,
     )
 
 
@@ -959,7 +1059,7 @@ def _match_tdesktop_root_to_post(
     if expected_channel_id is not None:
         if msg.fwd_channel_id is None or msg.fwd_channel_id != expected_channel_id:
             return None
-    if expected_channel_title and msg.fwd_from_name:
+    elif expected_channel_title and msg.fwd_from_name:
         if msg.fwd_from_name.strip().lower() != expected_channel_title.strip().lower():
             return None
 
@@ -968,10 +1068,13 @@ def _match_tdesktop_root_to_post(
 
     best_post: Post | None = None
     best_score: tuple[int, float] | None = None
+    near_12s: list[tuple[float, Post]] = []
 
     for post in epoch_posts:
         post_dt = post.date if post.date.tzinfo else post.date.replace(tzinfo=UTC)
         delta = abs((msg.created_at - post_dt).total_seconds())
+        if delta <= 12:
+            near_12s.append((delta, post))
         if delta > 180:
             continue
         post_norm = normalized_post_texts[post.id]
@@ -981,7 +1084,7 @@ def _match_tdesktop_root_to_post(
                 text_match = 2
             elif len(msg_norm) >= 16 and msg_norm[:32] == post_norm[:32]:
                 text_match = 1
-        elif msg_is_media_only and not post_norm and delta <= 10:
+        elif msg_is_media_only and not post_norm and delta <= 15:
             text_match = 1
 
         if text_match == 0:
@@ -992,7 +1095,44 @@ def _match_tdesktop_root_to_post(
             best_score = score
             best_post = post
 
+    if best_post is None and len(near_12s) == 1:
+        return near_12s[0][1]
     return best_post
+
+
+def _sync_comment_media_files(
+    rel_paths: set[str],
+    *,
+    src_root: Path,
+    dest_root: Path,
+    media_mode: str,
+) -> int:
+    if media_mode == "skip" or not rel_paths or not src_root.is_dir():
+        return 0
+    src_resolved = src_root.resolve()
+    dest_resolved = dest_root.resolve()
+    dest_resolved.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for rel in sorted(rel_paths):
+        parts = PurePosixPath(rel).parts
+        src_file = (src_resolved / Path(*parts)).resolve()
+        if not src_file.is_relative_to(src_resolved) or not src_file.is_file():
+            continue
+        dst_file = (dest_resolved / Path(*parts)).resolve()
+        if not dst_file.is_relative_to(dest_resolved):
+            continue
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        if dst_file.exists():
+            continue
+        if media_mode == "hardlink":
+            try:
+                os.link(src_file, dst_file)
+            except OSError:
+                shutil.copy2(src_file, dst_file)
+        else:
+            shutil.copy2(src_file, dst_file)
+        copied += 1
+    return copied
 
 
 async def import_epoch1_comments(
@@ -1001,6 +1141,8 @@ async def import_epoch1_comments(
     *,
     channel_id: int = 1,
     discussion_chat_id: int | None = None,
+    settings: Settings | None = None,
+    media_mode: str = "copy",
 ) -> dict[str, int]:
     """Import Epoch 1 discussion group backup (Telethon JSON/JSONL or tdesktop result.json).
 
@@ -1027,11 +1169,12 @@ async def import_epoch1_comments(
 
     expected_channel_id = _normalize_channel_id(channel.tg_chat_id)
     expected_channel_title = channel.title
+    media_prefix = f"comments/epoch{channel.id}"
 
     raw_msgs, users_map = _load_discussion_dump(source_path)
     parsed_msgs: list[_ParsedDiscussionMsg] = []
     for raw in raw_msgs:
-        parsed = _parse_discussion_message(raw, users_map)
+        parsed = _parse_discussion_message(raw, users_map, media_prefix=media_prefix)
         if parsed is not None:
             parsed_msgs.append(parsed)
     parsed_msgs.sort(key=lambda m: m.tg_msg_id)
@@ -1056,17 +1199,18 @@ async def import_epoch1_comments(
     # Step 1: Identify auto-forwarded channel post root messages in the discussion group
     root_msg_to_post: dict[int, Post] = dict(disc_root_to_post)
     roots_linked = 0
+    candidate_roots: list[_ParsedDiscussionMsg] = []
 
     for msg in parsed_msgs:
-        if msg.tg_msg_id in root_msg_to_post:
-            continue
-        # Auto-forwarded discussion roots are never replies to another discussion message
         if msg.reply_to_msg_id is not None:
+            continue
+        if msg.is_forwarded_from_channel or msg.fwd_channel_id is not None:
+            candidate_roots.append(msg)
+        if msg.tg_msg_id in root_msg_to_post:
             continue
 
         matched_post: Post | None = None
         if msg.fwd_channel_post_id is not None:
-            # Guard against foreign channel forwards hijacking a discussion root
             if expected_channel_id is not None:
                 if msg.fwd_channel_id is None or msg.fwd_channel_id != expected_channel_id:
                     continue
@@ -1085,6 +1229,25 @@ async def import_epoch1_comments(
             if matched_post.tg_discussion_root_id is None:
                 matched_post.tg_discussion_root_id = msg.tg_msg_id
                 roots_linked += 1
+
+    # Propagate matched roots to captionless album sibling forwards from the same channel
+    for idx, msg in enumerate(candidate_roots):
+        if msg.tg_msg_id in root_msg_to_post or msg.body_text:
+            continue
+        if expected_channel_id is not None and msg.fwd_channel_id != expected_channel_id:
+            continue
+        for j in range(max(0, idx - 10), min(len(candidate_roots), idx + 11)):
+            sibling = candidate_roots[j]
+            if sibling.tg_msg_id not in root_msg_to_post:
+                continue
+            if expected_channel_id is not None and sibling.fwd_channel_id != expected_channel_id:
+                continue
+            if (
+                abs(sibling.tg_msg_id - msg.tg_msg_id) <= 10
+                and abs((sibling.created_at - msg.created_at).total_seconds()) <= 5
+            ):
+                root_msg_to_post[msg.tg_msg_id] = root_msg_to_post[sibling.tg_msg_id]
+                break
 
     await session.flush()
 
@@ -1118,22 +1281,35 @@ async def import_epoch1_comments(
     }
     tg_msg_to_comment_id: dict[int, int] = {k: v.id for k, v in existing_by_tg_id.items()}
 
+    existing_rx_res = await session.execute(
+        select(CommentTgReaction)
+        .join(Comment, Comment.id == CommentTgReaction.comment_id)
+        .where(Comment.channel_id == channel.id)
+    )
+    existing_rx_by_key: dict[tuple[int, str], CommentTgReaction] = {
+        (rx.comment_id, rx.reaction_key): rx for rx in existing_rx_res.scalars().all()
+    }
+
     comments_imported = 0
     comments_updated = 0
     skipped_unlinked = 0
     pending_parent_links: list[tuple[Comment, int]] = []
+    imported_comments: list[tuple[Comment, _ParsedDiscussionMsg]] = []
+    media_rels_to_sync: set[str] = set()
+    unflushed = 0
 
     for msg in parsed_msgs:
-        # Skip the auto-forwarded root posts themselves
         if msg.tg_msg_id in root_msg_to_post:
             continue
         post = _resolve_post_for_msg(msg)
         if post is None:
             skipped_unlinked += 1
             continue
-        if not msg.body_text:
+        if not msg.body_text and msg.media is None:
             skipped_unlinked += 1
             continue
+
+        media_rels_to_sync.update(msg.media_rel_paths)
 
         parent_tg_msg_id: int | None = None
         if (
@@ -1165,12 +1341,18 @@ async def import_epoch1_comments(
                 edited_at=msg.edited_at,
             )
             session.add(comment)
-            await session.flush()
             existing_by_tg_id[msg.tg_msg_id] = comment
-            tg_msg_to_comment_id[msg.tg_msg_id] = comment.id
+            imported_comments.append((comment, msg))
             comments_imported += 1
             if parent_tg_msg_id is not None and parent_id is None:
                 pending_parent_links.append((comment, parent_tg_msg_id))
+            unflushed += 1
+            if unflushed >= 500:
+                await session.flush()
+                for pending_c, pending_msg in imported_comments:
+                    if pending_c.id is not None:
+                        tg_msg_to_comment_id[pending_msg.tg_msg_id] = pending_c.id
+                unflushed = 0
         else:
             existing.post_id = post.id
             if parent_id is not None:
@@ -1184,12 +1366,48 @@ async def import_epoch1_comments(
             existing.body_html = msg.body_html
             existing.media = msg.media
             existing.edited_at = msg.edited_at
+            imported_comments.append((existing, msg))
             comments_updated += 1
+
+    await session.flush()
+    for c_obj, msg in imported_comments:
+        if c_obj.id is not None:
+            tg_msg_to_comment_id[msg.tg_msg_id] = c_obj.id
 
     for comment, parent_tg_id in pending_parent_links:
         resolved_parent_id = tg_msg_to_comment_id.get(parent_tg_id)
         if resolved_parent_id is not None and resolved_parent_id != comment.id:
             comment.parent_id = resolved_parent_id
+
+    for comment, msg in imported_comments:
+        if comment.id is None or not msg.tg_reactions:
+            continue
+        for rkey, emoji_val, cid_val, cnt in msg.tg_reactions:
+            rx_obj = existing_rx_by_key.get((comment.id, rkey))
+            if rx_obj is None:
+                rx_obj = CommentTgReaction(
+                    comment_id=comment.id,
+                    reaction_key=rkey,
+                    emoji=emoji_val,
+                    custom_emoji_id=cid_val,
+                    count=cnt,
+                )
+                session.add(rx_obj)
+                existing_rx_by_key[(comment.id, rkey)] = rx_obj
+            else:
+                rx_obj.emoji = emoji_val
+                rx_obj.custom_emoji_id = cid_val
+                rx_obj.count = cnt
+
+    media_copied = 0
+    if settings is not None and media_rels_to_sync:
+        media_copied = await asyncio.to_thread(
+            _sync_comment_media_files,
+            media_rels_to_sync,
+            src_root=source_path.parent,
+            dest_root=settings.media_dir / "comments" / f"epoch{channel.id}",
+            media_mode=media_mode,
+        )
 
     await session.commit()
     return {
@@ -1197,6 +1415,7 @@ async def import_epoch1_comments(
         "comments_imported": comments_imported,
         "comments_updated": comments_updated,
         "skipped_unlinked": skipped_unlinked,
+        "media_copied": media_copied,
     }
 
 
@@ -1230,6 +1449,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_comments.add_argument("--source", type=Path, required=True, help="Backup JSON or JSONL file")
     p_comments.add_argument("--channel-id", type=int, default=1)
     p_comments.add_argument("--discussion-chat-id", type=int, default=None)
+    p_comments.add_argument(
+        "--media-mode",
+        choices=["copy", "hardlink", "skip"],
+        default="copy",
+        help="How to populate DATA_DIR/media/comments/epoch<channel_id>/",
+    )
 
     sub.add_parser("rebuild-exports", help="Atomically regenerate posts.json, pages/, and feeds")
     p_crawl = sub.add_parser(
@@ -1243,7 +1468,218 @@ def _build_parser() -> argparse.ArgumentParser:
         "login-tg-user",
         help="Interactively log in to a read-only Telegram user account and print TG_USER_SESSION_STRING",
     )
+    p_backfill = sub.add_parser(
+        "backfill-avatars",
+        help="Fetch and cache profile photos + usernames for historical Telegram comment authors",
+    )
+    p_backfill.add_argument("--channel-id", type=int, default=1)
     return parser
+
+
+async def backfill_comment_avatars(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    client: Any,
+    channel_id: int | None = 1,
+) -> dict[str, int]:
+    """Download Telegram avatars + backfill usernames for imported historical comments."""
+    from pyrogram.errors import FloodWait
+
+    avatars_dir = settings.media_dir / "avatars"
+    avatars_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Determine target user IDs missing avatar or username
+    stmt = select(Comment.tg_author_id).where(Comment.tg_author_id.is_not(None)).distinct()
+    if channel_id is not None:
+        stmt = stmt.where(Comment.channel_id == channel_id)
+    all_uids = [int(uid) for uid in (await session.execute(stmt)).scalars().all() if uid]
+
+    # Link any already-cached disk avatars first
+    disk_linked = 0
+    missing_uids: list[int] = []
+    for uid in all_uids:
+        rel_path = f"avatars/{uid}.jpg"
+        if (settings.media_dir / rel_path).is_file():
+            upd = (
+                update(Comment)
+                .where(Comment.tg_author_id == uid, Comment.tg_author_avatar.is_(None))
+                .values(tg_author_avatar=rel_path)
+            )
+            res = await session.execute(upd)
+            disk_linked += int(res.rowcount or 0)
+        else:
+            missing_uids.append(uid)
+
+    # Also resolve username for anyone missing tg_author_username
+    uname_stmt = (
+        select(Comment.tg_author_id)
+        .where(Comment.tg_author_id.is_not(None), Comment.tg_author_username.is_(None))
+        .distinct()
+    )
+    if channel_id is not None:
+        uname_stmt = uname_stmt.where(Comment.channel_id == channel_id)
+    need_info_uids = set(missing_uids) | {
+        int(uid) for uid in (await session.execute(uname_stmt)).scalars().all() if uid
+    }
+
+    users_by_uid: dict[int, Any] = {}
+    disc_chat_id = settings.TG_DISCUSSION_CHAT_ID
+    if disc_chat_id is not None and hasattr(client, "get_chat_members"):
+        try:
+            async for member in client.get_chat_members(disc_chat_id):
+                u = getattr(member, "user", None)
+                uid = getattr(u, "id", None) if u is not None else None
+                if uid is not None:
+                    users_by_uid[int(uid)] = u
+        except Exception:
+            logger.debug("Could not enumerate discussion chat members", exc_info=True)
+
+    # Resolve remaining user IDs by fetching one of their actual messages in the discussion chat
+    unresolved = [uid for uid in sorted(need_info_uids) if uid not in users_by_uid]
+    if unresolved and disc_chat_id is not None and hasattr(client, "get_messages"):
+        sample_stmt = (
+            select(Comment.tg_author_id, func.max(Comment.tg_msg_id))
+            .where(
+                Comment.tg_author_id.in_(unresolved),
+                Comment.tg_msg_id.is_not(None),
+            )
+            .group_by(Comment.tg_author_id)
+        )
+        if channel_id is not None:
+            sample_stmt = sample_stmt.where(Comment.channel_id == channel_id)
+        sample_rows = (await session.execute(sample_stmt)).all()
+        sample_msg_ids = [int(mid) for _, mid in sample_rows if mid is not None]
+        for i in range(0, len(sample_msg_ids), 150):
+            batch_mids = sample_msg_ids[i : i + 150]
+            try:
+                msgs = await client.get_messages(disc_chat_id, batch_mids)
+                for m in msgs if isinstance(msgs, list) else [msgs]:
+                    u = getattr(m, "from_user", None)
+                    uid = getattr(u, "id", None) if u is not None else None
+                    if uid is not None and int(uid) not in users_by_uid:
+                        users_by_uid[int(uid)] = u
+            except FloodWait as fw:
+                await asyncio.sleep(float(getattr(fw, "value", 5)) + 1.0)
+            except Exception:
+                logger.debug("Could not batch-fetch sample messages for avatars", exc_info=True)
+
+    # Fetch any remaining user IDs directly
+    unresolved = [uid for uid in sorted(need_info_uids) if uid not in users_by_uid]
+    for i in range(0, len(unresolved), 50):
+        batch = unresolved[i : i + 50]
+        try:
+            res_users = await client.get_users(batch)
+            for u in res_users if isinstance(res_users, list) else [res_users]:
+                uid = getattr(u, "id", None)
+                if uid is not None:
+                    users_by_uid[int(uid)] = u
+        except FloodWait as fw:
+            await asyncio.sleep(float(getattr(fw, "value", 5)) + 1.0)
+        except Exception:
+            # Fallback individually so one deleted/unreachable peer doesn't drop the whole batch
+            for uid in batch:
+                try:
+                    u = await client.get_users(uid)
+                    if getattr(u, "id", None) is not None:
+                        users_by_uid[int(u.id)] = u
+                except FloodWait as fw:
+                    await asyncio.sleep(float(getattr(fw, "value", 5)) + 1.0)
+                except Exception:
+                    continue
+
+    avatars_downloaded = 0
+    rows_avatar_updated = 0
+    rows_username_updated = 0
+    for uid, tg_user in users_by_uid.items():
+        if getattr(tg_user, "is_deleted", False):
+            continue
+        username = getattr(tg_user, "username", None)
+        if username:
+            res_u = await session.execute(
+                update(Comment)
+                .where(Comment.tg_author_id == uid, Comment.tg_author_username.is_(None))
+                .values(tg_author_username=str(username))
+            )
+            rows_username_updated += int(res_u.rowcount or 0)
+
+        rel_path = f"avatars/{uid}.jpg"
+        abs_path = settings.media_dir / rel_path
+        if not abs_path.is_file():
+            photo = getattr(tg_user, "photo", None)
+            file_id = (
+                getattr(photo, "small_file_id", None) or getattr(photo, "big_file_id", None)
+                if photo is not None
+                else None
+            )
+            if file_id and hasattr(client, "download_media"):
+                tmp_path = avatars_dir / f".{uid}.{uuid.uuid4().hex[:8]}.tmp.jpg"
+                try:
+                    dl = await client.download_media(file_id, file_name=str(tmp_path))
+                    if dl and Path(str(dl)).is_file():
+                        os.replace(str(dl), abs_path)
+                        avatars_downloaded += 1
+                except FloodWait as fw:
+                    await asyncio.sleep(float(getattr(fw, "value", 5)) + 1.0)
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    tmp_path.unlink(missing_ok=True)
+        if abs_path.is_file():
+            res_a = await session.execute(
+                update(Comment)
+                .where(Comment.tg_author_id == uid, Comment.tg_author_avatar.is_(None))
+                .values(tg_author_avatar=rel_path)
+            )
+            rows_avatar_updated += int(res_a.rowcount or 0)
+
+    # Also cache the discussion group chat avatar for anonymous admin messages (`讨论讨论w`)
+    if disc_chat_id is not None and hasattr(client, "get_chat"):
+        try:
+            chat = await client.get_chat(disc_chat_id)
+            chat_title = str(getattr(chat, "title", "") or "").strip()
+            photo = getattr(chat, "photo", None)
+            file_id = (
+                getattr(photo, "small_file_id", None) or getattr(photo, "big_file_id", None)
+                if photo is not None
+                else None
+            )
+            if chat_title and file_id and hasattr(client, "download_media"):
+                norm_chat = _normalize_channel_id(disc_chat_id) or abs(disc_chat_id)
+                rel_chat = f"avatars/chat_{norm_chat}.jpg"
+                abs_chat = settings.media_dir / rel_chat
+                if not abs_chat.is_file():
+                    tmp_chat = avatars_dir / f".chat_{norm_chat}.{uuid.uuid4().hex[:8]}.tmp.jpg"
+                    try:
+                        dl = await client.download_media(file_id, file_name=str(tmp_chat))
+                        if dl and Path(str(dl)).is_file():
+                            os.replace(str(dl), abs_chat)
+                            avatars_downloaded += 1
+                    except Exception:
+                        tmp_chat.unlink(missing_ok=True)
+                if abs_chat.is_file():
+                    res_c = await session.execute(
+                        update(Comment)
+                        .where(
+                            Comment.source == "telegram",
+                            Comment.tg_author_id.is_(None),
+                            Comment.tg_author_name == chat_title,
+                            Comment.tg_author_avatar.is_(None),
+                        )
+                        .values(tg_author_avatar=rel_chat)
+                    )
+                    rows_avatar_updated += int(res_c.rowcount or 0)
+        except Exception:
+            logger.debug("Could not fetch discussion chat avatar", exc_info=True)
+
+    await session.commit()
+    return {
+        "distinct_users": len(all_uids),
+        "users_resolved": len(users_by_uid),
+        "avatars_downloaded": avatars_downloaded,
+        "disk_linked_rows": disk_linked,
+        "rows_avatar_updated": rows_avatar_updated,
+        "rows_username_updated": rows_username_updated,
+    }
 
 
 async def _login_tg_user(settings: Settings) -> None:
@@ -1293,11 +1729,46 @@ async def _run_cli(args: argparse.Namespace) -> None:
                     args.source,
                     channel_id=args.channel_id,
                     discussion_chat_id=args.discussion_chat_id,
+                    settings=settings,
+                    media_mode=args.media_mode,
                 )
                 print(json.dumps(summary, indent=2))
             elif args.command == "rebuild-exports":
                 meta = await generate_exports(session, settings)
                 print(json.dumps(meta, indent=2))
+            elif args.command == "backfill-avatars":
+                from pyrogram import Client
+
+                if not settings.TG_API_ID or not settings.TG_API_HASH:
+                    raise SystemExit("TG_API_ID and TG_API_HASH must be configured.")
+                if settings.TG_USER_SESSION_STRING:
+                    tg_client = Client(
+                        name="avatar_backfill_user",
+                        api_id=int(settings.TG_API_ID),
+                        api_hash=str(settings.TG_API_HASH),
+                        session_string=settings.TG_USER_SESSION_STRING,
+                        in_memory=True,
+                        no_updates=True,
+                    )
+                elif settings.TG_BOT_TOKEN:
+                    tg_client = Client(
+                        name="avatar_backfill_bot",
+                        api_id=int(settings.TG_API_ID),
+                        api_hash=str(settings.TG_API_HASH),
+                        bot_token=settings.TG_BOT_TOKEN,
+                        in_memory=True,
+                        no_updates=True,
+                    )
+                else:
+                    raise SystemExit("TG_USER_SESSION_STRING or TG_BOT_TOKEN must be configured.")
+                async with tg_client:
+                    summary = await backfill_comment_avatars(
+                        session,
+                        settings,
+                        client=tg_client,
+                        channel_id=args.channel_id,
+                    )
+                print(json.dumps(summary, indent=2))
             elif args.command == "crawl-channel":
                 from pyrogram import Client
 

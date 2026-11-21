@@ -474,3 +474,95 @@ async def test_import_epoch1_comments_tdesktop_json(
     assert summary2["comments_imported"] == 0
     assert summary2["comments_updated"] == 3
     assert datetime.now(UTC) > c901.created_at
+
+
+@pytest.mark.asyncio
+async def test_import_epoch1_comments_tdesktop_media_reactions_and_renamed_channel(
+    db_session: AsyncSession, test_settings: Settings, tmp_path: Path
+) -> None:
+    src_dir = _create_epoch1_fixture_dir(tmp_path)
+    await import_epoch1_posts(
+        db_session,
+        test_settings,
+        src_dir,
+        channel_id=1,
+        tg_chat_id=-1001111111,
+        title="Banned Channel",
+    )
+
+    export_dir = tmp_path / "chat_export"
+    (export_dir / "stickers").mkdir(parents=True)
+    (export_dir / "stickers" / "hi.webp").write_bytes(b"mock-sticker-webp")
+
+    tdesktop_export = {
+        "name": "Discussion",
+        "type": "private_supergroup",
+        "id": 2222222,
+        "messages": [
+            # Edited post #10 whose text changed slightly, with channel title renamed + album sibling #902
+            {
+                "id": 901,
+                "type": "message",
+                "date_unixtime": str(int(datetime(2025, 1, 11, 10, 30, 4, tzinfo=UTC).timestamp())),
+                "from": "Banned Channel 📒",
+                "from_id": "channel1111111",
+                "forwarded_from": "Banned Channel 📒",
+                "text": "Edited album text mismatch",
+            },
+            {
+                "id": 902,
+                "type": "message",
+                "date_unixtime": str(int(datetime(2025, 1, 11, 10, 30, 5, tzinfo=UTC).timestamp())),
+                "from": "Banned Channel 📒",
+                "from_id": "channel1111111",
+                "forwarded_from": "Banned Channel 📒",
+                "text": "",
+            },
+            # Sticker-only reply to album sibling #902 with emoji reaction
+            {
+                "id": 903,
+                "type": "message",
+                "date_unixtime": str(int(datetime(2025, 1, 11, 10, 32, 0, tzinfo=UTC).timestamp())),
+                "from": "StickerFan",
+                "from_id": "user555",
+                "reply_to_message_id": 902,
+                "file": "stickers/hi.webp",
+                "media_type": "sticker",
+                "sticker_emoji": "😺",
+                "text": "",
+                "reactions": [{"type": "emoji", "count": 3, "emoji": "❤"}],
+            },
+        ],
+    }
+    json_path = export_dir / "result.json"
+    json_path.write_text(json.dumps(tdesktop_export), encoding="utf-8")
+
+    summary = await import_epoch1_comments(
+        db_session,
+        json_path,
+        channel_id=1,
+        discussion_chat_id=-1002222222,
+        settings=test_settings,
+        media_mode="copy",
+    )
+    assert summary["roots_linked"] == 1
+    assert summary["comments_imported"] == 1
+    assert summary["media_copied"] == 1
+
+    c903 = (
+        await db_session.execute(select(Comment).where(Comment.tg_msg_id == 903))
+    ).scalar_one()
+    assert c903.post_id == 10
+    assert c903.body_text == ""
+    assert c903.body_html == ""
+    assert c903.media == {
+        "media_type": "sticker",
+        "url": "comments/epoch1/stickers/hi.webp",
+        "emoji": "😺",
+        "is_animated": False,
+        "is_video": False,
+    }
+    assert (test_settings.media_dir / "comments" / "epoch1" / "stickers" / "hi.webp").is_file()
+    await db_session.refresh(c903, attribute_names=["tg_reactions"])
+    assert len(c903.tg_reactions) == 1
+    assert c903.tg_reactions[0].count == 3

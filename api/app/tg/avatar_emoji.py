@@ -8,7 +8,7 @@ import logging
 import socket
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from PIL import Image, ImageDraw, ImageOps
@@ -220,25 +220,36 @@ async def _load_avatar_image_bytes(
             return raw if len(raw) <= _MAX_AVATAR_BYTES else None
         return None
 
-    if parsed.scheme.lower() != "https" or not parsed.hostname:
-        return None
-    allowed = await asyncio.to_thread(_is_public_hostname, parsed.hostname)
-    if not allowed:
+    async def _fetch_with_safe_redirects(client: httpx.AsyncClient, start_url: str) -> bytes | None:
+        current = start_url
+        for _ in range(4):
+            cur_parsed = urlsplit(current)
+            if cur_parsed.scheme.lower() != "https" or not cur_parsed.hostname:
+                return None
+            allowed = await asyncio.to_thread(_is_public_hostname, cur_parsed.hostname)
+            if not allowed:
+                return None
+            resp = await client.get(current)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = (resp.headers.get("location") or "").strip()
+                if not loc:
+                    return None
+                current = urljoin(current, loc)
+                continue
+            resp.raise_for_status()
+            content = resp.content
+            if not content or len(content) > _MAX_AVATAR_BYTES:
+                return None
+            return content
         return None
 
     try:
         if http_client is not None:
-            resp = await http_client.get(cleaned)
-        else:
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
-                resp = await client.get(cleaned)
-        resp.raise_for_status()
-        content = resp.content
-        if not content or len(content) > _MAX_AVATAR_BYTES:
-            return None
-        return content
+            return await _fetch_with_safe_redirects(http_client, cleaned)
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+            return await _fetch_with_safe_redirects(client, cleaned)
     except Exception:
-        logger.debug("Failed fetching avatar URL %s", cleaned, exc_info=True)
+        logger.warning("Failed fetching avatar URL %s", cleaned, exc_info=True)
         return None
 
 

@@ -234,3 +234,57 @@ async def test_avatar_custom_emoji_pack_creation_rollover_and_bridge(
         assert tg.created_calls[1]["name"] == "web_avatars_2_by_corner_test_bot"
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_load_avatar_image_bytes_follows_safe_https_redirects_only(
+    monkeypatch: pytest.MonkeyPatch,
+    test_settings: Settings,
+) -> None:
+    import httpx
+
+    png = _make_png_bytes()
+    requested: list[str] = []
+
+    monkeypatch.setattr(
+        "app.tg.avatar_emoji._is_public_hostname",
+        lambda host: host in ("t.me", "cdn5.telesco.pe"),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "t.me" and "ok" in request.url.path:
+            return httpx.Response(
+                302,
+                headers={"location": "https://cdn5.telesco.pe/file/avatar.png"},
+            )
+        if request.url.host == "t.me" and "ssrf" in request.url.path:
+            return httpx.Response(
+                302,
+                headers={"location": "https://127.0.0.1/secret.png"},
+            )
+        if request.url.host == "cdn5.telesco.pe":
+            return httpx.Response(200, content=png, headers={"content-type": "image/png"})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+        ok_bytes = await _load_avatar_image_bytes(
+            "https://t.me/i/userpic/320/ok.jpg",
+            settings=test_settings,
+            http_client=client,
+        )
+        assert ok_bytes == png
+        assert requested == [
+            "https://t.me/i/userpic/320/ok.jpg",
+            "https://cdn5.telesco.pe/file/avatar.png",
+        ]
+
+        requested.clear()
+        blocked = await _load_avatar_image_bytes(
+            "https://t.me/i/userpic/320/ssrf.jpg",
+            settings=test_settings,
+            http_client=client,
+        )
+        assert blocked is None
+        assert requested == ["https://t.me/i/userpic/320/ssrf.jpg"]
