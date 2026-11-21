@@ -478,6 +478,22 @@ async def test_mailer_releases_db_locks_before_smtp_and_supports_port_465(
     assert captured_kwargs["use_tls"] is True
     assert captured_kwargs["start_tls"] is False
 
+    # Verify default FEED_TITLE="Life" produces friendly "Azalea's Corner - Verify email!" wording
+    captured_msgs: list[EmailMessage] = []
+
+    async def _capture_email(msg: EmailMessage) -> None:
+        captured_msgs.append(msg)
+
+    cfg_life = test_settings.model_copy(update={"FEED_TITLE": "Life"})
+    mailer_life = Mailer(cfg_life, SSEBus(), smtp_sender=_capture_email)
+    await mailer_life.send_magic_link_email("u@example.com", "https://aza.moe/v")
+    assert len(captured_msgs) == 1
+    assert captured_msgs[0]["Subject"] == "Azalea's Corner - Verify email!"
+    body_text = str(captured_msgs[0].get_body(preferencelist=("plain",)).get_content())
+    assert "Sign in to Life" not in body_text
+    html_body = str(captured_msgs[0].get_body(preferencelist=("html",)).get_content())
+    assert "Azalea&#x27;s Corner" in html_body or "Azalea's Corner" in html_body
+
 
 def test_settings_smtp_from_defaults_to_email_smtp_user() -> None:
     from app.config import Settings

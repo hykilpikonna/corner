@@ -913,24 +913,38 @@ def compute_merged_views(post: Post) -> str | None:
     return str((post.views or 0) + web_views)
 
 
+def _resolve_media_item_urls(
+    item: dict[str, Any], api_prefix: str
+) -> dict[str, Any]:
+    out = dict(item)
+    for key in ("url", "thumb", "original_url"):
+        if out.get(key):
+            resolved = resolve_media_url(str(out[key]), api_prefix)
+            if resolved:
+                out[key] = resolved
+            else:
+                out.pop(key, None)
+    return out
+
+
 def serialize_comment_media(
     raw_media: Any, api_prefix: str = "/api/life"
 ) -> dict[str, Any] | None:
     if not raw_media or not isinstance(raw_media, dict):
         return None
-    out = dict(raw_media)
-    if out.get("url"):
-        resolved_url = resolve_media_url(str(out["url"]), api_prefix)
-        if resolved_url:
-            out["url"] = resolved_url
-        else:
-            out.pop("url", None)
-    if out.get("thumb"):
-        resolved_thumb = resolve_media_url(str(out["thumb"]), api_prefix)
-        if resolved_thumb:
-            out["thumb"] = resolved_thumb
-        else:
-            out.pop("thumb", None)
+    out = _resolve_media_item_urls(raw_media, api_prefix)
+    if isinstance(raw_media.get("images"), list):
+        out["images"] = [
+            _resolve_media_item_urls(img, api_prefix)
+            for img in raw_media["images"]
+            if isinstance(img, dict)
+        ]
+    if isinstance(raw_media.get("files"), list):
+        out["files"] = [
+            _resolve_media_item_urls(f, api_prefix)
+            for f in raw_media["files"]
+            if isinstance(f, dict)
+        ]
     return out
 
 

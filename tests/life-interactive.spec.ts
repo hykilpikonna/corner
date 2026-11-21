@@ -1314,3 +1314,216 @@ test('surfaces OAuth cancellation errors in AuthModal and preserves full origin 
   const nextParam = new URL(googleHref!, 'http://127.0.0.1:4173').searchParams.get('next')
   expect(nextParam).toMatch(/^http:\/\/127\.0\.0\.1:4173\/life/)
 })
+
+test('renders grouped album replies and rich channel media types inside CommentThread', async ({page, request}) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', err => pageErrors.push(err.message))
+
+  const {fullArchive, previewPosts} = await buildDeterministicArchive(request)
+  await mockPostsArchive(page, fullArchive)
+  const targetPostId = previewPosts[previewPosts.length - 1]!.id
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2XkAAAAASUVORK5CYII=',
+    'base64',
+  )
+
+  const richComments = [
+    {
+      id: 401,
+      post_id: targetPostId,
+      parent_id: null,
+      source: 'telegram',
+      author: {display_name: 'Alice', avatar_url: null, role: 'telegram', provider: 'telegram', username: 'alice', verified: false},
+      body_text: 'Two photos in one group',
+      body_html: '<p>Two photos in one group</p>',
+      media: {
+        media_type: 'album',
+        tg_msg_ids: [801, 802],
+        images: [
+          {media_type: 'photo', url: '/api/life/media/401/img0.png', thumb: '/api/life/media/401/img0.png', width: 800, height: 600},
+          {media_type: 'photo', url: '/api/life/media/401/img1.png', thumb: '/api/life/media/401/img1.png', width: 800, height: 600},
+        ],
+        files: [],
+      },
+      created_at: '2026-11-21T10:00:00Z',
+      edited_at: null,
+      deleted: false,
+      is_mine: false,
+      can_delete: false,
+      reactions: [],
+    },
+    {
+      id: 402,
+      post_id: targetPostId,
+      parent_id: 401,
+      source: 'telegram',
+      author: {display_name: 'Bob', avatar_url: null, role: 'telegram', provider: 'telegram', username: 'bob', verified: false},
+      body_text: '',
+      body_html: '',
+      media: {
+        media_type: 'poll',
+        id: 'poll-402',
+        question: 'Favorite tea?',
+        options: [{text: 'Oolong', voter_count: 3}, {text: 'Jasmine', voter_count: 1}],
+        total_voter_count: 4,
+        is_closed: false,
+        is_anonymous: true,
+        type: 'REGULAR',
+        allow_multiple_answers: false,
+      },
+      created_at: '2026-11-21T10:01:00Z',
+      edited_at: null,
+      deleted: false,
+      is_mine: false,
+      can_delete: false,
+      reactions: [],
+    },
+    {
+      id: 403,
+      post_id: targetPostId,
+      parent_id: null,
+      source: 'telegram',
+      author: {display_name: 'Carol', avatar_url: null, role: 'telegram', provider: 'telegram', username: null, verified: false},
+      body_text: '',
+      body_html: '',
+      media: {media_type: 'dice', emoji: '🎲', value: 6},
+      created_at: '2026-11-21T10:02:00Z',
+      edited_at: null,
+      deleted: false,
+      is_mine: false,
+      can_delete: false,
+      reactions: [],
+    },
+    {
+      id: 404,
+      post_id: targetPostId,
+      parent_id: null,
+      source: 'telegram',
+      author: {display_name: 'Dave', avatar_url: null, role: 'telegram', provider: 'telegram', username: null, verified: false},
+      body_text: '',
+      body_html: '',
+      media: {
+        media_type: 'audio',
+        url: '/api/life/media/404/song.mp3',
+        title: 'Midnight Rain',
+        performer: 'Azalea',
+        duration: 42,
+        size: 12345,
+        mime_type: 'audio/mpeg',
+      },
+      created_at: '2026-11-21T10:03:00Z',
+      edited_at: null,
+      deleted: false,
+      is_mine: false,
+      can_delete: false,
+      reactions: [],
+    },
+    {
+      id: 405,
+      post_id: targetPostId,
+      parent_id: null,
+      source: 'telegram',
+      author: {display_name: 'Eve', avatar_url: null, role: 'telegram', provider: 'telegram', username: null, verified: false},
+      body_text: '',
+      body_html: '',
+      media: {
+        media_type: 'contact',
+        first_name: 'Azalea',
+        last_name: 'Friend',
+        phone_number: '+1-555-0100',
+      },
+      created_at: '2026-11-21T10:04:00Z',
+      edited_at: null,
+      deleted: false,
+      is_mine: false,
+      can_delete: false,
+      reactions: [],
+    },
+  ]
+
+  await page.route('**/api/life/**', async route => {
+    const reqUrl = new URL(route.request().url())
+    if (reqUrl.pathname.endsWith('/media/401/img0.png') || reqUrl.pathname.endsWith('/media/401/img1.png')) {
+      return route.fulfill({status: 200, contentType: 'image/png', body: pngBytes})
+    }
+    if (reqUrl.pathname.endsWith('/media/404/song.mp3')) {
+      // Minimal valid 44-byte silent PCM WAV so <audio> loads without decode errors
+      const wavHeader = Buffer.alloc(44)
+      wavHeader.write('RIFF', 0)
+      wavHeader.writeUInt32LE(36, 4)
+      wavHeader.write('WAVE', 8)
+      wavHeader.write('fmt ', 12)
+      wavHeader.writeUInt32LE(16, 16)
+      wavHeader.writeUInt16LE(1, 20)
+      wavHeader.writeUInt16LE(1, 22)
+      wavHeader.writeUInt32LE(8000, 24)
+      wavHeader.writeUInt32LE(8000, 28)
+      wavHeader.writeUInt16LE(1, 32)
+      wavHeader.writeUInt16LE(8, 34)
+      wavHeader.write('data', 36)
+      wavHeader.writeUInt32LE(0, 40)
+      return route.fulfill({status: 200, contentType: 'audio/wav', body: wavHeader})
+    }
+    if (reqUrl.pathname.endsWith('/auth/me')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({user: null, providers: ['email'], allow_anon_comments: true})})
+    }
+    if (reqUrl.pathname.endsWith('/interactions')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          posts: {
+            [String(targetPostId)]: {views: '10', comment_count: richComments.length, reactions: [], poll: null},
+          },
+        }),
+      })
+    }
+    if (reqUrl.pathname.endsWith('/emojis')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({emojis: []})})
+    }
+    if (reqUrl.pathname.endsWith('/captcha/challenge')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({algorithm: 'SHA-256', challenge: '0'.repeat(64), maxnumber: 1, salt: 's', signature: 'sig'})})
+    }
+    if (reqUrl.pathname.endsWith('/comments')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({post_id: targetPostId, comments: richComments})})
+    }
+    if (reqUrl.pathname.endsWith('/stream')) {
+      return route.fulfill({status: 200, contentType: 'text/event-stream', body: ''})
+    }
+    return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({ok: true})})
+  })
+
+  await page.goto('/life?lifeApi=/api/life')
+  const firstEntry = page.locator('.tg-blog .post-entry').first()
+  await firstEntry.locator('.comment-toggle').click()
+
+  const chatZone = firstEntry.locator('.chat-zone')
+  const albumComment = chatZone.locator('#comment-401')
+  await expect(albumComment).toBeVisible({timeout: 10_000})
+  const albumImgs = albumComment.locator('.comment-media-photo .images .image_container img')
+  await expect(albumImgs).toHaveCount(2)
+
+  // Clicking the second album photo opens ImageViewer across both images
+  await albumImgs.nth(1).click()
+  const viewer = page.locator('#ImageViewer')
+  await expect(viewer).toBeVisible({timeout: 5_000})
+  await expect(viewer.locator('.bottom .index')).toContainText('2')
+  await viewer.locator('.top .close').click()
+  await expect(viewer).toHaveCount(0)
+
+  // Poll reply quoting the album (#402) renders poll options and quote badge
+  const pollComment = chatZone.locator('#comment-402')
+  await expect(pollComment.locator('.inline-reply-quote .quote-thumb')).toBeVisible()
+  await expect(pollComment.locator('#Poll .question')).toHaveText('Favorite tea?')
+  await expect(pollComment.locator('#Poll .options')).toHaveCount(2)
+
+  // Dice (#403), Audio (#404 -> triggers AudioPlayer), and Contact (#405) all render
+  await expect(chatZone.locator('#comment-403 .dice .dice-val')).toHaveText('6')
+  await expect(chatZone.locator('#comment-404 .file')).toBeVisible()
+  await chatZone.locator('#comment-404 .file .thumb').click()
+  await expect(page.locator('#AudioPlayer')).toBeVisible({timeout: 5_000})
+  await expect(page.locator('#AudioPlayer')).toContainText('Midnight Rain')
+  await expect(chatZone.locator('#comment-405 .file .phone')).toHaveText('+1-555-0100')
+
+  expect(pageErrors).toEqual([])
+})

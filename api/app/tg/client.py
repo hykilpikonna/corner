@@ -601,6 +601,11 @@ class TelegramService:
             max_wait_seconds=dm_max_wait_seconds,
             sort_key=lambda item: int(getattr(item[1], "id", 0) or 0),
         )
+        self.discussion_album_buffer = AlbumBuffer(
+            on_flush=self._on_discussion_album_flushed,
+            debounce_seconds=album_debounce_seconds,
+            max_wait_seconds=album_max_wait_seconds,
+        )
 
     @property
     def is_running(self) -> bool:
@@ -1007,6 +1012,7 @@ class TelegramService:
             self._emoji_meta_task = None
         await self.album_buffer.close()
         await self.dm_buffer.close()
+        await self.discussion_album_buffer.close()
         if self._user_started and self.user_client is not None:
             try:
                 await self.user_client.stop()
@@ -2063,6 +2069,8 @@ class TelegramService:
                 payload["width"] = int(width)
             if height is not None:
                 payload["height"] = int(height)
+            if bool(getattr(msg, "has_media_spoiler", False)):
+                payload["spoiler"] = True
             return payload
 
         sticker = getattr(msg, "sticker", None)
@@ -2130,6 +2138,14 @@ class TelegramService:
                 )
             if mime:
                 payload["mime_type"] = mime
+            rel_thumb = await self._download_fallback_thumb(
+                animation,
+                msg_id=msg_id,
+                media_dir=self.settings.media_dir / "comments",
+                url_prefix="comments",
+            )
+            if rel_thumb:
+                payload["thumb"] = rel_thumb
             return payload
 
         video = getattr(msg, "video", None)
@@ -2152,12 +2168,22 @@ class TelegramService:
                 payload["width"] = int(video.width)
             if getattr(video, "height", None) is not None:
                 payload["height"] = int(video.height)
+            if getattr(video, "duration", None) is not None:
+                payload["duration"] = int(video.duration)
             if getattr(video, "file_name", None):
                 payload["file_name"] = sanitize_original_filename(
                     str(video.file_name), fallback_ext=ext
                 )
             if mime:
                 payload["mime_type"] = mime
+            rel_thumb = await self._download_fallback_thumb(
+                video,
+                msg_id=msg_id,
+                media_dir=self.settings.media_dir / "comments",
+                url_prefix="comments",
+            )
+            if rel_thumb:
+                payload["thumb"] = rel_thumb
             return payload
 
         video_note = getattr(msg, "video_note", None)
@@ -2179,6 +2205,16 @@ class TelegramService:
             if length is not None:
                 payload["width"] = int(length)
                 payload["height"] = int(length)
+            if getattr(video_note, "duration", None) is not None:
+                payload["duration"] = int(video_note.duration)
+            rel_thumb = await self._download_fallback_thumb(
+                video_note,
+                msg_id=msg_id,
+                media_dir=self.settings.media_dir / "comments",
+                url_prefix="comments",
+            )
+            if rel_thumb:
+                payload["thumb"] = rel_thumb
             return payload
 
         voice = getattr(msg, "voice", None)
@@ -2192,12 +2228,15 @@ class TelegramService:
             abs_path = await self._download_tg_media_to_rel(voice, msg, rel_url)
             if abs_path is None:
                 return None
-            return {
+            payload = {
                 "media_type": "voice",
                 "url": rel_url,
                 "size": abs_path.stat().st_size,
                 "mime_type": mime,
             }
+            if getattr(voice, "duration", None) is not None:
+                payload["duration"] = int(voice.duration)
+            return payload
 
         audio = getattr(msg, "audio", None)
         if audio is not None:
@@ -2226,6 +2265,12 @@ class TelegramService:
             }
             if safe_fname:
                 payload["file_name"] = safe_fname
+            if getattr(audio, "duration", None) is not None:
+                payload["duration"] = int(audio.duration)
+            if getattr(audio, "title", None):
+                payload["title"] = str(audio.title)
+            if getattr(audio, "performer", None):
+                payload["performer"] = str(audio.performer)
             return payload
 
         doc = getattr(msg, "document", None)
@@ -2256,9 +2301,125 @@ class TelegramService:
                 payload["file_name"] = safe_fname
             if mime:
                 payload["mime_type"] = mime
+            rel_thumb = await self._download_fallback_thumb(
+                doc,
+                msg_id=msg_id,
+                media_dir=self.settings.media_dir / "comments",
+                url_prefix="comments",
+            )
+            if rel_thumb:
+                payload["thumb"] = rel_thumb
             return payload
 
+        venue = getattr(msg, "venue", None)
+        if venue is not None and getattr(venue, "location", None) is not None:
+            return {
+                "media_type": "location",
+                "latitude": float(venue.location.latitude),
+                "longitude": float(venue.location.longitude),
+                "title": str(getattr(venue, "title", "") or ""),
+                "address": str(getattr(venue, "address", "") or ""),
+            }
+
+        loc = getattr(msg, "location", None)
+        if loc is not None:
+            return {
+                "media_type": "location",
+                "latitude": float(loc.latitude),
+                "longitude": float(loc.longitude),
+            }
+
+        contact = getattr(msg, "contact", None)
+        if contact is not None:
+            return {
+                "media_type": "contact",
+                "phone_number": str(getattr(contact, "phone_number", "") or ""),
+                "first_name": str(getattr(contact, "first_name", "") or ""),
+                "last_name": getattr(contact, "last_name", None),
+            }
+
+        dice = getattr(msg, "dice", None)
+        if dice is not None:
+            dice_payload: dict[str, Any] = {
+                "media_type": "dice",
+                "emoji": str(getattr(dice, "emoji", "") or "🎲"),
+            }
+            if getattr(dice, "value", None) is not None:
+                dice_payload["value"] = int(dice.value)
+            return dice_payload
+
+        poll_dict = _extract_poll_dict(msg)
+        if poll_dict is not None:
+            return {"media_type": "poll", **poll_dict}
+
         return None
+
+    @staticmethod
+    def _merge_comment_media_items(
+        existing_media: dict[str, Any] | None,
+        new_items: list[tuple[int, dict[str, Any]]],
+    ) -> dict[str, Any] | None:
+        images: list[dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
+        seen_ids: list[int] = []
+
+        def _append_item(mid: int | None, item: dict[str, Any]) -> None:
+            if mid is not None and mid in seen_ids:
+                return
+            if mid is not None:
+                seen_ids.append(mid)
+            entry = dict(item)
+            if mid is not None and "tg_msg_id" not in entry:
+                entry["tg_msg_id"] = mid
+            if str(entry.get("media_type") or "").lower() == "photo":
+                images.append(entry)
+            else:
+                files.append(entry)
+
+        if isinstance(existing_media, dict):
+            for raw_id in existing_media.get("tg_msg_ids") or []:
+                if isinstance(raw_id, int) and raw_id not in seen_ids:
+                    seen_ids.append(raw_id)
+            if existing_media.get("media_type") == "album" or (
+                isinstance(existing_media.get("images"), list)
+                or isinstance(existing_media.get("files"), list)
+            ):
+                for img in existing_media.get("images") or []:
+                    if isinstance(img, dict):
+                        images.append(dict(img))
+                for f in existing_media.get("files") or []:
+                    if isinstance(f, dict):
+                        files.append(dict(f))
+            else:
+                single = {k: v for k, v in existing_media.items() if k != "tg_msg_ids"}
+                if str(single.get("media_type") or "").lower() == "photo":
+                    images.append(single)
+                elif single:
+                    files.append(single)
+
+        for mid, item in new_items:
+            _append_item(mid, item)
+
+        total = len(images) + len(files)
+        if total == 0:
+            return None
+        if total == 1:
+            single_out = dict(images[0] if images else files[0])
+            if len(seen_ids) > 1:
+                single_out["tg_msg_ids"] = seen_ids
+            return single_out
+        album_out: dict[str, Any] = {
+            "media_type": "album",
+            "tg_msg_ids": seen_ids,
+        }
+        if images:
+            album_out["images"] = images
+        if files:
+            album_out["files"] = files
+        return album_out
+
+    async def _on_discussion_album_flushed(self, msgs: list[Any]) -> None:
+        await self._ingest_discussion_messages(msgs)
 
     async def handle_discussion_message(self, msg: Any) -> Comment | None:
         """Process auto-forwarded channel roots and regular discussion comments with strict loop protection."""
@@ -2294,112 +2455,193 @@ class TelegramService:
                     )
                 return None
 
-            # 2. Strict loop guard #1: ignore messages echoed by our own bot!
-            from_user = getattr(msg, "from_user", None)
-            if from_user is not None:
-                if bool(getattr(from_user, "is_self", False)):
-                    return None
-                if self.bot_id is not None and int(getattr(from_user, "id", 0)) == int(self.bot_id):
-                    return None
-
-            msg_id = int(getattr(msg, "id", 0) or 0)
-            if msg_id <= 0:
+        # 2. Strict loop guard #1: ignore messages echoed by our own bot!
+        from_user = getattr(msg, "from_user", None)
+        if from_user is not None:
+            if bool(getattr(from_user, "is_self", False)):
+                return None
+            if self.bot_id is not None and int(getattr(from_user, "id", 0)) == int(self.bot_id):
                 return None
 
-            # 3. Strict loop guard #2: deduplicate by UNIQUE(channel_id, tg_msg_id)
-            existing_comment = (
+        # 3. Buffer discussion media groups (`media_group_id`) so multi-photo/file albums become ONE comment
+        media_group_id = getattr(msg, "media_group_id", None)
+        if media_group_id is not None:
+            chat_key = disc_chat_id if disc_chat_id is not None else channel.id
+            self.discussion_album_buffer.add(f"{chat_key}:{media_group_id}", msg)
+            return None
+
+        return await self._ingest_discussion_messages([msg])
+
+    async def _ingest_discussion_messages(self, msgs: list[Any]) -> Comment | None:
+        sorted_msgs = sorted(
+            (m for m in msgs if getattr(m, "service", None) is None and int(getattr(m, "id", 0) or 0) > 0),
+            key=lambda m: int(getattr(m, "id", 0) or 0),
+        )
+        if not sorted_msgs:
+            return None
+
+        first_msg = sorted_msgs[0]
+        first_msg_id = int(getattr(first_msg, "id", 0))
+        disc_chat_id = getattr(getattr(first_msg, "chat", None), "id", None)
+        raw_mg_id = getattr(first_msg, "media_group_id", None)
+        mg_id_str = str(raw_mg_id) if raw_mg_id is not None else None
+
+        async with self.session_factory() as session:
+            channel: Channel | None = None
+            if disc_chat_id is not None:
+                res = await session.execute(
+                    select(Channel).where(Channel.tg_discussion_chat_id == disc_chat_id)
+                )
+                channel = res.scalar_one_or_none()
+            else:
+                channel = await get_active_channel(session)
+            if channel is None:
+                return None
+
+            # Strict loop guard #2: deduplicate by UNIQUE(channel_id, tg_msg_id)
+            batch_ids = [int(getattr(m, "id", 0) or 0) for m in sorted_msgs]
+            existing_by_id = (
                 await session.execute(
                     select(Comment).where(
                         Comment.channel_id == channel.id,
-                        Comment.tg_msg_id == msg_id,
+                        Comment.tg_msg_id.in_(batch_ids),
                     )
                 )
-            ).scalar_one_or_none()
-            if existing_comment is not None:
-                return None
+            ).scalars().all()
+            existing_ids = {int(c.tg_msg_id) for c in existing_by_id if c.tg_msg_id is not None}
 
-            # 4. Resolve post_id & parent_id via reply_to_top_message_id / reply_to_message_id walk
-            post_id: int | None = None
-            parent_comment: Comment | None = None
-
-            reply_to_top_id = getattr(msg, "reply_to_top_message_id", None)
-            reply_to_msg_id = getattr(msg, "reply_to_message_id", None)
-
-            if reply_to_msg_id is not None:
-                parent_comment = (
+            # Also check if an existing Comment already owns this media_group_id (slow split album)
+            existing_group_comment: Comment | None = None
+            if mg_id_str is not None:
+                existing_group_comment = (
                     await session.execute(
                         select(Comment).where(
                             Comment.channel_id == channel.id,
-                            Comment.tg_msg_id == int(reply_to_msg_id),
+                            Comment.tg_media_group_id == mg_id_str,
                         )
                     )
                 ).scalar_one_or_none()
-                if parent_comment is not None:
-                    post_id = parent_comment.post_id
-                else:
-                    direct_post = (
+                if existing_group_comment is not None and isinstance(existing_group_comment.media, dict):
+                    for mid in existing_group_comment.media.get("tg_msg_ids") or []:
+                        if isinstance(mid, int):
+                            existing_ids.add(mid)
+
+            pending_msgs = [m for m in sorted_msgs if int(getattr(m, "id", 0)) not in existing_ids]
+            if not pending_msgs:
+                return None
+
+            # Resolve post_id & parent_id via reply_to_top_message_id / reply_to_message_id walk
+            post_id: int | None = existing_group_comment.post_id if existing_group_comment is not None else None
+            parent_comment: Comment | None = None
+
+            if post_id is None:
+                reply_to_top_id = getattr(first_msg, "reply_to_top_message_id", None)
+                reply_to_msg_id = getattr(first_msg, "reply_to_message_id", None)
+
+                if reply_to_msg_id is not None:
+                    parent_comment = (
                         await session.execute(
-                            select(Post).where(
-                                Post.channel_id == channel.id,
-                                Post.tg_discussion_root_id == int(reply_to_msg_id),
+                            select(Comment).where(
+                                Comment.channel_id == channel.id,
+                                Comment.tg_msg_id == int(reply_to_msg_id),
                             )
                         )
                     ).scalar_one_or_none()
-                    if direct_post is not None:
-                        post_id = direct_post.id
+                    if parent_comment is not None:
+                        post_id = parent_comment.post_id
+                    else:
+                        direct_post = (
+                            await session.execute(
+                                select(Post).where(
+                                    Post.channel_id == channel.id,
+                                    Post.tg_discussion_root_id == int(reply_to_msg_id),
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if direct_post is not None:
+                            post_id = direct_post.id
 
-            if post_id is None and reply_to_top_id is not None:
-                root_post = (
-                    await session.execute(
-                        select(Post).where(
-                            Post.channel_id == channel.id,
-                            Post.tg_discussion_root_id == int(reply_to_top_id),
+                if post_id is None and reply_to_top_id is not None:
+                    root_post = (
+                        await session.execute(
+                            select(Post).where(
+                                Post.channel_id == channel.id,
+                                Post.tg_discussion_root_id == int(reply_to_top_id),
+                            )
                         )
-                    )
-                ).scalar_one_or_none()
-                if root_post is not None:
-                    post_id = root_post.id
+                    ).scalar_one_or_none()
+                    if root_post is not None:
+                        post_id = root_post.id
 
             if post_id is None:
                 return None
 
-            # 5. Extract & sanitize comment body + media (always check media even if caption exists!)
-            raw_text = getattr(msg, "text", None) or getattr(msg, "caption", None) or ""
-            raw_text_str = str(raw_text)
-            entities = (
-                getattr(msg, "entities", None)
-                if getattr(msg, "text", None)
-                else getattr(msg, "caption_entities", None)
-            )
-            body_text = raw_text_str.strip()
-            media_payload = await self._download_discussion_media(msg, channel.id, msg_id)
+            # Extract caption/body + download media across all messages in the batch
+            body_text = ""
+            body_html = ""
+            media_items: list[tuple[int, dict[str, Any]]] = []
+            custom_ids: list[str] = []
 
+            for m in pending_msgs:
+                mid = int(getattr(m, "id", 0))
+                raw_text = getattr(m, "text", None) or getattr(m, "caption", None) or ""
+                raw_text_str = str(raw_text)
+                entities = (
+                    getattr(m, "entities", None)
+                    if getattr(m, "text", None)
+                    else getattr(m, "caption_entities", None)
+                )
+                if raw_text_str.strip() and not body_text:
+                    body_text = raw_text_str.strip()
+                    raw_html = _render_entities_to_html(raw_text_str, entities)
+                    body_html = sanitize_tg_comment_html(raw_html).strip()
+                if entities:
+                    for en in entities:
+                        etype = str(getattr(en, "type", "")).upper().split(".")[-1]
+                        cid = getattr(en, "custom_emoji_id", None)
+                        if etype == "CUSTOM_EMOJI" and cid is not None:
+                            custom_ids.append(str(cid).strip())
+
+                downloaded = await self._download_discussion_media(m, channel.id, mid)
+                if downloaded is not None:
+                    media_items.append((mid, downloaded))
+
+            if self.client is not None and custom_ids:
+                await cache_custom_emoji_stickers(
+                    self.client, self.settings.exports_dir, custom_ids
+                )
+
+            if existing_group_comment is not None:
+                merged_media = self._merge_comment_media_items(
+                    existing_group_comment.media if isinstance(existing_group_comment.media, dict) else None,
+                    media_items,
+                )
+                if merged_media is None and not body_text:
+                    return None
+                if merged_media is not None:
+                    existing_group_comment.media = merged_media
+                if body_text and not existing_group_comment.body_text:
+                    existing_group_comment.body_text = body_text
+                    existing_group_comment.body_html = body_html
+                linked_user: User | None = None
+                if existing_group_comment.user_id is not None:
+                    linked_user = await session.get(User, existing_group_comment.user_id)
+                await session.commit()
+                comment_dto = self._serialize_tg_comment_dto(existing_group_comment, linked_user)
+                await self._emit_sse("comment.updated", comment_dto)
+                return existing_group_comment
+
+            media_payload = self._merge_comment_media_items(None, media_items)
             if not body_text and media_payload is None:
                 return None
 
-            if body_text:
-                raw_html = _render_entities_to_html(raw_text_str, entities)
-                body_html = sanitize_tg_comment_html(raw_html).strip()
-                if self.client is not None and entities:
-                    custom_ids = [
-                        str(getattr(en, "custom_emoji_id", "")).strip()
-                        for en in entities
-                        if str(getattr(en, "type", "")).upper().split(".")[-1] == "CUSTOM_EMOJI"
-                        and getattr(en, "custom_emoji_id", None) is not None
-                    ]
-                    if custom_ids:
-                        await cache_custom_emoji_stickers(
-                            self.client, self.settings.exports_dir, custom_ids
-                        )
-            else:
-                body_html = ""
-
-            # 6. Author metadata + optional linked web user + lazy avatar cache
+            # Author metadata + optional linked web user + lazy avatar cache
+            from_user = getattr(first_msg, "from_user", None)
             tg_author_id: int | None = None
             tg_author_name: str | None = None
             tg_author_username: str | None = None
             tg_author_avatar: str | None = None
-            linked_user: User | None = None
+            linked_user = None
 
             if from_user is not None:
                 tg_author_id = int(from_user.id)
@@ -2417,19 +2659,20 @@ class TelegramService:
                 if identity is not None:
                     linked_user = await session.get(User, identity.user_id)
             else:
-                sender_chat = getattr(msg, "sender_chat", None)
+                sender_chat = getattr(first_msg, "sender_chat", None)
                 if sender_chat is not None:
                     tg_author_id = int(sender_chat.id)
                     tg_author_name = getattr(sender_chat, "title", "Channel")
                     tg_author_username = getattr(sender_chat, "username", None)
 
-            created_at = _ensure_utc(getattr(msg, "date", None))
+            created_at = _ensure_utc(getattr(first_msg, "date", None))
             comment = Comment(
                 post_id=post_id,
                 parent_id=parent_comment.id if parent_comment is not None else None,
                 source="telegram",
                 channel_id=channel.id,
-                tg_msg_id=msg_id,
+                tg_msg_id=first_msg_id,
+                tg_media_group_id=mg_id_str,
                 user_id=linked_user.id if linked_user is not None else None,
                 tg_author_id=tg_author_id,
                 tg_author_name=tg_author_name,

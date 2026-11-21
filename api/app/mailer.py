@@ -77,23 +77,30 @@ class Mailer:
         else:
             await self._default_smtp_send(msg)
 
+    def _site_display_name(self) -> str:
+        title = (self.settings.FEED_TITLE or "").strip()
+        if not title or title.lower() == "life":
+            return "Azalea's Corner"
+        return title
+
     async def send_magic_link_email(self, email: str, verify_url: str) -> None:
+        site_name = self._site_display_name()
         msg = EmailMessage()
         msg["From"] = self.settings.SMTP_FROM
         msg["To"] = email
-        msg["Subject"] = f"Sign in to {self.settings.FEED_TITLE}"
+        msg["Subject"] = f"{site_name} - Verify email!"
 
         plain = (
-            f"Click the link below to sign in to {self.settings.FEED_TITLE}:\n\n"
+            f"Click the link below to verify your email and sign in to {site_name}:\n\n"
             f"{verify_url}\n\n"
             "This link expires in 15 minutes and can only be used once.\n"
             "If you did not request this email, you can safely ignore it.\n"
         )
-        safe_title = html.escape(self.settings.FEED_TITLE)
+        safe_title = html.escape(site_name)
         safe_url = html.escape(verify_url, quote=True)
         html_body = (
-            f"<p>Click the button below to sign in to <strong>{safe_title}</strong>:</p>"
-            f'<p><a href="{safe_url}">Sign in now</a></p>'
+            f"<p>Click the button below to verify your email and sign in to <strong>{safe_title}</strong>:</p>"
+            f'<p><a href="{safe_url}">Verify email</a></p>'
             f"<p><small>Or paste this link into your browser: {safe_url}</small></p>"
             "<p><small>This link expires in 15 minutes and can only be used once.</small></p>"
         )
@@ -110,15 +117,16 @@ class Mailer:
         comments: list[Comment],
         authors_by_user_id: dict[int, User],
     ) -> EmailMessage:
+        site_name = self._site_display_name()
         count = len(comments)
         post_url = f"{self.settings.SITE_URL.rstrip('/')}?shared={post_id}"
         unsub_token = make_unsubscribe_token(recipient.id, self.settings.SECRET_KEY)
         unsub_url = f"{self.settings.api_base_url}/auth/unsubscribe?token={unsub_token}"
 
         subject = (
-            f"New reply on {self.settings.FEED_TITLE}"
+            f"New reply on {site_name}"
             if count == 1
-            else f"{count} new replies on {self.settings.FEED_TITLE}"
+            else f"{count} new replies on {site_name}"
         )
 
         plain_lines = [

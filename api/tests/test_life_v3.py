@@ -1092,3 +1092,184 @@ async def test_custom_emoji_sticker_catalogs_and_owner_dm_management(
                 assert r_no_anon_media.status_code == 403
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_discussion_album_grouping_and_rich_message_types(
+    test_settings: Settings,
+    db_session: AsyncSession,
+) -> None:
+    app, client = await _setup_app_and_client(test_settings, db_session)
+    ch = await ensure_channel(
+        db_session,
+        channel_id=1,
+        status="active",
+        id_offset=0,
+        tg_chat_id=-100111,
+        tg_discussion_chat_id=-100222,
+    )
+    post = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=900,
+        canonical_id=900,
+        date=datetime(2026, 11, 19, 10, 0, tzinfo=UTC),
+        text_html="Channel post 900",
+    )
+    post.tg_discussion_root_id = 9000
+    await db_session.commit()
+
+    fake_tg = _V3FakeTgClient()
+    fake_tg.downloads["alb_p1"] = _make_png_bytes((240, 180))
+    fake_tg.downloads["alb_p2"] = _make_png_bytes((180, 240))
+    fake_tg.downloads["alb_p3"] = _make_png_bytes((300, 300))
+
+    engine, factory = create_engine_and_factory(test_settings)
+    service = TelegramService(
+        session_factory=factory,
+        settings=test_settings,
+        sse_publish=app.state.sse_publish,
+        client=fake_tg,
+        album_debounce_seconds=0.02,
+        album_max_wait_seconds=0.1,
+    )
+    sub_id, sub_q, _ = app.state.sse_bus.subscribe(post_ids={900})
+    try:
+        disc_chat = SimpleNamespace(id=-100222)
+        sender = SimpleNamespace(id=5151, first_name="AlbumFriend", username="albumfriend")
+
+        # 1. Two-photo album in discussion group merges into ONE comment
+        m1 = SimpleNamespace(
+            id=9101,
+            chat=disc_chat,
+            from_user=sender,
+            reply_to_top_message_id=9000,
+            reply_to_message_id=9000,
+            media_group_id="disc_grp_1",
+            caption="Two photos together",
+            photo=SimpleNamespace(file_id="alb_p1", width=240, height=180),
+            date=datetime(2026, 11, 19, 11, 0, tzinfo=UTC),
+        )
+        m2 = SimpleNamespace(
+            id=9102,
+            chat=disc_chat,
+            from_user=sender,
+            reply_to_top_message_id=9000,
+            reply_to_message_id=9000,
+            media_group_id="disc_grp_1",
+            caption=None,
+            photo=SimpleNamespace(file_id="alb_p2", width=180, height=240),
+            date=datetime(2026, 11, 19, 11, 0, tzinfo=UTC),
+        )
+        assert await service.handle_discussion_message(m1) is None
+        assert await service.handle_discussion_message(m2) is None
+        await service.discussion_album_buffer.wait_idle()
+
+        async with client:
+            r_list = await client.get("/api/life/posts/900/comments")
+            assert r_list.status_code == 200
+            comments = r_list.json()["comments"]
+            assert len(comments) == 1
+            c_alb = comments[0]
+            assert c_alb["body_text"] == "Two photos together"
+            assert c_alb["media"]["media_type"] == "album"
+            assert len(c_alb["media"]["images"]) == 2
+            assert c_alb["media"]["images"][0]["url"].startswith("/api/life/media/comments/")
+            assert c_alb["media"]["images"][1]["url"].startswith("/api/life/media/comments/")
+
+        ev1 = sub_q.get_nowait()
+        assert ev1.event == "comment.created"
+        assert len(ev1.data["media"]["images"]) == 2
+
+        # 2. Slow-split 3rd photo with same media_group_id merges into existing comment & emits comment.updated
+        m3 = SimpleNamespace(
+            id=9103,
+            chat=disc_chat,
+            from_user=sender,
+            reply_to_top_message_id=9000,
+            reply_to_message_id=9000,
+            media_group_id="disc_grp_1",
+            caption=None,
+            photo=SimpleNamespace(file_id="alb_p3", width=300, height=300),
+            date=datetime(2026, 11, 19, 11, 0, 2, tzinfo=UTC),
+        )
+        assert await service.handle_discussion_message(m3) is None
+        await service.discussion_album_buffer.wait_idle()
+
+        ev2 = sub_q.get_nowait()
+        assert ev2.event == "comment.updated"
+        assert ev2.data["id"] == c_alb["id"]
+        assert len(ev2.data["media"]["images"]) == 3
+
+        # 3. Rich message types (location, contact, dice, poll) in discussion replies
+        c_loc = await service.handle_discussion_message(
+            SimpleNamespace(
+                id=9201,
+                chat=disc_chat,
+                from_user=sender,
+                reply_to_top_message_id=9000,
+                reply_to_message_id=9000,
+                venue=SimpleNamespace(
+                    title="Coffee Shop",
+                    address="123 Elm St",
+                    location=SimpleNamespace(latitude=43.47, longitude=-80.54),
+                ),
+                date=datetime(2026, 11, 19, 11, 5, tzinfo=UTC),
+            )
+        )
+        assert c_loc is not None and c_loc.media["media_type"] == "location"
+        assert c_loc.media["title"] == "Coffee Shop"
+
+        c_contact = await service.handle_discussion_message(
+            SimpleNamespace(
+                id=9202,
+                chat=disc_chat,
+                from_user=sender,
+                reply_to_top_message_id=9000,
+                reply_to_message_id=9000,
+                contact=SimpleNamespace(phone_number="+15550199", first_name="Jane", last_name="Doe"),
+                date=datetime(2026, 11, 19, 11, 6, tzinfo=UTC),
+            )
+        )
+        assert c_contact is not None and c_contact.media["media_type"] == "contact"
+        assert c_contact.media["phone_number"] == "+15550199"
+
+        c_dice = await service.handle_discussion_message(
+            SimpleNamespace(
+                id=9203,
+                chat=disc_chat,
+                from_user=sender,
+                reply_to_top_message_id=9000,
+                reply_to_message_id=9000,
+                dice=SimpleNamespace(emoji="🎯", value=6),
+                date=datetime(2026, 11, 19, 11, 7, tzinfo=UTC),
+            )
+        )
+        assert c_dice is not None and c_dice.media["media_type"] == "dice"
+        assert c_dice.media["emoji"] == "🎯" and c_dice.media["value"] == 6
+
+        c_poll = await service.handle_discussion_message(
+            SimpleNamespace(
+                id=9204,
+                chat=disc_chat,
+                from_user=sender,
+                reply_to_top_message_id=9000,
+                reply_to_message_id=9000,
+                poll=SimpleNamespace(
+                    id="disc_poll_1",
+                    question="Tea or coffee?",
+                    options=[SimpleNamespace(text="Tea", voter_count=2), SimpleNamespace(text="Coffee", voter_count=3)],
+                    is_closed=False,
+                    is_anonymous=True,
+                    type="REGULAR",
+                    allows_multiple_answers=False,
+                    total_voter_count=5,
+                ),
+                date=datetime(2026, 11, 19, 11, 8, tzinfo=UTC),
+            )
+        )
+        assert c_poll is not None and c_poll.media["media_type"] == "poll"
+        assert c_poll.media["question"] == "Tea or coffee?"
+    finally:
+        app.state.sse_bus.unsubscribe(sub_id)
+        await engine.dispose()

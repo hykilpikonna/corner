@@ -340,6 +340,7 @@ class Comment(Base):
         Index("ix_comments_parent_id", "parent_id"),
         Index("ix_comments_post_actor_hash", "post_id", "actor_key_hash"),
         Index("ix_comments_moderation_status", "moderation_status", "created_at"),
+        Index("ix_comments_channel_media_group", "channel_id", "tg_media_group_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -352,6 +353,7 @@ class Comment(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)  # 'web' | 'telegram'
     channel_id: Mapped[int | None] = mapped_column(ForeignKey("channels.id"), nullable=True)
     tg_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tg_media_group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True

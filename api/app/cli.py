@@ -829,6 +829,10 @@ def _normalize_tdesktop_comment_media(
         mtype = "animation"
     elif raw_kind in ("video_file", "video_message"):
         mtype = "video"
+    elif raw_kind == "voice_message":
+        mtype = "voice"
+    elif raw_kind == "audio_file":
+        mtype = "audio"
     else:
         mtype = "document"
 
