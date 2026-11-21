@@ -46,12 +46,12 @@ services:
     image: docker.io/cloudflare/cloudflared:latest
     restart: unless-stopped
     profiles: ["tunnel"]
-    command: tunnel run
+    command: tunnel --config /etc/cloudflared/config.yml --no-autoupdate run
     env_file:
       - .env
     volumes:
-      - ./config.yml:/etc/cloudflared/config.yml:Z
-      - ./credentials.json:/etc/cloudflared/credentials.json:Z
+      - ./config.yml:/etc/cloudflared/config.yml:ro,Z
+      - ./credentials.json:/etc/cloudflared/credentials.json:ro,Z
     networks:
       - tunnel
     depends_on:

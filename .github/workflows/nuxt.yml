@@ -11,6 +11,8 @@ jobs:
   build:
     name: Build and deploy main
     runs-on: ubuntu-latest
+    env:
+      NUXT_PUBLIC_LIFE_API_URL: https://api.aza.moe/api/life
     permissions:
       contents: read
       deployments: write

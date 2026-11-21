@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-corner}
       POSTGRES_DB: ${POSTGRES_DB:-corner}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./api/pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-corner} -d ${POSTGRES_DB:-corner}"]
       interval: 5s
@@ -36,7 +36,7 @@ services:
       RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-900}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-["127.0.0.1","::1","172.16.0.0/12","10.0.0.0/8","192.168.0.0/16"]}
     volumes:
-      - corner_data:/data
+      - ./api/data:/data
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
@@ -60,7 +60,3 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:80"
-
-volumes:
-  pgdata:
-  corner_data:

@@ -124,21 +124,27 @@ test('serves static-first prerendered /life HTML with aligned RSS copy UX, feed 
   expect(prerenderedPostIds.length).toBeGreaterThan(0)
   expect(prerenderedPostIds.length).toBeLessThanOrEqual(20)
 
+  const configuredApiUrl = (process.env.NUXT_PUBLIC_LIFE_API_URL || '').trim()
+
   expect(rawHtml).toMatch(/<link[^>]+rel="alternate"[^>]+type="application\/rss\+xml"/)
   expect(rawHtml).toMatch(/<link[^>]+rel="alternate"[^>]+type="application\/atom\+xml"/)
-  // Default static mode must NOT emit a 404 JSON Feed alternate link when unconfigured
-  expect(rawHtml).not.toMatch(/type="application\/feed\+json"/)
+  if (configuredApiUrl) {
+    expect(rawHtml).toMatch(/<link[^>]+rel="alternate"[^>]+type="application\/feed\+json"/)
+  } else {
+    // Default static mode must NOT emit a 404 JSON Feed alternate link when unconfigured
+    expect(rawHtml).not.toMatch(/type="application\/feed\+json"/)
+  }
   expect(rawHtml).toContain('搜索动态、标签或日期...')
 
-  // 2. Hydrate in browser in default static read-only mode (no apiUrl configured)
+  // 2. Hydrate in browser in default configured mode
   await page.goto('/life')
   await expect(page.locator('.tg-blog')).toBeVisible()
   await expect(page.locator('.tg-blog .post').first()).toBeVisible()
 
-  // Feed alternate links present in document head (RSS + Atom only)
+  // Feed alternate links present in document head
   await expect(page.locator('head link[rel="alternate"][type="application/rss+xml"]')).toHaveCount(1)
   await expect(page.locator('head link[rel="alternate"][type="application/atom+xml"]')).toHaveCount(1)
-  await expect(page.locator('head link[rel="alternate"][type="application/feed+json"]')).toHaveCount(0)
+  await expect(page.locator('head link[rel="alternate"][type="application/feed+json"]')).toHaveCount(configuredApiUrl ? 1 : 0)
 
   // Verify vertical center alignment of "生活" heading and RSS pill (< 2px), and no separate open-in-new-tab button
   const heading = page.locator('.title-row h2')
@@ -189,9 +195,11 @@ test('serves static-first prerendered /life HTML with aligned RSS copy UX, feed 
 
   await expect(page.locator('.tg-blog .search input')).toHaveAttribute('placeholder', '搜索动态、标签或日期...')
 
-  // Static mode must NOT render interactive controls
-  await expect(page.locator('.tg-blog .quick-reaction')).toHaveCount(0)
-  await expect(page.locator('.tg-blog .comment-toggle')).toHaveCount(0)
+  if (!configuredApiUrl) {
+    // Static mode must NOT render interactive controls
+    await expect(page.locator('.tg-blog .quick-reaction')).toHaveCount(0)
+    await expect(page.locator('.tg-blog .comment-toggle')).toHaveCount(0)
+  }
 
   // Flush top image: non-forwarded image-first card should have 0px top gap between card top and .images top
   const imageFirstCard = page.locator('.tg-blog .post.tgb-card:has(> .images:not(.has-head))').first()
@@ -782,6 +790,8 @@ test('rejects malicious ?lifeApi= query values without leaking requests', async 
   const consoleErrors: string[] = []
   const evilRequests: string[] = []
 
+  const configuredApiUrl = (process.env.NUXT_PUBLIC_LIFE_API_URL || '').trim()
+
   page.on('pageerror', error => pageErrors.push(error.message))
   page.on('console', msg => {
     if (msg.type() === 'error') consoleErrors.push(msg.text())
@@ -791,8 +801,7 @@ test('rejects malicious ?lifeApi= query values without leaking requests', async 
     if (
       parsed.hostname === 'evil.test'
       || parsed.pathname.includes('evil.test')
-      || parsed.pathname.includes('/interactions')
-      || parsed.pathname.includes('/stream')
+      || (!configuredApiUrl && (parsed.pathname.includes('/interactions') || parsed.pathname.includes('/stream')))
     ) {
       evilRequests.push(req.url())
     }
@@ -813,8 +822,10 @@ test('rejects malicious ?lifeApi= query values without leaking requests', async 
     await expect(page.locator('.tg-blog .post').first()).toBeVisible()
     // Wait briefly to ensure no delayed interactive hydration fires
     await page.waitForTimeout(300)
-    await expect(page.locator('.tg-blog .quick-reaction')).toHaveCount(0)
-    await expect(page.locator('.tg-blog .comment-toggle')).toHaveCount(0)
+    if (!configuredApiUrl) {
+      await expect(page.locator('.tg-blog .quick-reaction')).toHaveCount(0)
+      await expect(page.locator('.tg-blog .comment-toggle')).toHaveCount(0)
+    }
   }
 
   expect(evilRequests).toEqual([])

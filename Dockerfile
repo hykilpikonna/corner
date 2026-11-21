@@ -2,8 +2,6 @@ FROM oven/bun:1-slim AS builder
 
 WORKDIR /src/corner
 
-# Resolve local file:../tg-blog dependency in classic Docker builder
-COPY .docker-tg-blog /src/tg-blog
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
