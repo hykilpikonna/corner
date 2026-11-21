@@ -1269,3 +1269,48 @@ test('supports v3 view increment, Web A formatting, SymbolMenu emojis/stickers, 
   expect(deletedCommentIds).toEqual([304])
   expect(pageErrors).toEqual([])
 })
+
+test('surfaces OAuth cancellation errors in AuthModal and preserves full origin in OAuth next link', async ({page, request}) => {
+  const {fullArchive} = await buildDeterministicArchive(request)
+  await mockPostsArchive(page, fullArchive)
+
+  await page.route('**/api/life/**', async route => {
+    const reqUrl = new URL(route.request().url())
+    if (reqUrl.pathname.endsWith('/auth/me')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({user: null, providers: ['google', 'github', 'email'], allow_anon_comments: true}),
+      })
+    }
+    if (reqUrl.pathname.endsWith('/interactions')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({posts: {}})})
+    }
+    if (reqUrl.pathname.endsWith('/emojis')) {
+      return route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify({emojis: []})})
+    }
+    if (reqUrl.pathname.endsWith('/captcha/challenge')) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({algorithm: 'SHA-256', challenge: '0'.repeat(64), maxnumber: 1, salt: 's', signature: 'sig'}),
+      })
+    }
+    if (reqUrl.pathname.endsWith('/stream')) {
+      return route.fulfill({status: 200, contentType: 'text/event-stream', body: ''})
+    }
+    return route.fulfill({status: 404, body: '{}'})
+  })
+
+  await page.goto('/life?lifeApi=/api/life&auth_error=cancelled&auth_provider=google')
+  const authModal = page.locator('.tgb-auth-modal')
+  await expect(authModal).toBeVisible({timeout: 10_000})
+  await expect(authModal.locator('.modal-top-error')).toHaveText('已取消 Google 登录')
+  await expect.poll(() => new URL(page.url()).searchParams.has('auth_error')).toBe(false)
+  await expect.poll(() => new URL(page.url()).searchParams.has('auth_provider')).toBe(false)
+
+  const googleHref = await authModal.locator('a.oauth-btn.google').getAttribute('href')
+  expect(googleHref).toBeTruthy()
+  const nextParam = new URL(googleHref!, 'http://127.0.0.1:4173').searchParams.get('next')
+  expect(nextParam).toMatch(/^http:\/\/127\.0\.0\.1:4173\/life/)
+})

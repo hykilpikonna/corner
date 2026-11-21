@@ -609,6 +609,90 @@ async def test_oauth_csrf_state_and_callback_flow(
 
 
 @pytest.mark.asyncio
+async def test_oauth_cancel_redirect_and_cross_origin_next_url(
+    test_settings: Settings,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = test_settings.model_copy(
+        update={
+            "BASE_URL": "https://api.aza.moe",
+            "SITE_URL": "https://aza.moe/life",
+            "CORS_ORIGINS": ["https://aza.moe", "https://www.aza.moe"],
+            "GOOGLE_CLIENT_ID": "dummy_google_id",
+            "GOOGLE_CLIENT_SECRET": "dummy_google_secret",
+        }
+    )
+    _, client = await _make_client(cfg, db_session)
+
+    async def _fake_exchange(provider: str, *, code: str, settings: Settings) -> OAuthProfile:
+        assert provider == "google"
+        assert code == "google-code"
+        return OAuthProfile(
+            provider="google",
+            provider_user_id="g-123",
+            display_name="G User",
+            username=None,
+            email="guser@example.com",
+            email_verified=True,
+            avatar_url=None,
+        )
+
+    monkeypatch.setattr("app.routes.auth.exchange_oauth_code", _fake_exchange)
+
+    async with client:
+        # 1. Relative next path resolves to SITE_URL's origin (not api.aza.moe)
+        r_rel_login = await client.get(
+            "/api/life/auth/oauth/google/login",
+            params={"next": "/life?shared=99"},
+        )
+        assert r_rel_login.status_code == 302
+        rel_state = parse_qs(urlsplit(r_rel_login.headers["location"]).query)["state"][0]
+
+        r_rel_cb = await client.get(
+            "/api/life/auth/oauth/google/callback",
+            params={"code": "google-code", "state": rel_state},
+        )
+        assert r_rel_cb.status_code == 302
+        assert r_rel_cb.headers["location"] == "https://aza.moe/life?shared=99"
+
+        # 2. CORS_ORIGINS URL (e.g. www.aza.moe) is allowed cleanly
+        r_www_login = await client.get(
+            "/api/life/auth/oauth/google/login",
+            params={"next": "https://www.aza.moe/life"},
+        )
+        assert r_www_login.status_code == 302
+        www_state = parse_qs(urlsplit(r_www_login.headers["location"]).query)["state"][0]
+
+        # 3. Provider cancellation (?error=access_denied) redirects back to frontend with auth_error
+        r_cancel = await client.get(
+            "/api/life/auth/oauth/google/callback",
+            params={"error": "access_denied", "state": www_state},
+        )
+        assert r_cancel.status_code == 302
+        cancel_loc = urlsplit(r_cancel.headers["location"])
+        cancel_qs = parse_qs(cancel_loc.query)
+        assert f"{cancel_loc.scheme}://{cancel_loc.netloc}{cancel_loc.path}" == "https://www.aza.moe/life"
+        assert cancel_qs["auth_error"] == ["cancelled"]
+        assert cancel_qs["auth_provider"] == ["google"]
+
+        # 4. Cancellation or missing code without state cookie falls back safely to SITE_URL
+        r_no_state_cancel = await client.get(
+            "/api/life/auth/oauth/google/callback",
+            params={"error": "access_denied", "state": "stale"},
+        )
+        assert r_no_state_cancel.status_code == 302
+        ns_loc = urlsplit(r_no_state_cancel.headers["location"])
+        ns_qs = parse_qs(ns_loc.query)
+        assert f"{ns_loc.scheme}://{ns_loc.netloc}{ns_loc.path}" == "https://aza.moe/life"
+        assert ns_qs["auth_error"] == ["cancelled"]
+
+        r_missing_code = await client.get("/api/life/auth/oauth/google/callback")
+        assert r_missing_code.status_code == 302
+        assert parse_qs(urlsplit(r_missing_code.headers["location"]).query)["auth_error"] == ["oauth_failed"]
+
+
+@pytest.mark.asyncio
 async def test_csrf_origin_middleware_and_ip_spoofing_and_smtp_503(
     test_settings: Settings,
     db_session: AsyncSession,

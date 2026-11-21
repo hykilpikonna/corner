@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Annotated
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -253,6 +253,31 @@ async def oauth_login(
     return redirect
 
 
+def _append_query_params(url: str, extra: dict[str, str]) -> str:
+    split = urlsplit(url)
+    pairs = [(k, v) for k, v in parse_qsl(split.query, keep_blank_values=True) if k not in extra]
+    pairs.extend(extra.items())
+    return urlunsplit(
+        (split.scheme, split.netloc, split.path, urlencode(pairs), split.fragment)
+    )
+
+
+def _oauth_error_redirect(
+    safe_next: str,
+    settings: Settings,
+    *,
+    provider: str,
+    error_code: str,
+) -> RedirectResponse:
+    target = _append_query_params(
+        safe_next,
+        {"auth_error": error_code, "auth_provider": provider},
+    )
+    redirect = RedirectResponse(url=target, status_code=302)
+    clear_cookie(redirect, OAUTH_STATE_COOKIE_NAME, settings)
+    return redirect
+
+
 @router.get("/auth/oauth/{provider}/callback")
 async def oauth_callback(
     provider: str,
@@ -261,13 +286,40 @@ async def oauth_callback(
     settings: SettingsDep,
     code: Annotated[str | None, Query()] = None,
     state: Annotated[str | None, Query()] = None,
+    error: Annotated[str | None, Query()] = None,
+    error_description: Annotated[str | None, Query()] = None,
 ) -> RedirectResponse:
+    del error_description  # never trust/reflect raw provider query text
     if provider not in SUPPORTED_OAUTH_PROVIDERS:
         raise HTTPException(status_code=404, detail="Unsupported OAuth provider")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
 
     state_cookie = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
+
+    if error is not None or not code:
+        safe_next = validate_next_url(None, settings)
+        try:
+            state_data = verify_oauth_state_cookie(
+                state_cookie,
+                expected_provider=provider,
+                received_state=state,
+                secret_key=settings.SECRET_KEY,
+            )
+            safe_next = validate_next_url(state_data.next_url, settings)
+        except HTTPException:
+            pass
+        norm_err = (error or "").strip().lower()
+        error_code = (
+            "cancelled"
+            if norm_err in {"access_denied", "user_cancelled_login", "user_denied"}
+            else "oauth_failed"
+        )
+        return _oauth_error_redirect(
+            safe_next,
+            settings,
+            provider=provider,
+            error_code=error_code,
+        )
+
     state_data = verify_oauth_state_cookie(
         state_cookie,
         expected_provider=provider,

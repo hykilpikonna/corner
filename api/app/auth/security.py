@@ -537,6 +537,21 @@ def sanitize_external_display_name(
 
 
 def validate_next_url(next_url: str | None, settings: Settings) -> str:
+    site_parsed = urlsplit(settings.SITE_URL)
+    base_parsed = urlsplit(settings.BASE_URL)
+    site_origin = (site_parsed.scheme.lower(), site_parsed.netloc.lower())
+    base_origin = (base_parsed.scheme.lower(), base_parsed.netloc.lower())
+
+    allowed_origins: set[tuple[str, str]] = set()
+    if site_parsed.scheme and site_parsed.netloc:
+        allowed_origins.add(site_origin)
+    for raw_origin in settings.CORS_ORIGINS:
+        origin_parsed = urlsplit(raw_origin.strip())
+        if origin_parsed.scheme in ("http", "https") and origin_parsed.netloc:
+            allowed_origins.add(
+                (origin_parsed.scheme.lower(), origin_parsed.netloc.lower())
+            )
+
     if not next_url:
         return settings.SITE_URL
 
@@ -556,13 +571,19 @@ def validate_next_url(next_url: str | None, settings: Settings) -> str:
     if not parsed.scheme and not parsed.netloc:
         if not candidate.startswith("/"):
             raise HTTPException(status_code=400, detail="Invalid redirect URL")
+        # When API and frontend live on separate origins (e.g. api.aza.moe vs aza.moe),
+        # resolve relative site paths against SITE_URL's origin so 302 redirects don't 404 on API.
+        if (
+            site_parsed.scheme in ("http", "https")
+            and site_parsed.netloc
+            and site_origin != base_origin
+        ):
+            return f"{site_parsed.scheme}://{site_parsed.netloc}{candidate}"
         return candidate
 
-    site_parsed = urlsplit(settings.SITE_URL)
     if (
         parsed.scheme in ("http", "https")
-        and parsed.scheme.lower() == site_parsed.scheme.lower()
-        and parsed.netloc.lower() == site_parsed.netloc.lower()
+        and (parsed.scheme.lower(), parsed.netloc.lower()) in allowed_origins
     ):
         return candidate
 
