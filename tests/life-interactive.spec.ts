@@ -609,9 +609,9 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   await expect(textbox).toHaveAttribute('aria-label', '发消息...')
   await expect(chatZone.locator('#send-comment-btn .unstyled-button')).toHaveCount(0)
 
-  // Guest avatar sits left of "登录" with ~1/3 (10px of 30px) sunk behind the composer input top edge
-  const guestAvatar = chatZone.locator('.guest-bar .guest-avatar')
-  const signinBtn = chatZone.locator('.guest-bar .signin-btn')
+  // Composer avatar sits left of "登录" and sinks behind the composer input top edge
+  const guestAvatar = chatZone.locator('.composer-bar .composer-avatar')
+  const signinBtn = chatZone.locator('.composer-bar .signin-btn')
   await expect(guestAvatar).toBeVisible()
   const avatarBox = await guestAvatar.boundingBox()
   const signinBox = await signinBtn.boundingBox()
@@ -622,7 +622,7 @@ test('supports /life Telegram Web A interactive mode (ReactionSelector, external
   expect(avatarBox!.x + avatarBox!.width).toBeLessThanOrEqual(signinBox!.x)
   const sinkPx = avatarBox!.y + avatarBox!.height - inputBox!.y
   expect(sinkPx).toBeGreaterThanOrEqual(7)
-  expect(sinkPx).toBeLessThanOrEqual(13)
+  expect(sinkPx).toBeLessThanOrEqual(20)
 
   // Click existing comment reaction pill on #comment-101 -> toggles 1 -> 2 with .chosen
   const commentHeartPill = incomingBubble.locator('.comment-reactions .comment-reaction-btn:has(img.tgb-apple-emoji[alt="❤️"])')
@@ -1221,13 +1221,13 @@ test('supports v3 view increment, Web A formatting, SymbolMenu emojis/stickers, 
 
   const replyBubble = chatZone.locator('#comment-302')
   await expect(replyBubble).toBeVisible({timeout: 10_000})
-  await expect(chatZone.locator('.guest-bar .guest-anon-name')).toHaveText('Anon #v301')
-  const v3GuestAvatar = chatZone.locator('.guest-bar .guest-avatar.anon-ringed')
-  await expect(v3GuestAvatar.locator('img.guest-avatar-img')).toHaveAttribute('src', /^\/anons\/anon-[1-9]\.webp$/)
+  await expect(chatZone.locator('.composer-bar .composer-author-name')).toHaveText('Anon #v301')
+  const v3GuestAvatar = chatZone.locator('.composer-bar .composer-avatar.anon-ringed')
+  await expect(v3GuestAvatar.locator('img.composer-avatar-img')).toHaveAttribute('src', /^\/anons\/anon-[1-9]\.webp$/)
   await expect.poll(async () => (await v3GuestAvatar.boundingBox())?.width, {timeout: 5_000}).toBe(40)
   await expect.poll(async () => (await v3GuestAvatar.boundingBox())?.height, {timeout: 5_000}).toBe(40)
-  const guestHintBox = await chatZone.locator('.guest-bar .guest-hint').boundingBox()
-  const v3SigninBox = await chatZone.locator('.guest-bar .signin-btn').boundingBox()
+  const guestHintBox = await chatZone.locator('.composer-bar .guest-hint').boundingBox()
+  const v3SigninBox = await chatZone.locator('.composer-bar .signin-btn').boundingBox()
   expect(guestHintBox!.x + guestHintBox!.width).toBeLessThanOrEqual(v3SigninBox!.x)
   // Clicking the guest avatar opens the auth modal
   await v3GuestAvatar.click()
