@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -28,6 +28,7 @@ from app.db.models import (
     Channel,
     Comment,
     CommentTgReaction,
+    CommentWebReaction,
     NotificationQueue,
     OriginalUploadToken,
     Poll,
@@ -589,6 +590,7 @@ class TelegramService:
         self._default_stickers_task: asyncio.Task[Any] | None = None
         self._emoji_meta_task: asyncio.Task[Any] | None = None
         self._crawl_task: asyncio.Task[Any] | None = None
+        self._unlinked_autoforwards: dict[tuple[int, int], int] = {}
 
         self.album_buffer = AlbumBuffer(
             on_flush=self._on_album_flushed,
@@ -792,6 +794,26 @@ class TelegramService:
             return None
         disc_id = int(getattr(disc_msg, "id", 0) or 0) if disc_msg is not None else 0
         return disc_id if disc_id > 0 else None
+
+    async def lookup_discussion_root_id_for_post(
+        self,
+        tg_chat_id: int,
+        *,
+        tg_msg_id: int | None,
+        all_msg_ids: Sequence[int] | None = None,
+    ) -> int | None:
+        """Try ordered candidate channel message IDs (lowest first for albums) to resolve discussion root."""
+        candidates: list[int] = []
+        seen: set[int] = set()
+        for raw_id in [*(sorted(int(x) for x in (all_msg_ids or []))), *( [int(tg_msg_id)] if tg_msg_id is not None else [] )]:
+            if raw_id > 0 and raw_id not in seen:
+                seen.add(raw_id)
+                candidates.append(raw_id)
+        for cand_id in candidates:
+            root_id = await self.lookup_discussion_root_id(tg_chat_id, cand_id)
+            if root_id is not None:
+                return root_id
+        return None
 
     async def crawl_channel_history(
         self,
@@ -1902,6 +1924,14 @@ class TelegramService:
                     else (existing.quote if existing is not None else None)
                 )
 
+                linked_disc_root_id = existing.tg_discussion_root_id if existing else None
+                if linked_disc_root_id is None and channel.status == "active":
+                    for mid in sorted(all_ids):
+                        cached_root = self._unlinked_autoforwards.pop((channel.id, int(mid)), None)
+                        if cached_root is not None:
+                            linked_disc_root_id = int(cached_root)
+                            break
+
                 upserted = await upsert_post(
                     session,
                     channel=channel,
@@ -1913,7 +1943,7 @@ class TelegramService:
                     ),
                     tg_media_group_id=mg_id or (existing.tg_media_group_id if existing else None),
                     tg_all_msg_ids=sorted(all_ids),
-                    tg_discussion_root_id=existing.tg_discussion_root_id if existing else None,
+                    tg_discussion_root_id=linked_disc_root_id,
                     date=existing.date if ((is_edit or merged_split_album) and existing is not None) else post_date,
                     edited_at=edited_at if edited_at is not None else (existing.edited_at if existing else None),
                     is_deleted=False,
@@ -1951,6 +1981,39 @@ class TelegramService:
 
             ingested_ids = [(post_obj.id, was_new) for post_obj, was_new in ingested_posts]
             await session.commit()
+
+            # Fill in missing discussion root for newly ingested active-channel posts (e.g. album debounce race)
+            if (
+                channel.status == "active"
+                and channel.tg_chat_id is not None
+                and channel.tg_discussion_chat_id is not None
+                and self.user_client is not None
+            ):
+                root_linked = False
+                for post_obj, was_new in ingested_posts:
+                    if not was_new or post_obj.tg_discussion_root_id is not None:
+                        continue
+                    resolved_root = await self.lookup_discussion_root_id_for_post(
+                        int(channel.tg_chat_id),
+                        tg_msg_id=post_obj.tg_msg_id,
+                        all_msg_ids=post_obj.tg_all_msg_ids,
+                    )
+                    if resolved_root is None:
+                        continue
+                    conflict = (
+                        await session.execute(
+                            select(Post.id).where(
+                                Post.channel_id == channel.id,
+                                Post.tg_discussion_root_id == resolved_root,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if conflict is None:
+                        post_obj.tg_discussion_root_id = resolved_root
+                        root_linked = True
+                if root_linked:
+                    await session.commit()
+
             session.expire_all()
             await generate_exports(session, self.settings)
 
@@ -2453,6 +2516,12 @@ class TelegramService:
                         msg.id,
                         target_post.id,
                     )
+                elif target_post is None:
+                    # Channel post may still be in `album_buffer` debounce; cache briefly so flush picks it up
+                    if len(self._unlinked_autoforwards) >= 500:
+                        oldest_key = next(iter(self._unlinked_autoforwards))
+                        self._unlinked_autoforwards.pop(oldest_key, None)
+                    self._unlinked_autoforwards[(channel.id, int(fwd_channel_msg_id))] = int(msg.id)
                 return None
 
         # 2. Strict loop guard #1: ignore messages echoed by our own bot!
@@ -2472,7 +2541,257 @@ class TelegramService:
 
         return await self._ingest_discussion_messages([msg])
 
-    async def _ingest_discussion_messages(self, msgs: list[Any]) -> Comment | None:
+    async def _resolve_post_id_from_telegram_thread(
+        self,
+        session: AsyncSession,
+        channel: Channel,
+        disc_chat_id: int | None,
+        first_msg: Any,
+    ) -> int | None:
+        """Walk parent discussion messages in Telegram to link missing `tg_discussion_root_id` on demand."""
+        tg_reader = self.user_client or self.client
+        if disc_chat_id is None or tg_reader is None or not hasattr(tg_reader, "get_messages"):
+            return None
+
+        queue: list[int] = []
+        for raw_cid in (
+            getattr(first_msg, "reply_to_top_message_id", None),
+            getattr(first_msg, "reply_to_message_id", None),
+        ):
+            if raw_cid is not None:
+                cid = int(raw_cid)
+                if cid > 0 and cid not in queue:
+                    queue.append(cid)
+
+        visited: set[int] = set()
+        hops = 0
+        while queue and hops < 8:
+            cur_id = queue.pop(0)
+            if cur_id in visited:
+                continue
+            visited.add(cur_id)
+            hops += 1
+
+            # Check local DB first at each hop
+            existing_c = (
+                await session.execute(
+                    select(Comment).where(
+                        Comment.channel_id == channel.id,
+                        Comment.tg_msg_id == cur_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_c is not None:
+                return existing_c.post_id
+
+            existing_p = (
+                await session.execute(
+                    select(Post).where(
+                        Post.channel_id == channel.id,
+                        Post.tg_discussion_root_id == cur_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_p is not None:
+                return existing_p.id
+
+            try:
+                fetched = await tg_reader.get_messages(int(disc_chat_id), cur_id)
+            except Exception:
+                logger.debug(
+                    "Failed walking discussion thread msg %s in %s", cur_id, disc_chat_id, exc_info=True
+                )
+                continue
+            if isinstance(fetched, list):
+                fetched = fetched[0] if fetched else None
+            if fetched is None or getattr(fetched, "empty", False):
+                continue
+
+            ch_msg_id = self._extract_autoforward_channel_msg_id(fetched, channel)
+            if ch_msg_id is not None:
+                target_post = await find_post_by_channel_tg_msg(session, channel.id, ch_msg_id)
+                if target_post is not None:
+                    if target_post.tg_discussion_root_id is None:
+                        conflict = (
+                            await session.execute(
+                                select(Post.id).where(
+                                    Post.channel_id == channel.id,
+                                    Post.tg_discussion_root_id == int(fetched.id),
+                                )
+                            )
+                        ).scalar_one_or_none()
+                        if conflict is None:
+                            target_post.tg_discussion_root_id = int(fetched.id)
+                            await session.flush()
+                            logger.info(
+                                "Linked discussion root msg %s -> post #%s (on-demand)",
+                                fetched.id,
+                                target_post.id,
+                            )
+                    return target_post.id
+
+            for nxt_raw in (
+                getattr(fetched, "reply_to_top_message_id", None),
+                getattr(fetched, "reply_to_message_id", None),
+            ):
+                if nxt_raw is not None:
+                    nxt = int(nxt_raw)
+                    if nxt > 0 and nxt not in visited and nxt not in queue:
+                        queue.append(nxt)
+
+        return None
+
+    async def merge_comment_group_rows(
+        self,
+        session: AsyncSession,
+        channel: Channel,
+        group_comments: list[Comment],
+        *,
+        tg_media_group_id: str,
+    ) -> Comment | None:
+        """Merge already-persisted duplicate album Comment rows into one keeper Comment cleanly."""
+        if not group_comments:
+            return None
+        ordered_by_id = sorted(group_comments, key=lambda c: c.id)
+        keeper = ordered_by_id[0]
+        extras = ordered_by_id[1:]
+
+        if not extras:
+            if keeper.tg_media_group_id != tg_media_group_id:
+                keeper.tg_media_group_id = tg_media_group_id
+                await session.commit()
+            return keeper
+
+        ordered_by_tg = sorted(group_comments, key=lambda c: (int(c.tg_msg_id or 0), c.id))
+        media_items: list[tuple[int, dict[str, Any]]] = []
+        best_text = keeper.body_text or ""
+        best_html = keeper.body_html or ""
+
+        for c in ordered_by_tg:
+            mid = int(c.tg_msg_id or c.id)
+            if not best_text and (c.body_text or "").strip():
+                best_text = c.body_text
+                best_html = c.body_html
+            if isinstance(c.media, dict):
+                if c.media.get("media_type") == "album":
+                    for sub in c.media.get("images") or []:
+                        if isinstance(sub, dict):
+                            media_items.append((int(sub.get("tg_msg_id") or mid), sub))
+                    for sub in c.media.get("files") or []:
+                        if isinstance(sub, dict):
+                            media_items.append((int(sub.get("tg_msg_id") or mid), sub))
+                else:
+                    media_items.append((mid, c.media))
+
+        merged_media = self._merge_comment_media_items(None, media_items)
+        if merged_media is not None:
+            all_tg_ids = sorted(
+                {int(c.tg_msg_id) for c in group_comments if c.tg_msg_id is not None}
+                | {int(x) for x in (merged_media.get("tg_msg_ids") or []) if isinstance(x, int)}
+            )
+            if all_tg_ids:
+                merged_media["tg_msg_ids"] = all_tg_ids
+
+        extra_ids = [c.id for c in extras]
+        post_id = keeper.post_id
+        min_tg_msg_id = min(
+            (int(c.tg_msg_id) for c in group_comments if c.tg_msg_id is not None),
+            default=keeper.tg_msg_id,
+        )
+
+        # Re-point replies & pending notification queue references before deleting duplicate rows
+        await session.execute(
+            update(Comment)
+            .where(Comment.parent_id.in_(extra_ids))
+            .values(parent_id=keeper.id)
+        )
+        await session.execute(
+            update(NotificationQueue)
+            .where(NotificationQueue.comment_id.in_(extra_ids))
+            .values(comment_id=keeper.id)
+        )
+
+        # Preserve TG & web reactions attached to duplicate rows
+        existing_tg_r = (
+            await session.execute(
+                select(CommentTgReaction).where(CommentTgReaction.comment_id == keeper.id)
+            )
+        ).scalars().all()
+        keeper_tg_keys = {r.reaction_key: r for r in existing_tg_r}
+        for r in (
+            await session.execute(
+                select(CommentTgReaction).where(CommentTgReaction.comment_id.in_(extra_ids))
+            )
+        ).scalars().all():
+            if r.reaction_key in keeper_tg_keys:
+                keeper_tg_keys[r.reaction_key].count = max(
+                    keeper_tg_keys[r.reaction_key].count, r.count
+                )
+            else:
+                new_r = CommentTgReaction(
+                    comment_id=keeper.id,
+                    reaction_key=r.reaction_key,
+                    emoji=r.emoji,
+                    custom_emoji_id=r.custom_emoji_id,
+                    count=r.count,
+                )
+                session.add(new_r)
+                keeper_tg_keys[r.reaction_key] = new_r
+
+        existing_web_r = (
+            await session.execute(
+                select(CommentWebReaction).where(CommentWebReaction.comment_id == keeper.id)
+            )
+        ).scalars().all()
+        keeper_web_keys = {(r.reaction_key, r.actor_key) for r in existing_web_r}
+        for r in (
+            await session.execute(
+                select(CommentWebReaction).where(CommentWebReaction.comment_id.in_(extra_ids))
+            )
+        ).scalars().all():
+            wkey = (r.reaction_key, r.actor_key)
+            if wkey not in keeper_web_keys:
+                session.add(
+                    CommentWebReaction(
+                        comment_id=keeper.id,
+                        reaction_key=r.reaction_key,
+                        emoji=r.emoji,
+                        custom_emoji_id=r.custom_emoji_id,
+                        actor_key=r.actor_key,
+                    )
+                )
+                keeper_web_keys.add(wkey)
+
+        await session.flush()
+        await session.execute(delete(Comment).where(Comment.id.in_(extra_ids)))
+        await session.flush()
+
+        keeper.tg_msg_id = min_tg_msg_id
+        keeper.tg_media_group_id = tg_media_group_id
+        if merged_media is not None:
+            keeper.media = merged_media
+        if best_text:
+            keeper.body_text = best_text
+            keeper.body_html = best_html
+
+        linked_user = await session.get(User, keeper.user_id) if keeper.user_id is not None else None
+        await session.commit()
+
+        for extra_id in extra_ids:
+            await self._emit_sse(
+                "comment.deleted",
+                {"post_id": post_id, "comment_id": extra_id},
+            )
+        comment_dto = self._serialize_tg_comment_dto(keeper, linked_user)
+        await self._emit_sse("comment.updated", comment_dto)
+        return keeper
+
+    async def _ingest_discussion_messages(
+        self,
+        msgs: list[Any],
+        *,
+        fallback_post_id: int | None = None,
+    ) -> Comment | None:
         sorted_msgs = sorted(
             (m for m in msgs if getattr(m, "service", None) is None and int(getattr(m, "id", 0) or 0) > 0),
             key=lambda m: int(getattr(m, "id", 0) or 0),
@@ -2572,6 +2891,14 @@ class TelegramService:
                     ).scalar_one_or_none()
                     if root_post is not None:
                         post_id = root_post.id
+
+                if post_id is None:
+                    post_id = await self._resolve_post_id_from_telegram_thread(
+                        session, channel, disc_chat_id, first_msg
+                    )
+
+                if post_id is None and fallback_post_id is not None:
+                    post_id = int(fallback_post_id)
 
             if post_id is None:
                 return None

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.config import Settings
-from app.db.models import Comment, CommentTgReaction, Poll, PollOption, Post, TgReaction
+from app.db.models import Channel, Comment, CommentTgReaction, Poll, PollOption, Post, TgReaction
 from app.db.repo import (
     compute_merged_comment_reactions,
     compute_merged_poll,
@@ -267,6 +267,7 @@ class PeriodicReconciler:
                 .limit(self.overlap_posts)
             )
             overlap_posts = list((await session.execute(overlap_stmt)).scalars().all())
+            overlap_post_ids = [int(p.id) for p in overlap_posts]
 
             if overlap_posts:
                 candidate_ids: list[int] = []
@@ -609,14 +610,348 @@ class PeriodicReconciler:
                 disc_chat_id=disc_chat_id,
             )
 
+            linked_roots, backfilled_comments, merged_albums = await self._reconcile_discussions(
+                session,
+                tg_client=tg_client,
+                channel_id=channel_id,
+                chat_id=chat_id,
+                disc_chat_id=disc_chat_id,
+                overlap_post_ids=overlap_post_ids,
+            )
+
             return {
                 "status": "ok",
                 "checked_messages": len(fetched_msgs),
                 "updated_posts": len(updated_post_ids),
                 "updated_comment_reactions": updated_comment_reactions,
+                "linked_discussion_roots": linked_roots,
+                "backfilled_comments": backfilled_comments,
+                "merged_comment_albums": merged_albums,
                 "new_posts": new_post_count,
                 "deleted_posts": len(deleted_post_ids),
             }
+
+    async def _reconcile_discussions(
+        self,
+        session: AsyncSession,
+        *,
+        tg_client: Any,
+        channel_id: int,
+        chat_id: int,
+        disc_chat_id: int | None,
+        overlap_post_ids: list[int],
+    ) -> tuple[int, int, int]:
+        if self.telegram_service is None or disc_chat_id is None:
+            return (0, 0, 0)
+
+        channel = await session.get(Channel, channel_id)
+        if channel is None:
+            return (0, 0, 0)
+
+        svc = self.telegram_service
+        user_reader = svc.user_client or tg_client
+        linked_roots = 0
+        backfilled_comments = 0
+        merged_albums = 0
+
+        # Snapshot plain values up front so subsequent commits never trigger sync lazy-loads
+        post_snapshots: list[tuple[int, int | None, list[int], int | None]] = []
+        if overlap_post_ids:
+            fresh_posts = (
+                await session.execute(
+                    select(Post)
+                    .where(Post.id.in_(overlap_post_ids), Post.is_deleted.is_(False))
+                    .order_by(Post.tg_msg_id.desc())
+                )
+            ).scalars().all()
+            for p in fresh_posts:
+                post_snapshots.append(
+                    (
+                        int(p.id),
+                        int(p.tg_msg_id) if p.tg_msg_id is not None else None,
+                        [int(x) for x in (p.tg_all_msg_ids or [])],
+                        int(p.tg_discussion_root_id) if p.tg_discussion_root_id is not None else None,
+                    )
+                )
+
+        # 1. Resolve missing tg_discussion_root_id on recent posts (e.g. album debounce races)
+        for pid, tg_msg_id, all_msg_ids, disc_root_id in post_snapshots:
+            if disc_root_id is not None:
+                continue
+            try:
+                root_id = await svc.lookup_discussion_root_id_for_post(
+                    chat_id, tg_msg_id=tg_msg_id, all_msg_ids=all_msg_ids
+                )
+            except Exception:
+                root_id = None
+            if root_id is None:
+                continue
+            conflict = (
+                await session.execute(
+                    select(Post.id).where(
+                        Post.channel_id == channel_id,
+                        Post.tg_discussion_root_id == root_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if conflict is None:
+                p_row = await session.get(Post, pid)
+                if p_row is not None and p_row.tg_discussion_root_id is None:
+                    p_row.tg_discussion_root_id = root_id
+                    await session.commit()
+                    linked_roots += 1
+
+        # 2. Catch up any missed discussion replies for recent overlap posts
+        if hasattr(user_reader, "get_discussion_replies"):
+            for pid, tg_msg_id, all_msg_ids, _disc_root_id in post_snapshots:
+                cand_ids: list[int] = []
+                for raw_cid in [
+                    *(sorted(all_msg_ids)),
+                    *([tg_msg_id] if tg_msg_id is not None else []),
+                ]:
+                    if raw_cid > 0 and raw_cid not in cand_ids:
+                        cand_ids.append(raw_cid)
+
+                replies: list[Any] = []
+                for cand_id in cand_ids:
+                    try:
+                        collected: list[Any] = []
+                        async for reply_msg in user_reader.get_discussion_replies(
+                            chat_id, cand_id, limit=100
+                        ):
+                            collected.append(reply_msg)
+                        replies = collected
+                        break
+                    except Exception:
+                        logger.debug(
+                            "get_discussion_replies(%s, %s) failed",
+                            chat_id,
+                            cand_id,
+                            exc_info=True,
+                        )
+                        continue
+
+                if not replies:
+                    continue
+
+                filtered_replies: list[Any] = []
+                for m in sorted(replies, key=lambda x: int(getattr(x, "id", 0) or 0)):
+                    mid = int(getattr(m, "id", 0) or 0)
+                    if mid <= 0 or getattr(m, "service", None):
+                        continue
+                    ch_obj = await session.get(Channel, channel_id)
+                    if ch_obj is not None and svc._extract_autoforward_channel_msg_id(m, ch_obj) is not None:
+                        continue
+                    from_user = getattr(m, "from_user", None)
+                    if from_user is not None:
+                        if bool(getattr(from_user, "is_self", False)):
+                            continue
+                        if svc.bot_id is not None and int(getattr(from_user, "id", 0)) == int(svc.bot_id):
+                            continue
+                    filtered_replies.append(m)
+
+                if not filtered_replies:
+                    continue
+
+                reply_ids = [int(m.id) for m in filtered_replies]
+                existing_rows = (
+                    await session.execute(
+                        select(Comment).where(
+                            Comment.channel_id == channel_id,
+                            Comment.post_id == pid,
+                        )
+                    )
+                ).scalars().all()
+                existing_tg_ids: set[int] = set()
+                for c in existing_rows:
+                    if c.tg_msg_id is not None:
+                        existing_tg_ids.add(int(c.tg_msg_id))
+                    if isinstance(c.media, dict):
+                        for sub_mid in c.media.get("tg_msg_ids") or []:
+                            if isinstance(sub_mid, int):
+                                existing_tg_ids.add(sub_mid)
+
+                missing_msgs = [m for m in filtered_replies if int(m.id) not in existing_tg_ids]
+                if not missing_msgs:
+                    continue
+
+                # Prefer fresh bot-client Message objects so download_media works natively
+                if (
+                    svc.client is not None
+                    and svc.client is not user_reader
+                    and hasattr(svc.client, "get_messages")
+                ):
+                    try:
+                        bot_batch = await svc.client.get_messages(
+                            disc_chat_id, [int(m.id) for m in missing_msgs]
+                        )
+                        bot_list = bot_batch if isinstance(bot_batch, list) else [bot_batch]
+                        by_bot_id = {
+                            int(bm.id): bm
+                            for bm in bot_list
+                            if bm is not None and not getattr(bm, "empty", False)
+                        }
+                        missing_msgs = [by_bot_id.get(int(m.id), m) for m in missing_msgs]
+                    except Exception:
+                        logger.debug("Bot get_messages fallback skipped for %s", reply_ids, exc_info=True)
+
+                # Preserve reply chronological order & group media_group_id siblings
+                ordered_groups: list[list[Any]] = []
+                group_map: dict[str, list[Any]] = {}
+                for m in missing_msgs:
+                    mg = getattr(m, "media_group_id", None)
+                    if mg is None:
+                        ordered_groups.append([m])
+                    else:
+                        mg_key = str(mg)
+                        if mg_key not in group_map:
+                            grp: list[Any] = []
+                            group_map[mg_key] = grp
+                            ordered_groups.append(grp)
+                        group_map[mg_key].append(m)
+
+                for grp in ordered_groups:
+                    try:
+                        ingested_c = await svc._ingest_discussion_messages(
+                            grp, fallback_post_id=pid
+                        )
+                        if ingested_c is not None:
+                            backfilled_comments += 1
+                    except Exception:
+                        logger.exception(
+                            "Failed backfilling discussion reply %s for post #%s",
+                            [int(getattr(m, "id", 0) or 0) for m in grp],
+                            pid,
+                        )
+
+        # 3. Backfill & merge historical ungrouped album comments sharing this discussion group
+        msg_reader = user_reader if hasattr(user_reader, "get_messages") else svc.client
+        if msg_reader is not None and hasattr(msg_reader, "get_messages"):
+            unmerged = list(
+                (
+                    await session.execute(
+                        select(Comment)
+                        .join(Channel, Channel.id == Comment.channel_id)
+                        .where(
+                            Channel.tg_discussion_chat_id == disc_chat_id,
+                            Comment.source == "telegram",
+                            Comment.tg_msg_id.is_not(None),
+                            Comment.tg_media_group_id.is_(None),
+                            Comment.deleted_at.is_(None),
+                            Comment.media.is_not(None),
+                        )
+                        .order_by(Comment.id.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            by_author_post: dict[tuple[int, int, int], list[Comment]] = {}
+            for c in unmerged:
+                if c.channel_id is None or c.tg_author_id is None:
+                    continue
+                by_author_post.setdefault((c.channel_id, c.post_id, int(c.tg_author_id)), []).append(c)
+
+            candidates: list[Comment] = []
+            for bucket in by_author_post.values():
+                if len(bucket) < 2:
+                    continue
+                ordered = sorted(bucket, key=lambda c: (c.created_at, c.id))
+                matched_ids: set[int] = set()
+                for idx, item in enumerate(ordered):
+                    for nxt in ordered[idx + 1 :]:
+                        if abs((nxt.created_at - item.created_at).total_seconds()) <= 15:
+                            matched_ids.add(item.id)
+                            matched_ids.add(nxt.id)
+                for item in ordered:
+                    if item.id in matched_ids:
+                        candidates.append(item)
+
+            if candidates:
+                by_tg_msg_id = {int(c.tg_msg_id): c for c in candidates if c.tg_msg_id is not None}
+                cand_tg_ids = sorted(by_tg_msg_id)
+                fetched_disc_msgs: list[Any] = []
+                for idx in range(0, len(cand_tg_ids), self.batch_size):
+                    chunk = cand_tg_ids[idx : idx + self.batch_size]
+                    try:
+                        batch = await msg_reader.get_messages(disc_chat_id, chunk)
+                    except Exception:
+                        logger.debug(
+                            "Historical comment album lookup failed for %s", chunk, exc_info=True
+                        )
+                        batch = []
+                    if isinstance(batch, list):
+                        fetched_disc_msgs.extend(batch)
+                    elif batch is not None:
+                        fetched_disc_msgs.append(batch)
+
+                real_groups: dict[tuple[int, str], list[int]] = {}
+                channels_by_id: dict[int, Channel] = {}
+                checked_non_album = False
+                for m in fetched_disc_msgs:
+                    if m is None or getattr(m, "empty", False):
+                        continue
+                    mid = int(getattr(m, "id", 0) or 0)
+                    comment = by_tg_msg_id.get(mid)
+                    if comment is None or comment.channel_id is None:
+                        continue
+                    raw_mg = getattr(m, "media_group_id", None)
+                    if raw_mg is None:
+                        comment.tg_media_group_id = ""
+                        checked_non_album = True
+                        continue
+                    real_groups.setdefault((int(comment.channel_id), str(raw_mg)), []).append(
+                        int(comment.id)
+                    )
+
+                if checked_non_album:
+                    await session.commit()
+
+                for (ch_id, mg_str), grp_comment_ids in real_groups.items():
+                    target_ch = channels_by_id.get(ch_id)
+                    if target_ch is None:
+                        target_ch = await session.get(Channel, ch_id)
+                        if target_ch is not None:
+                            channels_by_id[ch_id] = target_ch
+                    if target_ch is None:
+                        continue
+                    grp_comments = list(
+                        (
+                            await session.execute(
+                                select(Comment).where(
+                                    Comment.id.in_(grp_comment_ids),
+                                    Comment.deleted_at.is_(None),
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    # Also include any already-tagged comment owning (ch_id, mg_str)
+                    existing_owner = (
+                        await session.execute(
+                            select(Comment).where(
+                                Comment.channel_id == ch_id,
+                                Comment.tg_media_group_id == mg_str,
+                                Comment.deleted_at.is_(None),
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    full_grp = list(grp_comments)
+                    if existing_owner is not None and all(c.id != existing_owner.id for c in full_grp):
+                        full_grp.append(existing_owner)
+                    if not full_grp:
+                        continue
+                    if len(full_grp) >= 2:
+                        await svc.merge_comment_group_rows(
+                            session, target_ch, full_grp, tg_media_group_id=mg_str
+                        )
+                        merged_albums += 1
+                    else:
+                        full_grp[0].tg_media_group_id = mg_str
+                        await session.commit()
+
+        return (linked_roots, backfilled_comments, merged_albums)
 
     async def _reconcile_comment_reactions(
         self,

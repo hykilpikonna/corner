@@ -1273,3 +1273,341 @@ async def test_discussion_album_grouping_and_rich_message_types(
     finally:
         app.state.sse_bus.unsubscribe(sub_id)
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_discussion_root_race_catchup_and_historical_album_merge(
+    test_settings: Settings,
+    db_session: AsyncSession,
+) -> None:
+    from app.db.models import CommentTgReaction, CommentWebReaction
+
+    engine, session_factory = create_engine_and_factory(test_settings)
+    png_bytes = _make_png_bytes((200, 150))
+
+    ch_id = -1004404597067
+    disc_id = -1001184854241
+    ch_chat = SimpleNamespace(id=ch_id, type="channel", title="Channel")
+    disc_chat = SimpleNamespace(id=disc_id, type="supergroup", title="Discussion")
+    sender = SimpleNamespace(
+        id=879777248, first_name="Azalea", last_name=None, username="azalea", photo=None
+    )
+
+    root_autoforward = SimpleNamespace(
+        id=88001,
+        chat=disc_chat,
+        is_automatic_forward=True,
+        forward_from_chat=ch_chat,
+        forward_from_message_id=5,
+        text="album post",
+        date=datetime(2026, 11, 21, 23, 48, 44, tzinfo=UTC),
+    )
+    chan_msg_4 = SimpleNamespace(
+        id=4,
+        chat=ch_chat,
+        text="Prev post",
+        date=datetime(2026, 11, 21, 0, 53, 23, tzinfo=UTC),
+    )
+    chan_msg_5 = SimpleNamespace(
+        id=5,
+        chat=ch_chat,
+        media_group_id="mg_chan_5_6",
+        text="Post body",
+        date=datetime(2026, 11, 21, 23, 48, 44, tzinfo=UTC),
+    )
+    chan_msg_6 = SimpleNamespace(
+        id=6,
+        chat=ch_chat,
+        media_group_id="mg_chan_5_6",
+        date=datetime(2026, 11, 21, 23, 48, 44, tzinfo=UTC),
+    )
+    missed_reply_1 = SimpleNamespace(
+        id=88002,
+        chat=disc_chat,
+        from_user=sender,
+        reply_to_top_message_id=88001,
+        reply_to_message_id=88001,
+        text="Missed comment 1",
+        date=datetime(2026, 11, 21, 23, 49, 0, tzinfo=UTC),
+    )
+    missed_reply_2a = SimpleNamespace(
+        id=88003,
+        chat=disc_chat,
+        from_user=sender,
+        reply_to_top_message_id=88001,
+        reply_to_message_id=88001,
+        media_group_id="mg_missed_2",
+        caption="Missed album",
+        photo=SimpleNamespace(file_id="f_m1", width=640, height=480, file_size=200),
+        date=datetime(2026, 11, 21, 23, 50, 0, tzinfo=UTC),
+    )
+    missed_reply_2b = SimpleNamespace(
+        id=88004,
+        chat=disc_chat,
+        from_user=sender,
+        reply_to_top_message_id=88001,
+        reply_to_message_id=88001,
+        media_group_id="mg_missed_2",
+        photo=SimpleNamespace(file_id="f_m2", width=480, height=640, file_size=250),
+        date=datetime(2026, 11, 21, 23, 50, 0, tzinfo=UTC),
+    )
+    hist_msg_1 = SimpleNamespace(
+        id=87921,
+        chat=disc_chat,
+        from_user=sender,
+        media_group_id="mg_hist_9612",
+        photo=SimpleNamespace(file_id="f_h1", width=800, height=600, file_size=300),
+        reactions=SimpleNamespace(reactions=[SimpleNamespace(emoji="🔥", count=2)]),
+        date=datetime(2026, 11, 21, 23, 12, 29, tzinfo=UTC),
+    )
+    hist_msg_2 = SimpleNamespace(
+        id=87922,
+        chat=disc_chat,
+        from_user=sender,
+        media_group_id="mg_hist_9612",
+        photo=SimpleNamespace(file_id="f_h2", width=800, height=600, file_size=320),
+        date=datetime(2026, 11, 21, 23, 12, 29, tzinfo=UTC),
+    )
+
+    class FakeUserClient:
+        async def get_chat(self, cid: int):
+            return SimpleNamespace(id=cid, is_restricted=False, is_banned=False, is_deactivated=False)
+
+        async def get_discussion_message(self, cid: int, msg_id: int):
+            if cid == ch_id and msg_id in (5, 6):
+                return root_autoforward
+            return None
+
+        async def get_discussion_replies(self, cid: int, msg_id: int, limit: int = 100):
+            if cid == ch_id and msg_id == 5:
+                for item in (root_autoforward, missed_reply_1, missed_reply_2a, missed_reply_2b):
+                    yield item
+
+        async def get_messages(self, cid: int, ids: Any):
+            id_list = ids if isinstance(ids, list) else [ids]
+            all_objs = {
+                4: chan_msg_4,
+                5: chan_msg_5,
+                6: chan_msg_6,
+                88001: root_autoforward,
+                88002: missed_reply_1,
+                88003: missed_reply_2a,
+                88004: missed_reply_2b,
+                87921: hist_msg_1,
+                87922: hist_msg_2,
+            }
+            res = [all_objs[i] for i in id_list if i in all_objs]
+            return res if isinstance(ids, list) else (res[0] if res else None)
+
+    class FakeBotClient:
+        async def download_media(self, msg: Any, file_name: str, **_kw: Any) -> str:
+            Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_name).write_bytes(png_bytes)
+            return file_name
+
+    user_client = FakeUserClient()
+    bot_client = FakeBotClient()
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    async def publish(ev: str, payload: dict[str, Any]) -> None:
+        events.append((ev, payload))
+
+    service = TelegramService(
+        session_factory=session_factory,
+        settings=test_settings,
+        sse_publish=publish,
+        client=bot_client,
+        user_client=user_client,
+        bot_id=99999,
+    )
+
+    try:
+        ch = await ensure_channel(
+            db_session,
+            channel_id=1,
+            status="active",
+            id_offset=0,
+            tg_chat_id=ch_id,
+            tg_discussion_chat_id=disc_id,
+        )
+        p_album = Post(
+            id=100,
+            channel_id=ch.id,
+            tg_msg_id=6,
+            tg_all_msg_ids=[5, 6],
+            tg_discussion_root_id=None,
+            date=datetime(2026, 11, 21, 23, 48, 44, tzinfo=UTC),
+            text_html="Post body",
+        )
+        p_prev = Post(
+            id=99,
+            channel_id=ch.id,
+            tg_msg_id=4,
+            tg_all_msg_ids=[4],
+            tg_discussion_root_id=87857,
+            date=datetime(2026, 11, 21, 0, 53, 23, tzinfo=UTC),
+            text_html="Prev post",
+        )
+        db_session.add_all([p_album, p_prev])
+        await db_session.flush()
+
+        c_hist_b = Comment(
+            id=35449,
+            post_id=p_prev.id,
+            source="telegram",
+            channel_id=ch.id,
+            tg_msg_id=87922,
+            tg_author_id=879777248,
+            tg_author_name="Azalea",
+            body_text="",
+            body_html="",
+            media={"media_type": "photo", "url": "comments/87922.jpg", "width": 800, "height": 600},
+            created_at=datetime(2026, 11, 21, 23, 12, 29, tzinfo=UTC),
+        )
+        c_hist_a = Comment(
+            id=35450,
+            post_id=p_prev.id,
+            source="telegram",
+            channel_id=ch.id,
+            tg_msg_id=87921,
+            tg_author_id=879777248,
+            tg_author_name="Azalea",
+            body_text="",
+            body_html="",
+            media={"media_type": "photo", "url": "comments/87921.jpg", "width": 800, "height": 600},
+            created_at=datetime(2026, 11, 21, 23, 12, 29, tzinfo=UTC),
+        )
+        db_session.add_all([c_hist_b, c_hist_a])
+        await db_session.flush()
+
+        # Child reply to the duplicate second row (35450) + reaction on 35450
+        c_child = Comment(
+            id=35451,
+            post_id=p_prev.id,
+            parent_id=35450,
+            source="web",
+            channel_id=ch.id,
+            body_text="Nice photos!",
+            body_html="<p>Nice photos!</p>",
+            created_at=datetime(2026, 11, 21, 23, 13, 0, tzinfo=UTC),
+        )
+        db_session.add(c_child)
+        db_session.add(CommentTgReaction(comment_id=35450, reaction_key="e:🔥", emoji="🔥", count=2))
+        db_session.add(
+            CommentWebReaction(
+                comment_id=35450, reaction_key="e:❤", emoji="❤", actor_key="web:u1"
+            )
+        )
+        await db_session.commit()
+
+        # Run PeriodicReconciler once: links post 100 root, backfills missed replies, merges 35449+35450
+        reconciler = PeriodicReconciler(
+            session_factory=session_factory,
+            settings=test_settings,
+            telegram_service=service,
+            sse_publish=publish,
+        )
+        stats = await reconciler.reconcile_once()
+        assert stats["linked_discussion_roots"] == 1
+        assert stats["backfilled_comments"] == 2
+        assert stats["merged_comment_albums"] == 1
+
+        async with session_factory() as session:
+            p100 = await session.get(Post, 100)
+            assert p100 is not None and p100.tg_discussion_root_id == 88001
+
+            p100_comments = list(
+                (
+                    await session.execute(
+                        select(Comment).where(Comment.post_id == 100).order_by(Comment.tg_msg_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(p100_comments) == 2
+            assert p100_comments[0].body_text == "Missed comment 1"
+            assert p100_comments[1].media["media_type"] == "album"
+            assert len(p100_comments[1].media["images"]) == 2
+            assert p100_comments[1].body_text == "Missed album"
+
+            # Historical 35449 + 35450 merged into keeper 35449, with 35451 re-parented & reactions preserved
+            kept = await session.get(Comment, 35449)
+            gone = await session.get(Comment, 35450)
+            child = await session.get(Comment, 35451)
+            assert kept is not None and gone is None
+            assert kept.tg_msg_id == 87921
+            assert kept.tg_media_group_id == "mg_hist_9612"
+            assert kept.media["media_type"] == "album"
+            assert len(kept.media["images"]) == 2
+            assert child is not None and child.parent_id == 35449
+
+            tg_rx = (
+                await session.execute(
+                    select(CommentTgReaction).where(CommentTgReaction.comment_id == 35449)
+                )
+            ).scalars().all()
+            web_rx = (
+                await session.execute(
+                    select(CommentWebReaction).where(CommentWebReaction.comment_id == 35449)
+                )
+            ).scalars().all()
+            assert len(tg_rx) == 1 and tg_rx[0].reaction_key == "e:🔥"
+            assert len(web_rx) == 1 and web_rx[0].actor_key == "web:u1"
+
+        # Test real-time autoforward race cache when channel album flushes AFTER autoforward arrives
+        await service.handle_discussion_message(
+            SimpleNamespace(
+                id=88010,
+                chat=disc_chat,
+                is_automatic_forward=True,
+                forward_from_chat=ch_chat,
+                forward_from_message_id=7,
+                text="race post",
+                date=datetime(2026, 11, 21, 23, 55, 0, tzinfo=UTC),
+            )
+        )
+        assert (1, 7) in service._unlinked_autoforwards
+
+        # Even if not cached yet, on-demand discussion thread walk links missing root on reply
+        async with session_factory() as session:
+            session.add(
+                Post(
+                    id=101,
+                    channel_id=1,
+                    tg_msg_id=8,
+                    tg_all_msg_ids=[7, 8],
+                    tg_discussion_root_id=None,
+                    date=datetime(2026, 11, 21, 23, 55, 0, tzinfo=UTC),
+                    text_html="Race post",
+                )
+            )
+            await session.commit()
+
+        FakeUserClient.get_messages = lambda self_u, cid, ids: asyncio.sleep(  # type: ignore[method-assign]
+            0,
+            result=SimpleNamespace(
+                id=88010,
+                chat=disc_chat,
+                is_automatic_forward=True,
+                forward_from_chat=ch_chat,
+                forward_from_message_id=7,
+            ),
+        )
+        late_c = await service.handle_discussion_message(
+            SimpleNamespace(
+                id=88011,
+                chat=disc_chat,
+                from_user=sender,
+                reply_to_top_message_id=88010,
+                reply_to_message_id=88010,
+                text="Arrived before link!",
+                date=datetime(2026, 11, 21, 23, 55, 2, tzinfo=UTC),
+            )
+        )
+        assert late_c is not None and late_c.post_id == 101
+        async with session_factory() as session:
+            p101 = await session.get(Post, 101)
+            assert p101 is not None and p101.tg_discussion_root_id == 88010
+    finally:
+        await engine.dispose()
