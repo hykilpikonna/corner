@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.auth.security import SlidingWindowRateLimiter
 from app.config import Settings, get_settings
@@ -30,6 +32,57 @@ def _extract_origin(url: str) -> str | None:
     if parsed.scheme in ("http", "https") and parsed.netloc:
         return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
     return None
+
+
+class _CsrfOriginMiddleware:
+    """Pure-ASGI CSRF Origin / Sec-Fetch-Site guard (avoids BaseHTTPMiddleware FileResponse truncation)."""
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        allowed_origin_set: set[str],
+        cors_origin_set: set[str],
+        unsubscribe_path: str,
+        upload_prefix: str,
+    ) -> None:
+        self.app = app
+        self.allowed_origin_set = allowed_origin_set
+        self.cors_origin_set = cors_origin_set
+        self.unsubscribe_path = unsubscribe_path
+        self.upload_prefix = upload_prefix
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope.get("method") in _MUTATING_METHODS:
+            path = str(scope.get("path") or "")
+            is_exempt = path == self.unsubscribe_path or path.startswith(self.upload_prefix)
+            if not is_exempt:
+                headers = Headers(scope=scope)
+                raw_origin = headers.get("origin")
+                normalized_origin = raw_origin.strip().lower() if raw_origin else None
+                if (
+                    normalized_origin is not None
+                    and normalized_origin not in self.allowed_origin_set
+                ):
+                    resp = JSONResponse(
+                        {"detail": "Cross-origin request blocked"}, status_code=403
+                    )
+                    await resp(scope, receive, send)
+                    return
+
+                sec_fetch_site = headers.get("sec-fetch-site")
+                if sec_fetch_site and sec_fetch_site.strip().lower() == "cross-site":
+                    if (
+                        normalized_origin is None
+                        or normalized_origin not in self.cors_origin_set
+                    ):
+                        resp = JSONResponse(
+                            {"detail": "Cross-site request blocked"}, status_code=403
+                        )
+                        await resp(scope, receive, send)
+                        return
+
+        await self.app(scope, receive, send)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -126,33 +179,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     unsubscribe_path = f"{api_prefix}/auth/unsubscribe"
     upload_prefix = f"{api_prefix}/upload/"
 
-    @app.middleware("http")
-    async def csrf_origin_middleware(
-        request: Request,
-        call_next: Callable[[Request], Awaitable[Response]],
-    ) -> Response:
-        if request.method in _MUTATING_METHODS:
-            path = request.url.path
-            is_exempt = path == unsubscribe_path or path.startswith(upload_prefix)
-            if not is_exempt:
-                raw_origin = request.headers.get("origin")
-                normalized_origin = raw_origin.strip().lower() if raw_origin else None
-                if normalized_origin is not None:
-                    if normalized_origin not in allowed_origin_set:
-                        return JSONResponse(
-                            {"detail": "Cross-origin request blocked"},
-                            status_code=403,
-                        )
-
-                sec_fetch_site = request.headers.get("sec-fetch-site")
-                if sec_fetch_site and sec_fetch_site.strip().lower() == "cross-site":
-                    if normalized_origin is None or normalized_origin not in cors_origin_set:
-                        return JSONResponse(
-                            {"detail": "Cross-site request blocked"},
-                            status_code=403,
-                        )
-
-        return await call_next(request)
+    app.add_middleware(
+        _CsrfOriginMiddleware,
+        allowed_origin_set=allowed_origin_set,
+        cors_origin_set=cors_origin_set,
+        unsubscribe_path=unsubscribe_path,
+        upload_prefix=upload_prefix,
+    )
 
     if cfg.CORS_ORIGINS:
         app.add_middleware(
