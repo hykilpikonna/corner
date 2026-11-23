@@ -1611,3 +1611,97 @@ async def test_discussion_root_race_catchup_and_historical_album_merge(
             assert p101 is not None and p101.tg_discussion_root_id == 88010
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_channel_edit_race_and_album_prompts_originals_once(
+    test_settings: Settings,
+    db_session: AsyncSession,
+) -> None:
+    from app.db.models import OriginalUploadToken
+
+    engine, session_factory = create_engine_and_factory(test_settings)
+    png_bytes = _make_png_bytes((240, 180))
+    ch_id = -100777888
+    ch_chat = SimpleNamespace(id=ch_id, type="channel", title="Channel")
+    now = datetime.now(UTC)
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.sent_dms: list[str] = []
+
+        async def download_media(self, msg: Any, file_name: str, **_kw: Any) -> str:
+            await asyncio.sleep(0.01)
+            Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_name).write_bytes(png_bytes)
+            return file_name
+
+        async def send_message(self, chat_id: int, text: str, **_kw: Any) -> Any:
+            self.sent_dms.append(text)
+            return SimpleNamespace(id=500 + len(self.sent_dms))
+
+    fake_client = FakeClient()
+    prompt_settings = test_settings.model_copy(update={"OWNER_TG_ID": 987654})
+    app, _ = await _setup_app_and_client(prompt_settings, db_session)
+    service = TelegramService(
+        session_factory=session_factory,
+        settings=prompt_settings,
+        sse_publish=app.state.sse_publish,
+        client=fake_client,
+        album_debounce_seconds=0.05,
+        album_max_wait_seconds=0.2,
+    )
+    try:
+        await ensure_channel(
+            db_session,
+            channel_id=1,
+            status="active",
+            id_offset=0,
+            tg_chat_id=ch_id,
+        )
+        await db_session.commit()
+
+        m1 = SimpleNamespace(
+            id=8,
+            chat=ch_chat,
+            media_group_id="mg_race_9616",
+            photo=SimpleNamespace(file_id="p8", width=240, height=180),
+            date=now,
+        )
+        m2 = SimpleNamespace(
+            id=9,
+            chat=ch_chat,
+            media_group_id="mg_race_9616",
+            photo=SimpleNamespace(file_id="p9", width=240, height=180),
+            date=now,
+        )
+
+        # Simulate EditedMessage arriving concurrently with album ingestion creating the post with is_edit=True first
+        await asyncio.gather(
+            service.handle_channel_edit(m1),
+            service._ingest_channel_messages([m1, m2], is_edit=False),
+        )
+
+        # Should prompt OWNER_TG_ID exactly once even though edit arrived first
+        assert len(fake_client.sent_dms) == 1
+        assert "Post #" in fake_client.sent_dms[0]
+
+        # Subsequent caption edit on the same post does NOT send duplicate prompts
+        await service.handle_channel_edit(
+            SimpleNamespace(
+                id=8,
+                chat=ch_chat,
+                media_group_id="mg_race_9616",
+                caption="Edited caption",
+                photo=SimpleNamespace(file_id="p8", width=240, height=180),
+                date=now,
+                edit_date=now,
+            )
+        )
+        assert len(fake_client.sent_dms) == 1
+
+        async with session_factory() as session:
+            tokens = (await session.execute(select(OriginalUploadToken))).scalars().all()
+            assert len(tokens) == 1
+    finally:
+        await engine.dispose()

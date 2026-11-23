@@ -591,6 +591,7 @@ class TelegramService:
         self._emoji_meta_task: asyncio.Task[Any] | None = None
         self._crawl_task: asyncio.Task[Any] | None = None
         self._unlinked_autoforwards: dict[tuple[int, int], int] = {}
+        self._channel_ingest_locks: dict[int | str, asyncio.Lock] = {}
 
         self.album_buffer = AlbumBuffer(
             on_flush=self._on_album_flushed,
@@ -1423,14 +1424,20 @@ class TelegramService:
             photo = getattr(msg, "photo", None)
             if photo is not None and not (skip_photo_msg_ids and msg_id in skip_photo_msg_ids):
                 dest_path = media_dir / f"{msg_id}.jpg"
+                tmp_dest = media_dir / f".dl_{msg_id}_{uuid.uuid4().hex[:8]}.jpg"
                 downloaded_path: Path | None = None
                 if self.client is not None and hasattr(self.client, "download_media"):
                     try:
-                        dl = await self.client.download_media(msg, file_name=str(dest_path))
+                        dl = await self.client.download_media(msg, file_name=str(tmp_dest))
                         if dl:
-                            downloaded_path = Path(str(dl))
+                            dl_path = Path(str(dl))
+                            if dl_path.is_file():
+                                os.replace(dl_path, dest_path)
+                                downloaded_path = dest_path
                     except Exception:
                         logger.exception("Failed to download photo for msg %s", msg_id)
+                    finally:
+                        tmp_dest.unlink(missing_ok=True)
 
                 width = int(getattr(photo, "width", 0) or 0)
                 height = int(getattr(photo, "height", 0) or 0)
@@ -1673,6 +1680,26 @@ class TelegramService:
             return []
 
         first_chat_id = getattr(getattr(msgs[0], "chat", None), "id", None)
+        lock_key: int | str = int(first_chat_id) if first_chat_id is not None else "active"
+        ingest_lock = self._channel_ingest_locks.setdefault(lock_key, asyncio.Lock())
+        async with ingest_lock:
+            return await self._ingest_channel_messages_locked(
+                msgs,
+                first_chat_id=first_chat_id,
+                is_edit=is_edit,
+                trigger_prompt=trigger_prompt,
+                preserve_existing_images=preserve_existing_images,
+            )
+
+    async def _ingest_channel_messages_locked(
+        self,
+        msgs: list[Any],
+        *,
+        first_chat_id: int | None,
+        is_edit: bool = False,
+        trigger_prompt: bool = True,
+        preserve_existing_images: bool = False,
+    ) -> list[Post]:
         async with self.session_factory() as session:
             channel = await self._resolve_channel_for_chat(session, first_chat_id)
             if channel is None:
@@ -2028,8 +2055,22 @@ class TelegramService:
                     event_name,
                     serialize_post(refreshed, api_prefix=self.settings.API_PREFIX),
                 )
-                if was_new and not is_edit and trigger_prompt and refreshed.images:
-                    await self.bridge.prompt_original_photos(refreshed.id)
+                if trigger_prompt and refreshed.images and (
+                    was_new
+                    or (
+                        not is_edit
+                        and (refreshed.date is None or refreshed.date >= datetime.now(UTC) - timedelta(hours=1))
+                    )
+                ):
+                    has_token = (
+                        await session.execute(
+                            select(OriginalUploadToken.token_hash)
+                            .where(OriginalUploadToken.post_id == refreshed.id)
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if has_token is None and any(not img.original_url for img in refreshed.images):
+                        await self.bridge.prompt_original_photos(refreshed.id)
 
             return refreshed_posts
 
