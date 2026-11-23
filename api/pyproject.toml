@@ -21,6 +21,7 @@ dependencies = [
     "kurigram>=2.1.0",
     "authlib>=1.3.2",
     "python-dateutil>=2.9.0",
+    "pillow-heif>=0.18.0",
 ]
 
 [project.optional-dependencies]

@@ -429,8 +429,8 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
 
   <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Drop original photos here">
     <p><strong>Drop original photos here</strong> or click to browse</p>
-    <p style="font-size:0.85rem;opacity:0.75;">Supports JPEG, PNG, WebP, TIFF. GPS EXIF/XMP is stripped automatically.</p>
-    <input type="file" id="file-input" multiple accept="image/*" style="display:none;" />
+    <p style="font-size:0.85rem;opacity:0.75;">Supports JPEG, PNG, WebP, TIFF, HEIC/HEIF. GPS EXIF/XMP is stripped automatically.</p>
+    <input type="file" id="file-input" multiple accept="image/*,.heic,.heif" style="display:none;" />
   </div>
 
   <div class="progress-wrap" id="progress-wrap">

@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pillow_heif
 from PIL import Image, ImageOps
 from scipy.fft import dctn
+
+pillow_heif.register_heif_opener()
 
 
 def compute_image_fingerprint(image_path: Path) -> tuple[str, bytes, int, int]:

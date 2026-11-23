@@ -232,6 +232,52 @@ def test_validate_and_strip_gps_exif_and_webp_xmp(tmp_path: Path) -> None:
     with Image.open(media_root / artifacts.thumb_rel_url) as thumb_im:
         assert max(thumb_im.size) <= 1000
 
+    # HEIC/HEIF upload validation, GPS stripping, original upgrade, and comment image conversion
+    heic_buf = io.BytesIO()
+    heic_exif = big.getexif()
+    heic_exif[271] = "Apple"
+    heic_gps = heic_exif.get_ifd(ExifTags.IFD.GPSInfo)
+    heic_gps[1] = "N"
+    heic_gps[2] = (43.0, 40.0, 0.0)
+    big.save(heic_buf, "HEIF", quality=90, exif=heic_exif.tobytes())
+    heic_raw = heic_buf.getvalue()
+
+    heic_info = validate_image_bytes(heic_raw)
+    assert heic_info.format == "HEIF"
+    assert heic_info.extension == ".heic"
+
+    cleaned_heic, heic_stripped, heic_ext = strip_gps_from_image_bytes(heic_raw)
+    assert heic_stripped is True
+    assert heic_ext == ".heic"
+    with Image.open(io.BytesIO(cleaned_heic)) as him:
+        assert him.format == "HEIF"
+        assert int(ExifTags.IFD.GPSInfo) not in him.getexif()
+        assert him.getexif().get(271) == "Apple"
+
+    heic_src = tmp_path / "IMG_1234.HEIC"
+    heic_src.write_bytes(heic_raw)
+    heic_artifacts = process_original_upgrade(
+        source_path=heic_src,
+        original_filename="IMG_1234.HEIC",
+        media_root=media_root,
+        epoch_id=2,
+        post_id=9616,
+        sort_order=0,
+        strip_gps_exif=True,
+    )
+    assert heic_artifacts.gps_stripped is True
+    assert heic_artifacts.original_rel_url.endswith(".heic")
+    assert (media_root / heic_artifacts.original_rel_url).is_file()
+    assert (media_root / heic_artifacts.display_rel_url).is_file()
+    assert (media_root / heic_artifacts.thumb_rel_url).is_file()
+
+    from app.media.optimize import process_comment_image_upload
+
+    comment_heic = process_comment_image_upload(heic_raw, media_root)
+    assert comment_heic["media_type"] == "photo"
+    assert comment_heic["mime_type"] == "image/webp"
+    assert (media_root / comment_heic["url"]).is_file()
+
 
 # ---------------------------------------------------------------------------
 # 2. Visual Similarity Matcher Unit Tests (Hungarian + Burst Ambiguity)

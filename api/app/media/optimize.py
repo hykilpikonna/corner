@@ -10,9 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pillow_heif
 from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from app.media.fingerprint import compute_image_fingerprint
+
+pillow_heif.register_heif_opener()
 
 # Protect against decompression bombs (~80 MP max by default).
 # Set once at module import time so concurrent asyncio.to_thread calls never mutate global state.
@@ -21,7 +24,9 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MiB
 Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 # Only allow raster formats Pillow can validate and round-trip cleanly
-ALLOWED_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "PNG", "WEBP", "TIFF", "MPO"})
+ALLOWED_IMAGE_FORMATS: frozenset[str] = frozenset(
+    {"JPEG", "PNG", "WEBP", "TIFF", "MPO", "HEIF"}
+)
 
 FORMAT_TO_EXT: dict[str, str] = {
     "JPEG": ".jpg",
@@ -29,6 +34,7 @@ FORMAT_TO_EXT: dict[str, str] = {
     "PNG": ".png",
     "WEBP": ".webp",
     "TIFF": ".tiff",
+    "HEIF": ".heic",
 }
 
 # EXIF GPSInfo IFD tag (0x8825 = 34853) and Orientation tag (0x0112 = 274)
@@ -281,6 +287,9 @@ def strip_gps_from_image_bytes(
         if fmt == "TIFF":
             im.save(buf, "TIFF", **save_kwargs)
             return buf.getvalue(), True, ".tiff"
+        if fmt == "HEIF":
+            im.save(buf, "HEIF", quality=95, **save_kwargs)
+            return buf.getvalue(), True, ".heic"
 
         raise InvalidImageError(f"Unsupported image format: {fmt}")
 
@@ -404,13 +413,14 @@ def process_original_upgrade(
 
 MAX_COMMENT_MEDIA_BYTES = 10 * 1024 * 1024  # 10 MiB
 MAX_ANIMATED_FRAMES = 300
-_COMMENT_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "MPO", "PNG", "WEBP", "GIF"})
+_COMMENT_IMAGE_FORMATS: frozenset[str] = frozenset({"JPEG", "MPO", "PNG", "WEBP", "GIF", "HEIF"})
 _COMMENT_FORMAT_META: dict[str, tuple[str, str]] = {
     "JPEG": (".jpg", "image/jpeg"),
     "MPO": (".jpg", "image/jpeg"),
     "PNG": (".png", "image/png"),
     "WEBP": (".webp", "image/webp"),
     "GIF": (".gif", "image/gif"),
+    "HEIF": (".webp", "image/webp"),
 }
 
 
@@ -475,7 +485,7 @@ def process_comment_image_upload(
                 icc_profile = oriented.info.get("icc_profile")
                 if fmt in ("JPEG", "MPO") and oriented.mode not in ("RGB", "L"):
                     oriented = oriented.convert("RGB")
-                elif fmt == "WEBP" and oriented.mode not in ("RGB", "RGBA"):
+                elif fmt in ("WEBP", "HEIF") and oriented.mode not in ("RGB", "RGBA"):
                     oriented = oriented.convert(
                         "RGBA" if ("A" in oriented.mode or oriented.mode == "P") else "RGB"
                     )
