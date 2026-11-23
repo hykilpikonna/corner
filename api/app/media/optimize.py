@@ -4,8 +4,10 @@ import hashlib
 import io
 import os
 import re
+import struct
 import tempfile
 import uuid
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,29 @@ _XMP_GPS_RE = re.compile(
     rb"GPS(?:Latitude|Longitude|Altitude|Position|DestLatitude|DestLongitude|ImgDirection)",
     re.IGNORECASE,
 )
+_XMP_GPS_ATTR_RE = re.compile(
+    rb'(?<=\s)[A-Za-z0-9_]+:GPS[A-Za-z0-9_]*\s*=\s*(?:"[^"]*"|\'[^\']*\')',
+    re.IGNORECASE,
+)
+_XMP_GPS_ELEM_RE = re.compile(
+    rb"<([A-Za-z0-9_]+:GPS[A-Za-z0-9_]*)\b[^>]*>.*?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+_TIFF_TYPE_SIZES: dict[int, int] = {
+    1: 1,   # BYTE
+    2: 1,   # ASCII
+    3: 2,   # SHORT
+    4: 4,   # LONG
+    5: 8,   # RATIONAL
+    6: 1,   # SBYTE
+    7: 1,   # UNDEFINED
+    8: 2,   # SSHORT
+    9: 4,   # SLONG
+    10: 8,  # SRATIONAL
+    11: 4,  # FLOAT
+    12: 8,  # DOUBLE
+    13: 4,  # IFD
+}
 
 
 class InvalidImageError(ValueError):
@@ -238,10 +263,394 @@ def validate_image_file(
     )
 
 
+def _scrub_xmp_gps_in_place(buf: bytearray, start: int, end: int) -> bool:
+    """Replace XMP GPS attributes/elements with equal-length ASCII spaces to keep offsets intact."""
+    if start < 0 or end > len(buf) or start >= end:
+        return False
+    segment = bytes(buf[start:end])
+    changed = False
+    for pattern in (_XMP_GPS_ELEM_RE, _XMP_GPS_ATTR_RE):
+        for match in pattern.finditer(segment):
+            m_start = start + match.start()
+            m_end = start + match.end()
+            buf[m_start:m_end] = b" " * (m_end - m_start)
+            changed = True
+    if changed:
+        segment = bytes(buf[start:end])
+    # Catch any leftover attribute/element naming variants if still matched
+    return changed and not _XMP_GPS_RE.search(segment)
+
+
+def _scrub_tiff_gps_in_place(
+    buf: bytearray,
+    tiff_start: int,
+    tiff_end: int,
+    *,
+    scrub_xmp_tag: bool = False,
+) -> bool:
+    """Losslessly remove EXIF GPSInfo IFD (0x8825) inside a TIFF payload without changing its size."""
+    if tiff_start < 0 or tiff_end > len(buf) or (tiff_end - tiff_start) < 8:
+        return False
+
+    order = bytes(buf[tiff_start : tiff_start + 2])
+    endian = "<" if order == b"II" else (">" if order == b"MM" else "")
+    if not endian:
+        return False
+
+    magic, ifd0_rel = struct.unpack_from(endian + "HI", buf, tiff_start + 2)
+    if magic != 42:
+        return False
+
+    ifd0_abs = tiff_start + ifd0_rel
+    if ifd0_abs < tiff_start + 8 or ifd0_abs + 2 > tiff_end:
+        return False
+
+    entry_count = struct.unpack_from(endian + "H", buf, ifd0_abs)[0]
+    entries_start = ifd0_abs + 2
+    entries_end = entries_start + entry_count * 12
+    if entries_end + 4 > tiff_end:
+        return False
+
+    changed = False
+    if scrub_xmp_tag:
+        for i in range(entry_count):
+            e_off = entries_start + i * 12
+            tag, typ, cnt = struct.unpack_from(endian + "HHI", buf, e_off)
+            if tag == 700 and typ in (1, 2, 7) and cnt > 4:
+                xmp_rel = struct.unpack_from(endian + "I", buf, e_off + 8)[0]
+                xmp_abs = tiff_start + xmp_rel
+                if tiff_start <= xmp_abs and xmp_abs + cnt <= tiff_end:
+                    if _scrub_xmp_gps_in_place(buf, xmp_abs, xmp_abs + cnt):
+                        changed = True
+
+    gps_idx: int | None = None
+    gps_rel = 0
+    for i in range(entry_count):
+        e_off = entries_start + i * 12
+        tag, typ, cnt = struct.unpack_from(endian + "HHI", buf, e_off)
+        if tag == _GPS_IFD_TAG:
+            gps_idx = i
+            if typ in (4, 13) and cnt == 1:
+                gps_rel = struct.unpack_from(endian + "I", buf, e_off + 8)[0]
+            break
+
+    if gps_idx is None:
+        return changed
+
+    if gps_rel:
+        gps_abs = tiff_start + gps_rel
+        if tiff_start + 8 <= gps_abs and gps_abs + 2 <= tiff_end:
+            gps_count = struct.unpack_from(endian + "H", buf, gps_abs)[0]
+            gps_entries_end = gps_abs + 2 + gps_count * 12
+            if gps_entries_end <= tiff_end:
+                for k in range(gps_count):
+                    ge_off = gps_abs + 2 + k * 12
+                    _, g_typ, g_cnt = struct.unpack_from(endian + "HHI", buf, ge_off)
+                    byte_len = _TIFF_TYPE_SIZES.get(g_typ, 0) * g_cnt
+                    if byte_len > 4:
+                        v_rel = struct.unpack_from(endian + "I", buf, ge_off + 8)[0]
+                        v_abs = tiff_start + v_rel
+                        if tiff_start <= v_abs and v_abs + byte_len <= tiff_end:
+                            buf[v_abs : v_abs + byte_len] = b"\x00" * byte_len
+                zero_end = min(tiff_end, gps_entries_end + 4)
+                buf[gps_abs:zero_end] = b"\x00" * (zero_end - gps_abs)
+
+    # Shift trailing IFD0 entries + next_ifd_offset left by 12 bytes and decrement count
+    struct.pack_into(endian + "H", buf, ifd0_abs, entry_count - 1)
+    remove_off = entries_start + gps_idx * 12
+    tail_end = entries_end + 4
+    buf[remove_off : tail_end - 12] = buf[remove_off + 12 : tail_end]
+    buf[tail_end - 12 : tail_end] = b"\x00" * 12
+    return True
+
+
+def _iter_isobmff_boxes(
+    buf: bytes | bytearray,
+    start: int,
+    end: int,
+) -> list[tuple[bytes, int, int]]:
+    boxes: list[tuple[bytes, int, int]] = []
+    pos = start
+    while pos + 8 <= end:
+        sz, typ = struct.unpack_from(">I4s", buf, pos)
+        hdr = 8
+        if sz == 1:
+            if pos + 16 > end:
+                break
+            sz = struct.unpack_from(">Q", buf, pos + 8)[0]
+            hdr = 16
+        elif sz == 0:
+            sz = end - pos
+        if sz < hdr or pos + sz > end:
+            break
+        boxes.append((typ, pos + hdr, pos + sz))
+        pos += sz
+    return boxes
+
+
+def _read_be_uint(buf: bytes | bytearray, offset: int, nbytes: int) -> int:
+    val = 0
+    for b in buf[offset : offset + nbytes]:
+        val = (val << 8) | b
+    return val
+
+
+def _strip_jpeg_gps_losslessly(buf: bytearray) -> bool:
+    if len(buf) < 4 or buf[:2] != b"\xff\xd8":
+        return False
+    pos = 2
+    changed = False
+    n = len(buf)
+    while pos + 2 <= n:
+        while pos < n and buf[pos] == 0xFF:
+            pos += 1
+        if pos >= n:
+            break
+        marker = buf[pos]
+        pos += 1
+        if marker in (0xD8, 0xD9, 0x01) or (0xD0 <= marker <= 0xD7):
+            if marker == 0xD9:
+                break
+            continue
+        if marker == 0xDA:  # Start of Scan (compressed bitstream starts here)
+            break
+        if pos + 2 > n:
+            break
+        seg_len = struct.unpack_from(">H", buf, pos)[0]
+        if seg_len < 2 or pos + seg_len > n:
+            break
+        seg_start = pos + 2
+        seg_end = pos + seg_len
+        if marker == 0xE1:
+            if buf[seg_start : seg_start + 6] == b"Exif\x00\x00":
+                if _scrub_tiff_gps_in_place(buf, seg_start + 6, seg_end):
+                    changed = True
+            elif _XMP_GPS_RE.search(buf[seg_start:seg_end]):
+                if _scrub_xmp_gps_in_place(buf, seg_start, seg_end):
+                    changed = True
+        pos = seg_end
+    return changed
+
+
+def _strip_heif_gps_losslessly(buf: bytearray) -> bool:
+    top_boxes = _iter_isobmff_boxes(buf, 0, len(buf))
+    meta_range: tuple[int, int] | None = None
+    for typ, h_end, b_end in top_boxes:
+        if typ == b"meta":
+            meta_range = (h_end + 4, b_end)
+            break
+    if meta_range is None or meta_range[0] > meta_range[1]:
+        return False
+
+    item_types: dict[int, tuple[bytes, bytes]] = {}
+    item_locs: dict[int, tuple[int, int, list[tuple[int, int]]]] = {}
+    idat_payload_start: int | None = None
+
+    for c_typ, c_start, c_end in _iter_isobmff_boxes(buf, meta_range[0], meta_range[1]):
+        if c_typ == b"idat":
+            idat_payload_start = c_start
+        elif c_typ == b"iinf" and c_start + 4 <= c_end:
+            iinf_ver = buf[c_start]
+            cnt_off = c_start + 4
+            if iinf_ver == 0:
+                if cnt_off + 2 > c_end:
+                    continue
+                cnt = struct.unpack_from(">H", buf, cnt_off)[0]
+                cursor = cnt_off + 2
+            else:
+                if cnt_off + 4 > c_end:
+                    continue
+                cnt = struct.unpack_from(">I", buf, cnt_off)[0]
+                cursor = cnt_off + 4
+            for b_typ, b_start, b_end2 in _iter_isobmff_boxes(buf, cursor, c_end)[:cnt]:
+                if b_typ != b"infe" or b_start + 8 > b_end2:
+                    continue
+                infe_ver = buf[b_start]
+                if infe_ver == 2 and b_start + 12 <= b_end2:
+                    item_id, _ = struct.unpack_from(">HH", buf, b_start + 4)
+                    itype = bytes(buf[b_start + 8 : b_start + 12])
+                    rest = bytes(buf[b_start + 12 : b_end2])
+                elif infe_ver == 3 and b_start + 14 <= b_end2:
+                    item_id, _ = struct.unpack_from(">IH", buf, b_start + 4)
+                    itype = bytes(buf[b_start + 8 : b_start + 12])
+                    rest = bytes(buf[b_start + 14 : b_end2])
+                else:
+                    continue
+                parts = rest.split(b"\x00", 2)
+                ctype = parts[1] if len(parts) > 1 else b""
+                item_types[item_id] = (itype, ctype)
+        elif c_typ == b"iloc" and c_start + 6 <= c_end:
+            iloc_ver = buf[c_start]
+            b0 = buf[c_start + 4]
+            b1 = buf[c_start + 5]
+            off_sz = (b0 >> 4) & 0x0F
+            len_sz = b0 & 0x0F
+            base_sz = (b1 >> 4) & 0x0F
+            idx_sz = (b1 & 0x0F) if iloc_ver in (1, 2) else 0
+            p = c_start + 6
+            if iloc_ver < 2:
+                if p + 2 > c_end:
+                    continue
+                item_cnt = struct.unpack_from(">H", buf, p)[0]
+                p += 2
+            else:
+                if p + 4 > c_end:
+                    continue
+                item_cnt = struct.unpack_from(">I", buf, p)[0]
+                p += 4
+            for _ in range(item_cnt):
+                id_sz = 2 if iloc_ver < 2 else 4
+                if p + id_sz > c_end:
+                    break
+                item_id = _read_be_uint(buf, p, id_sz)
+                p += id_sz
+                cm = 0
+                if iloc_ver in (1, 2):
+                    if p + 2 > c_end:
+                        break
+                    cm = struct.unpack_from(">H", buf, p)[0] & 0x0F
+                    p += 2
+                if p + 2 + base_sz + 2 > c_end:
+                    break
+                p += 2  # data_reference_index
+                base_off = _read_be_uint(buf, p, base_sz)
+                p += base_sz
+                ext_cnt = struct.unpack_from(">H", buf, p)[0]
+                p += 2
+                extents: list[tuple[int, int]] = []
+                for _ in range(ext_cnt):
+                    need = idx_sz + off_sz + len_sz
+                    if p + need > c_end:
+                        p = c_end
+                        break
+                    p += idx_sz
+                    e_off = _read_be_uint(buf, p, off_sz)
+                    p += off_sz
+                    e_len = _read_be_uint(buf, p, len_sz)
+                    p += len_sz
+                    extents.append((e_off, e_len))
+                item_locs[item_id] = (cm, base_off, extents)
+
+    changed = False
+    for item_id, (itype, ctype) in item_types.items():
+        loc = item_locs.get(item_id)
+        if loc is None:
+            continue
+        cm, base_off, extents = loc
+        if cm not in (0, 1):
+            continue
+        origin = idat_payload_start if cm == 1 else 0
+        if origin is None:
+            continue
+
+        if itype == b"Exif" and len(extents) == 1:
+            e_off, e_len = extents[0]
+            start = origin + base_off + e_off
+            end = start + e_len
+            if start >= 0 and end <= len(buf) and (end - start) >= 12:
+                tiff_hdr_off = struct.unpack_from(">I", buf, start)[0]
+                tiff_start = start + 4 + tiff_hdr_off
+                if _scrub_tiff_gps_in_place(buf, tiff_start, end):
+                    changed = True
+        elif itype == b"mime" and (
+            b"rdf+xml" in ctype.lower() or b"xmp" in ctype.lower() or b"xml" in ctype.lower()
+        ):
+            for e_off, e_len in extents:
+                start = origin + base_off + e_off
+                end = start + e_len
+                if start >= 0 and end <= len(buf):
+                    if _scrub_xmp_gps_in_place(buf, start, end):
+                        changed = True
+    return changed
+
+
+def _strip_webp_gps_losslessly(buf: bytearray) -> bool:
+    if len(buf) < 12 or buf[:4] != b"RIFF" or buf[8:12] != b"WEBP":
+        return False
+    pos = 12
+    n = len(buf)
+    changed = False
+    while pos + 8 <= n:
+        fourcc = bytes(buf[pos : pos + 4])
+        c_len = struct.unpack_from("<I", buf, pos + 4)[0]
+        c_start = pos + 8
+        c_end = c_start + c_len
+        if c_end > n:
+            break
+        if fourcc == b"EXIF":
+            t_start = c_start + 6 if buf[c_start : c_start + 6] == b"Exif\x00\x00" else c_start
+            if _scrub_tiff_gps_in_place(buf, t_start, c_end):
+                changed = True
+        elif fourcc == b"XMP ":
+            if _scrub_xmp_gps_in_place(buf, c_start, c_end):
+                changed = True
+        pos = c_end + (c_len & 1)
+    return changed
+
+
+def _strip_png_gps_losslessly(buf: bytearray) -> bool:
+    if len(buf) < 8 or buf[:8] != b"\x89PNG\r\n\x1a\n":
+        return False
+    pos = 8
+    n = len(buf)
+    changed = False
+    while pos + 12 <= n:
+        c_len = struct.unpack_from(">I", buf, pos)[0]
+        c_type = bytes(buf[pos + 4 : pos + 8])
+        c_start = pos + 8
+        c_end = c_start + c_len
+        if c_end + 4 > n:
+            break
+        chunk_changed = False
+        if c_type == b"eXIf":
+            chunk_changed = _scrub_tiff_gps_in_place(buf, c_start, c_end)
+        elif c_type in (b"tEXt", b"iTXt") and _XMP_GPS_RE.search(buf[c_start:c_end]):
+            chunk_changed = _scrub_xmp_gps_in_place(buf, c_start, c_end)
+        if chunk_changed:
+            crc = zlib.crc32(buf[pos + 4 : c_end]) & 0xFFFFFFFF
+            struct.pack_into(">I", buf, c_end, crc)
+            changed = True
+        if c_type == b"IEND":
+            break
+        pos = c_end + 4
+    return changed
+
+
+def _strip_gps_losslessly(data: bytes, fmt: str) -> bytes | None:
+    """Attempt container-level GPS EXIF/XMP removal without decoding or re-encoding pixels."""
+    buf = bytearray(data)
+    if fmt in ("JPEG", "MPO"):
+        ok = _strip_jpeg_gps_losslessly(buf)
+    elif fmt == "HEIF":
+        ok = _strip_heif_gps_losslessly(buf)
+    elif fmt == "WEBP":
+        ok = _strip_webp_gps_losslessly(buf)
+    elif fmt == "PNG":
+        ok = _strip_png_gps_losslessly(buf)
+    elif fmt == "TIFF":
+        ok = _scrub_tiff_gps_in_place(buf, 0, len(buf), scrub_xmp_tag=True)
+    else:
+        return None
+
+    if not ok:
+        return None
+
+    candidate = bytes(buf)
+    try:
+        with Image.open(io.BytesIO(candidate)) as check_im:
+            if _GPS_IFD_TAG in check_im.getexif() or _has_xmp_gps(check_im, candidate):
+                return None
+    except Exception:
+        return None
+    return candidate
+
+
 def strip_gps_from_image_bytes(
     data: bytes,
 ) -> tuple[bytes, bool, str]:
     """Strip EXIF GPSInfo IFD and XMP GPS metadata while preserving camera EXIF and ICC profile.
+
+    Prefers container-level lossless metadata scrubbing so image bitstreams are never re-encoded.
 
     Returns:
         (output_bytes, gps_stripped, output_extension)
@@ -260,6 +669,10 @@ def strip_gps_from_image_bytes(
 
         if not has_exif_gps and not has_xmp_gps:
             return data, False, out_ext
+
+        lossless = _strip_gps_losslessly(data, fmt)
+        if lossless is not None:
+            return lossless, True, out_ext
 
         if has_exif_gps:
             del exif[_GPS_IFD_TAG]
@@ -338,7 +751,7 @@ def generate_display_and_thumb(
     *,
     display_max_size: tuple[int, int] = (2048, 2048),
     thumb_max_size: tuple[int, int] = (1000, 1000),
-    display_quality: int = 88,
+    display_quality: int = 94,
     thumb_quality: int = 80,
 ) -> tuple[int, int, int]:
     """Generate crisp 2048px WebP display image and 1000px WebP thumbnail atomically.

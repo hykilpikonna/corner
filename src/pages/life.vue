@@ -140,10 +140,8 @@ const lifeMessages: TgBlogMessages = {
     authClose: '关闭',
 
     // Original Photo Viewer
-    viewOriginal: '查看原图',
-    viewOriginalWithSize: (size) => `查看原图 (${size})`,
-    loadingOriginal: '原图加载中...',
-    viewingOriginal: '正在查看原图',
+    downloadOriginal: '下载原图',
+    downloadOriginalWithSize: (size) => `下载原图 (${size})`,
 }
 
 useHead(() => {

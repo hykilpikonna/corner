@@ -154,19 +154,21 @@ def test_validate_and_strip_gps_exif_and_webp_xmp(tmp_path: Path) -> None:
     rot_info = validate_image_bytes(buf_rot.getvalue())
     assert (rot_info.width, rot_info.height) == (100, 160)
 
-    # Strip JPEG GPS EXIF while keeping Make/Model intact
+    # Strip JPEG GPS EXIF while keeping Make/Model intact and pixels bit-for-bit un-recompressed
     with_gps = _save_jpeg_bytes(big, quality=95, add_gps=True)
     cleaned, stripped, out_ext = strip_gps_from_image_bytes(with_gps)
     assert stripped is True
     assert out_ext == ".jpg"
+    assert len(cleaned) == len(with_gps)
 
-    with Image.open(io.BytesIO(cleaned)) as im:
+    with Image.open(io.BytesIO(cleaned)) as im, Image.open(io.BytesIO(with_gps)) as orig_im:
         exif = im.getexif()
         assert int(ExifTags.IFD.GPSInfo) not in exif
         assert exif.get(271) == "Fujifilm"
         assert exif.get(272) == "X-T5"
+        assert im.tobytes() == orig_im.tobytes()
 
-    # Strip WebP XMP GPS + EXIF GPS while preserving camera EXIF and ICC profile (M5 regression)
+    # Strip WebP XMP GPS + EXIF GPS losslessly while preserving camera EXIF and ICC profile
     webp_buf = io.BytesIO()
     webp_exif = big.getexif()
     webp_exif[271] = "Leica"
@@ -194,12 +196,12 @@ def test_validate_and_strip_gps_exif_and_webp_xmp(tmp_path: Path) -> None:
     assert webp_ext == ".webp"
     assert b"GPSLatitude" not in cleaned_webp
     assert b"GPSLongitude" not in cleaned_webp
-    with Image.open(io.BytesIO(cleaned_webp)) as wim:
+    with Image.open(io.BytesIO(cleaned_webp)) as wim, Image.open(webp_buf) as orig_wim:
         assert wim.format == "WEBP"
         assert int(ExifTags.IFD.GPSInfo) not in wim.getexif()
         assert wim.getexif().get(271) == "Leica"
-        assert "xmp" not in wim.info
         assert wim.info.get("icc_profile") == fake_icc
+        assert wim.tobytes() == orig_wim.tobytes()
 
     # Non-GPS image is preserved verbatim without recompression
     no_gps = _save_jpeg_bytes(big, quality=95, add_gps=False)
@@ -249,10 +251,12 @@ def test_validate_and_strip_gps_exif_and_webp_xmp(tmp_path: Path) -> None:
     cleaned_heic, heic_stripped, heic_ext = strip_gps_from_image_bytes(heic_raw)
     assert heic_stripped is True
     assert heic_ext == ".heic"
-    with Image.open(io.BytesIO(cleaned_heic)) as him:
+    assert len(cleaned_heic) == len(heic_raw)
+    with Image.open(io.BytesIO(cleaned_heic)) as him, Image.open(io.BytesIO(heic_raw)) as orig_him:
         assert him.format == "HEIF"
         assert int(ExifTags.IFD.GPSInfo) not in him.getexif()
         assert him.getexif().get(271) == "Apple"
+        assert him.tobytes() == orig_him.tobytes()
 
     heic_src = tmp_path / "IMG_1234.HEIC"
     heic_src.write_bytes(heic_raw)
