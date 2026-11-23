@@ -1266,20 +1266,27 @@ class TelegramService:
         if not file_id:
             return None
         raw_thumb_dest = media_dir / f"{msg_id}_thumb_raw.jpg"
+        webp_existing = media_dir / f"{msg_id}_thumb_raw_thumb.webp"
+        if webp_existing.is_file() and webp_existing.stat().st_size > 0:
+            return f"{url_prefix}/media/{webp_existing.name}"
+        tmp_thumb = media_dir / f".dl_{msg_id}_thumb_{uuid.uuid4().hex[:8]}.jpg"
         try:
-            dl = await self.client.download_media(file_id, file_name=str(raw_thumb_dest))
+            dl = await self.client.download_media(file_id, file_name=str(tmp_thumb))
             if not dl:
                 return None
             dl_path = Path(str(dl))
             if not dl_path.is_file():
                 return None
-            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, dl_path)
+            os.replace(dl_path, raw_thumb_dest)
+            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, raw_thumb_dest)
             if webp_p is not None and webp_p.is_file():
                 return f"{url_prefix}/media/{webp_p.name}"
-            return f"{url_prefix}/media/{dl_path.name}"
+            return f"{url_prefix}/media/{raw_thumb_dest.name}"
         except Exception:
             logger.debug("Could not download thumbnail for msg %s", msg_id, exc_info=True)
             return None
+        finally:
+            tmp_thumb.unlink(missing_ok=True)
 
     async def _extract_fallback_file_attachment(
         self,
@@ -1305,14 +1312,25 @@ class TelegramService:
 
             ext = self._infer_fallback_media_ext(attr_name, media_obj, default_ext)
             dest_path = media_dir / f"{msg_id}{ext}"
+            expected_size = getattr(media_obj, "file_size", None)
             downloaded_path: Path | None = None
-            if self.client is not None and hasattr(self.client, "download_media"):
+            if dest_path.is_file() and (
+                expected_size is None or dest_path.stat().st_size == int(expected_size)
+            ):
+                downloaded_path = dest_path
+            elif self.client is not None and hasattr(self.client, "download_media"):
+                tmp_dest = media_dir / f".dl_{msg_id}_{uuid.uuid4().hex[:8]}{ext}"
                 try:
-                    dl = await self.client.download_media(msg, file_name=str(dest_path))
+                    dl = await self.client.download_media(msg, file_name=str(tmp_dest))
                     if dl:
-                        downloaded_path = Path(str(dl))
+                        dl_path = Path(str(dl))
+                        if dl_path.is_file():
+                            os.replace(dl_path, dest_path)
+                            downloaded_path = dest_path
                 except Exception:
                     logger.exception("Failed to download %s for msg %s", attr_name, msg_id)
+                finally:
+                    tmp_dest.unlink(missing_ok=True)
 
             effective_name = (
                 downloaded_path.name
@@ -1959,6 +1977,58 @@ class TelegramService:
                             linked_disc_root_id = int(cached_root)
                             break
 
+                files_payload: list[dict[str, Any]] | None
+                if existing is not None and isinstance(existing.files, list) and (
+                    merged_split_album
+                    or (
+                        is_edit
+                        and (
+                            existing.tg_media_group_id is not None
+                            or len(existing.files) > len(other_files)
+                        )
+                    )
+                ):
+                    if other_files:
+                        merged_files: list[dict[str, Any]] = [
+                            dict(f) for f in existing.files if isinstance(f, dict)
+                        ]
+                        idx_by_key: dict[tuple[str, Any], int] = {}
+                        for pos, item in enumerate(merged_files):
+                            if item.get("tg_msg_id") is not None:
+                                idx_by_key[("tg", int(item["tg_msg_id"]))] = pos
+                            if item.get("url"):
+                                idx_by_key[("url", str(item["url"]))] = pos
+                        for new_f in other_files:
+                            match_pos: int | None = None
+                            if new_f.get("tg_msg_id") is not None:
+                                match_pos = idx_by_key.get(("tg", int(new_f["tg_msg_id"])))
+                            if match_pos is None and new_f.get("url"):
+                                match_pos = idx_by_key.get(("url", str(new_f["url"])))
+                            if match_pos is not None:
+                                merged_files[match_pos] = dict(new_f)
+                            else:
+                                new_pos = len(merged_files)
+                                merged_files.append(dict(new_f))
+                                if new_f.get("tg_msg_id") is not None:
+                                    idx_by_key[("tg", int(new_f["tg_msg_id"]))] = new_pos
+                                if new_f.get("url"):
+                                    idx_by_key[("url", str(new_f["url"]))] = new_pos
+                        merged_files.sort(
+                            key=lambda item: (
+                                0 if item.get("tg_msg_id") is not None else 1,
+                                int(item.get("tg_msg_id") or 0),
+                            )
+                        )
+                        files_payload = merged_files
+                    else:
+                        files_payload = existing.files
+                elif other_files:
+                    files_payload = other_files
+                elif (is_edit or merged_split_album or preserve_existing_images) and existing is not None:
+                    files_payload = existing.files
+                else:
+                    files_payload = None
+
                 upserted = await upsert_post(
                     session,
                     channel=channel,
@@ -1983,15 +2053,7 @@ class TelegramService:
                     forwarded_from=effective_forwarded_from,
                     reply_snapshot=reply_snapshot,
                     quote=effective_quote,
-                    files=(
-                        other_files
-                        if other_files
-                        else (
-                            existing.files
-                            if (is_edit or merged_split_album or preserve_existing_images) and existing
-                            else None
-                        )
-                    ),
+                    files=files_payload,
                     show_caption_above_media=bool(
                         raw_post.get("show_caption_above_media")
                         or (existing.show_caption_above_media if existing else False)

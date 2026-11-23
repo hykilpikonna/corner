@@ -1705,3 +1705,89 @@ async def test_channel_edit_race_and_album_prompts_originals_once(
             assert len(tokens) == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_audio_split_album_and_single_edit_preserves_all_files(
+    test_settings: Settings,
+    db_session: AsyncSession,
+) -> None:
+    engine, session_factory = create_engine_and_factory(test_settings)
+    ch_id = -100777999
+    ch_chat = SimpleNamespace(id=ch_id, type="channel", title="Channel")
+    now = datetime.now(UTC)
+
+    class FakeClient:
+        async def download_media(self, msg: Any, file_name: str, **_kw: Any) -> str:
+            Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+            Path(file_name).write_bytes(b"ID3" + b"\x00" * 100)
+            return file_name
+
+    app, _ = await _setup_app_and_client(test_settings, db_session)
+    service = TelegramService(
+        session_factory=session_factory,
+        settings=test_settings,
+        sse_publish=app.state.sse_publish,
+        client=FakeClient(),
+    )
+    try:
+        ch = await ensure_channel(
+            db_session,
+            channel_id=1,
+            status="active",
+            id_offset=0,
+            tg_chat_id=ch_id,
+        )
+        await db_session.commit()
+
+        audio_msgs = [
+            SimpleNamespace(
+                id=18 + i,
+                chat=ch_chat,
+                media_group_id="mg_audio_5",
+                audio=SimpleNamespace(
+                    file_id=f"aud_{i}",
+                    mime_type="audio/mpeg",
+                    file_name=f"track_{i}.mp3",
+                    title=f"Track {i}",
+                    performer="Cavetown",
+                    duration=120 + i,
+                    file_size=103,
+                ),
+                date=now,
+            )
+            for i in range(5)
+        ]
+
+        # Batch 1: first 4 audio messages; Batch 2: late 5th track (split album)
+        await service._ingest_channel_messages(audio_msgs[:4], is_edit=False)
+        await service._ingest_channel_messages([audio_msgs[4]], is_edit=False)
+        # Single-message edit on message 22 must preserve all 5 audio files
+        await service.handle_channel_edit(
+            SimpleNamespace(
+                id=22,
+                chat=ch_chat,
+                media_group_id="mg_audio_5",
+                caption="Updated track caption",
+                audio=audio_msgs[4].audio,
+                date=now,
+                edit_date=now,
+            )
+        )
+
+        async with session_factory() as session:
+            post = (
+                await session.execute(select(Post).where(Post.channel_id == ch.id))
+            ).scalar_one()
+            assert post.tg_all_msg_ids == [18, 19, 20, 21, 22]
+            assert isinstance(post.files, list)
+            assert [f["tg_msg_id"] for f in post.files] == [18, 19, 20, 21, 22]
+            assert [f["title"] for f in post.files] == [
+                "Track 0",
+                "Track 1",
+                "Track 2",
+                "Track 3",
+                "Track 4",
+            ]
+    finally:
+        await engine.dispose()

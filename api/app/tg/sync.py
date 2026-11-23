@@ -530,6 +530,39 @@ class PeriodicReconciler:
                         poll_changed_ids.add(existing_post.id)
                         changed = True
 
+                # Repair incomplete multi-file albums (e.g. split album batches where files were truncated)
+                if (
+                    self.telegram_service is not None
+                    and not existing_post.images
+                    and isinstance(existing_post.files, list)
+                    and len(post_msgs) > len(existing_post.files)
+                ):
+                    try:
+                        conv_files = await self.telegram_service._convert_channel_messages(
+                            post_msgs, channel
+                        )
+                        repaired_files = [
+                            f
+                            for raw_p in conv_files
+                            for f in (raw_p.get("files") or [])
+                            if isinstance(f, dict) and f.get("media_type") != "poll"
+                        ]
+                        if len(repaired_files) > len(existing_post.files):
+                            repaired_files.sort(
+                                key=lambda item: (
+                                    0 if item.get("tg_msg_id") is not None else 1,
+                                    int(item.get("tg_msg_id") or 0),
+                                )
+                            )
+                            existing_post.files = repaired_files
+                            changed = True
+                    except Exception:
+                        logger.debug(
+                            "Multi-file album repair skipped for post #%s",
+                            existing_post.id,
+                            exc_info=True,
+                        )
+
                 if changed:
                     updated_post_ids.add(existing_post.id)
                     exports_dirty = True
