@@ -4,7 +4,9 @@ import hashlib
 import io
 import os
 import re
+import shutil
 import struct
+import subprocess
 import tempfile
 import uuid
 import zlib
@@ -12,7 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pillow_heif
+import pillow_jxl  # noqa: F401
 from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from app.media.fingerprint import compute_image_fingerprint
@@ -93,6 +97,8 @@ class OriginalUpgradeArtifacts:
     original_rel_url: str
     display_rel_url: str
     thumb_rel_url: str
+    display_jxl_rel_url: str | None
+    thumb_jxl_rel_url: str | None
     original_size: int
     display_size: int
     original_name: str
@@ -744,6 +750,140 @@ def generate_preview_thumbnail(
     return preview_path
 
 
+def _write_hdr_heif_png16(
+    source_path: Path,
+    target_size: tuple[int, int],
+    png_path: Path,
+) -> tuple[bool, str | None]:
+    """Extract >8-bit HDR HEIF pixels cleanly to a 16-bit PNG via ffmpeg when available."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        return False, None
+
+    try:
+        hf = pillow_heif.open_heif(source_path, convert_hdr_to_8bit=False)
+        img0 = hf[0]
+        bit_depth = int(img0.info.get("bit_depth", 8))
+        if bit_depth <= 8 or img0.mode not in ("RGB;10", "RGB;12", "RGB;16", "RGBA;10", "RGBA;12", "RGBA;16", "RGB", "RGBA"):
+            return False, None
+        has_alpha = "A" in img0.mode
+        channels = 4 if has_alpha else 3
+        arr = np.frombuffer(img0.data, dtype=np.uint16)
+        src_w, src_h = img0.size
+        if arr.size < src_w * src_h * channels:
+            return False, None
+        shift = max(0, 16 - bit_depth)
+        raw16 = (arr[: src_w * src_h * channels] << shift).astype("<u2", copy=False).tobytes()
+        in_fmt = "rgba64le" if has_alpha else "rgb48le"
+        out_fmt = "rgba64be" if has_alpha else "rgb48be"
+        tw, th = target_size
+        subprocess.run(
+            [
+                ffmpeg_bin,
+                "-y",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                in_fmt,
+                "-s",
+                f"{src_w}x{src_h}",
+                "-i",
+                "-",
+                "-vf",
+                f"scale={tw}:{th}:flags=lanczos",
+                "-pix_fmt",
+                out_fmt,
+                str(png_path),
+            ],
+            input=raw16,
+            check=True,
+            capture_output=True,
+        )
+        color_space_arg: str | None = None
+        if not img0.info.get("icc_profile"):
+            tc = img0.info.get("transfer_characteristics")
+            if tc == 16:
+                color_space_arg = "color_space=RGB_D65_202_Rel_PeQ"
+            elif tc == 18:
+                color_space_arg = "color_space=RGB_D65_202_Rel_HLG"
+        return True, color_space_arg
+    except Exception:
+        return False, None
+
+
+def _save_progressive_jxl(
+    *,
+    source_path: Path | None,
+    resized_im: Image.Image,
+    dest_path: Path,
+    quality: int,
+    icc_profile: bytes | None,
+    effort: int = 7,
+) -> Path:
+    """Encode a progressive JXL preserving wide-gamut ICC or >8-bit HDR when supported."""
+    cjxl_bin = shutil.which("cjxl")
+    if cjxl_bin:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=dest_path.parent, prefix=".jxl_") as td:
+            td_path = Path(td)
+            in_png = td_path / "input.png"
+            out_jxl = td_path / "output.jxl"
+            color_arg: str | None = None
+            used_hdr = False
+            if source_path is not None:
+                used_hdr, color_arg = _write_hdr_heif_png16(
+                    source_path, resized_im.size, in_png
+                )
+            if not used_hdr:
+                png_kwargs: dict[str, Any] = {"compress_level": 1}
+                if icc_profile:
+                    png_kwargs["icc_profile"] = icc_profile
+                resized_im.save(in_png, "PNG", **png_kwargs)
+
+            cmd = [
+                cjxl_bin,
+                str(in_png),
+                str(out_jxl),
+                "-p",
+                "-q",
+                str(quality),
+                "-e",
+                str(effort),
+                "-x",
+                "strip=exif",
+            ]
+            if color_arg:
+                cmd.extend(["-x", color_arg])
+            subprocess.run(cmd, check=True, capture_output=True)
+            tmp_target: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=dest_path.parent,
+                    prefix=f".{dest_path.name}.",
+                    suffix=".tmp.jxl",
+                    delete=False,
+                ) as tmp:
+                    tmp_target = Path(tmp.name)
+                    tmp.write(out_jxl.read_bytes())
+                os.replace(tmp_target, dest_path)
+                return dest_path
+            except Exception:
+                if tmp_target is not None:
+                    tmp_target.unlink(missing_ok=True)
+                raise
+
+    _atomic_save_pil_image(
+        resized_im,
+        dest_path,
+        "JXL",
+        quality=quality,
+        effort=effort,
+        exif=b"",
+    )
+    return dest_path
+
+
 def generate_display_and_thumb(
     source_path: Path,
     display_path: Path,
@@ -753,8 +893,12 @@ def generate_display_and_thumb(
     thumb_max_size: tuple[int, int] = (1000, 1000),
     display_quality: int = 94,
     thumb_quality: int = 80,
+    display_jxl_path: Path | None = None,
+    thumb_jxl_path: Path | None = None,
+    jxl_display_quality: int = 92,
+    jxl_thumb_quality: int = 82,
 ) -> tuple[int, int, int]:
-    """Generate crisp 2048px WebP display image and 1000px WebP thumbnail atomically.
+    """Generate crisp 2048px display and 1000px thumb WebPs (and optional progressive JXLs) atomically.
 
     Preserves ICC color profile if present.
 
@@ -780,6 +924,14 @@ def generate_display_and_thumb(
             method=6,
             **extra_kwargs,
         )
+        if display_jxl_path is not None:
+            _save_progressive_jxl(
+                source_path=source_path,
+                resized_im=display_im,
+                dest_path=display_jxl_path,
+                quality=jxl_display_quality,
+                icc_profile=icc_profile,
+            )
 
         # Thumbnail image (max 1000px)
         thumb_im = display_im.copy()
@@ -792,6 +944,14 @@ def generate_display_and_thumb(
             method=6,
             **extra_kwargs,
         )
+        if thumb_jxl_path is not None:
+            _save_progressive_jxl(
+                source_path=source_path,
+                resized_im=thumb_im,
+                dest_path=thumb_jxl_path,
+                quality=jxl_thumb_quality,
+                icc_profile=icc_profile,
+            )
 
     return display_w, display_h, display_path.stat().st_size
 
@@ -806,7 +966,7 @@ def process_original_upgrade(
     sort_order: int,
     strip_gps_exif: bool = True,
 ) -> OriginalUpgradeArtifacts:
-    """Validate, optionally strip GPS EXIF/XMP, save original, and regenerate display + thumb WebPs.
+    """Validate, optionally strip GPS EXIF/XMP, save original, and regenerate display + thumb WebPs & JXLs.
 
     All files are written atomically inside `media_root/epochs/{epoch_id}/`.
     """
@@ -826,10 +986,14 @@ def process_original_upgrade(
     orig_rel = epoch_rel / "originals" / f"{post_id}_{sort_order}_{short_hash}{ext}"
     display_rel = epoch_rel / "media" / f"{post_id}_{sort_order}_{short_hash}_display.webp"
     thumb_rel = epoch_rel / "media" / f"{post_id}_{sort_order}_{short_hash}_thumb.webp"
+    display_jxl_rel = epoch_rel / "media" / f"{post_id}_{sort_order}_{short_hash}_display.jxl"
+    thumb_jxl_rel = epoch_rel / "media" / f"{post_id}_{sort_order}_{short_hash}_thumb.jxl"
 
     orig_abs = media_root / orig_rel
     display_abs = media_root / display_rel
     thumb_abs = media_root / thumb_rel
+    display_jxl_abs = media_root / display_jxl_rel
+    thumb_jxl_abs = media_root / thumb_jxl_rel
 
     _atomic_write_bytes(orig_abs, final_original_bytes)
 
@@ -837,6 +1001,8 @@ def process_original_upgrade(
         orig_abs,
         display_abs,
         thumb_abs,
+        display_jxl_path=display_jxl_abs,
+        thumb_jxl_path=thumb_jxl_abs,
     )
 
     phash, rgb_sig, _, _ = compute_image_fingerprint(orig_abs)
@@ -845,6 +1011,8 @@ def process_original_upgrade(
         original_rel_url=orig_rel.as_posix(),
         display_rel_url=display_rel.as_posix(),
         thumb_rel_url=thumb_rel.as_posix(),
+        display_jxl_rel_url=display_jxl_rel.as_posix(),
+        thumb_jxl_rel_url=thumb_jxl_rel.as_posix(),
         original_size=len(final_original_bytes),
         display_size=display_size,
         original_name=safe_name,

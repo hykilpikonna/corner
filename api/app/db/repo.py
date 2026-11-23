@@ -544,6 +544,8 @@ async def upsert_post(
             inc_orig_size = img.get("original_size")
             inc_orig_name = img.get("original_name")
             inc_thumb = img.get("thumb_url") or img.get("thumb")
+            inc_jxl = img.get("jxl_url")
+            inc_thumb_jxl = img.get("thumb_jxl_url")
             inc_width = int(img.get("width") or 0)
             inc_height = int(img.get("height") or 0)
 
@@ -571,6 +573,10 @@ async def upsert_post(
                     existing_img.url = str(img["url"])
                     if inc_thumb is not None:
                         existing_img.thumb_url = inc_thumb
+                    if inc_jxl is not None:
+                        existing_img.jxl_url = inc_jxl
+                    if inc_thumb_jxl is not None:
+                        existing_img.thumb_jxl_url = inc_thumb_jxl
                     if inc_width > 0:
                         existing_img.width = inc_width
                     if inc_height > 0:
@@ -579,6 +585,10 @@ async def upsert_post(
                     existing_img.url = str(img["url"])
                     if inc_thumb is not None:
                         existing_img.thumb_url = inc_thumb
+                    if inc_jxl is not None:
+                        existing_img.jxl_url = inc_jxl
+                    if inc_thumb_jxl is not None:
+                        existing_img.thumb_jxl_url = inc_thumb_jxl
                     if inc_width > 0:
                         existing_img.width = inc_width
                     if inc_height > 0:
@@ -586,6 +596,10 @@ async def upsert_post(
                 else:
                     if not existing_img.thumb_url and inc_thumb is not None:
                         existing_img.thumb_url = inc_thumb
+                    if not existing_img.jxl_url and inc_jxl is not None:
+                        existing_img.jxl_url = inc_jxl
+                    if not existing_img.thumb_jxl_url and inc_thumb_jxl is not None:
+                        existing_img.thumb_jxl_url = inc_thumb_jxl
 
                 if inc_orig_size is not None:
                     existing_img.original_size = inc_orig_size
@@ -607,6 +621,8 @@ async def upsert_post(
                         tg_msg_id=inc_tg_msg_id,
                         url=str(img["url"]),
                         thumb_url=inc_thumb,
+                        jxl_url=inc_jxl,
+                        thumb_jxl_url=inc_thumb_jxl,
                         original_url=inc_orig_url,
                         original_size=inc_orig_size,
                         original_name=inc_orig_name,
@@ -917,7 +933,7 @@ def _resolve_media_item_urls(
     item: dict[str, Any], api_prefix: str
 ) -> dict[str, Any]:
     out = dict(item)
-    for key in ("url", "thumb", "original_url"):
+    for key in ("url", "thumb", "jxl_url", "thumb_jxl_url", "original_url"):
         if out.get(key):
             resolved = resolve_media_url(str(out[key]), api_prefix)
             if resolved:
@@ -996,6 +1012,14 @@ def serialize_post(post: Post, *, api_prefix: str = "/api/life") -> dict[str, An
                 resolved_thumb = resolve_media_url(img.thumb_url, api_prefix)
                 if resolved_thumb:
                     item["thumb"] = resolved_thumb
+            if img.jxl_url:
+                resolved_jxl = resolve_media_url(img.jxl_url, api_prefix)
+                if resolved_jxl:
+                    item["jxl_url"] = resolved_jxl
+            if img.thumb_jxl_url:
+                resolved_thumb_jxl = resolve_media_url(img.thumb_jxl_url, api_prefix)
+                if resolved_thumb_jxl:
+                    item["thumb_jxl_url"] = resolved_thumb_jxl
             if img.spoiler:
                 item["spoiler"] = True
             if img.size is not None:

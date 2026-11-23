@@ -277,6 +277,8 @@ async def apply_original_matches(
 
         target_img.url = artifacts.display_rel_url
         target_img.thumb_url = artifacts.thumb_rel_url
+        target_img.jxl_url = artifacts.display_jxl_rel_url
+        target_img.thumb_jxl_url = artifacts.thumb_jxl_rel_url
         target_img.original_url = artifacts.original_rel_url
         target_img.original_size = artifacts.original_size
         target_img.original_name = artifacts.original_name
@@ -292,6 +294,16 @@ async def apply_original_matches(
                 "sort_order": target_img.sort_order,
                 "url": resolve_media_url(target_img.url, settings.API_PREFIX),
                 "thumb_url": resolve_media_url(target_img.thumb_url, settings.API_PREFIX),
+                "jxl_url": (
+                    resolve_media_url(target_img.jxl_url, settings.API_PREFIX)
+                    if target_img.jxl_url
+                    else None
+                ),
+                "thumb_jxl_url": (
+                    resolve_media_url(target_img.thumb_jxl_url, settings.API_PREFIX)
+                    if target_img.thumb_jxl_url
+                    else None
+                ),
                 "original_url": resolve_media_url(target_img.original_url, settings.API_PREFIX),
                 "original_size": target_img.original_size,
                 "original_name": target_img.original_name,

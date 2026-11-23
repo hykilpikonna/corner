@@ -231,8 +231,13 @@ def test_validate_and_strip_gps_exif_and_webp_xmp(tmp_path: Path) -> None:
     assert (media_root / artifacts.original_rel_url).is_file()
     assert (media_root / artifacts.display_rel_url).is_file()
     assert (media_root / artifacts.thumb_rel_url).is_file()
+    assert artifacts.display_jxl_rel_url and (media_root / artifacts.display_jxl_rel_url).is_file()
+    assert artifacts.thumb_jxl_rel_url and (media_root / artifacts.thumb_jxl_rel_url).is_file()
     with Image.open(media_root / artifacts.thumb_rel_url) as thumb_im:
         assert max(thumb_im.size) <= 1000
+    with Image.open(media_root / artifacts.display_jxl_rel_url) as jxl_im:
+        assert jxl_im.format == "JXL"
+        assert jxl_im.size == (artifacts.width, artifacts.height)
 
     # HEIC/HEIF upload validation, GPS stripping, original upgrade, and comment image conversion
     heic_buf = io.BytesIO()
@@ -531,14 +536,19 @@ async def test_upload_routes_get_invalid_expired_and_confident_apply_with_real_s
         assert (test_settings.media_dir / img.original_url).is_file()
         assert (test_settings.media_dir / img.url).is_file()
         assert img.thumb_url and (test_settings.media_dir / img.thumb_url).is_file()
+        assert img.jxl_url and (test_settings.media_dir / img.jxl_url).is_file()
+        assert img.thumb_jxl_url and (test_settings.media_dir / img.thumb_jxl_url).is_file()
 
     posts_export = json.loads((test_settings.exports_dir / "posts.json").read_text(encoding="utf-8"))
     assert posts_export[0]["images"][0]["original_name"] == "first_shot.jpg"
+    assert posts_export[0]["images"][0]["jxl_url"].endswith("_display.jxl")
+    assert posts_export[0]["images"][0]["thumb_jxl_url"].endswith("_thumb.jxl")
 
     sse_event = queue.get_nowait()
     assert sse_event.event == "post.updated"
     assert sse_event.data["id"] == post.id
     assert sse_event.data["images"][0]["original_name"] == "first_shot.jpg"
+    assert sse_event.data["images"][0]["jxl_url"].endswith("_display.jxl")
     sse_bus.unsubscribe(sub_id)
 
 

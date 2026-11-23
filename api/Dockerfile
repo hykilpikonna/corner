@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libpq5 \
+    libjxl-tools \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*

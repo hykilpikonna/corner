@@ -24,6 +24,7 @@ SAFE_INLINE_MIME_TYPES: frozenset[str] = frozenset(
         "image/png",
         "image/apng",
         "image/webp",
+        "image/jxl",
         "image/gif",
         "image/avif",
         "video/mp4",
@@ -38,6 +39,7 @@ SAFE_INLINE_MIME_TYPES: frozenset[str] = frozenset(
 _EXT_INLINE_FALLBACK: dict[str, str] = {
     ".apng": "image/apng",
     ".webp": "image/webp",
+    ".jxl": "image/jxl",
     ".webm": "video/webm",
 }
 

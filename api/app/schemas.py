@@ -12,6 +12,8 @@ class ImageDTO(BaseModel):
     width: int
     height: int
     thumb: str | None = None
+    jxl_url: str | None = None
+    thumb_jxl_url: str | None = None
     spoiler: bool | None = None
     size: int | None = None
     original_url: str | None = None

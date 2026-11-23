@@ -135,6 +135,8 @@ class PostImage(Base):
     tg_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     thumb_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    jxl_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thumb_jxl_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     original_name: Mapped[str | None] = mapped_column(Text, nullable=True)
