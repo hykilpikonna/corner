@@ -575,11 +575,33 @@ async def test_upload_routes_burst_confirm_security_and_double_submit(
     staging_id = data["staging_id"]
     proposed = data["proposed"]
     assert len(proposed) == 2
+    staged_files = data["staged_files"]
+    assert len(staged_files) == 2
+    assert all(sf["preview_url"].startswith(f"/api/life/upload/{raw_token}/staging/{staging_id}/") for sf in staged_files)
     assert (test_settings.DATA_DIR / "staging" / staging_id / "manifest.json").is_file()
     assert queue.empty()
 
     img_ids = [img.id for img in sorted(post.images, key=lambda i: i.sort_order)]
     key_by_name = {item["filename"]: item["file_key"] for item in proposed}
+
+    # Staged preview endpoint serves EXIF-oriented WebP thumbnails and enforces token + path safety
+    preview_url = staged_files[0]["preview_url"]
+    r_prev = await client.get(preview_url)
+    assert r_prev.status_code == 200
+    assert r_prev.headers["content-type"] == "image/webp"
+    with Image.open(io.BytesIO(r_prev.content)) as prev_im:
+        assert prev_im.format == "WEBP"
+        assert max(prev_im.size) <= 480
+
+    assert (
+        await client.get(f"/api/life/upload/{other_token}/staging/{staging_id}/{staged_files[0]['file_key']}")
+    ).status_code == 403
+    assert (
+        await client.get(f"/api/life/upload/{raw_token}/staging/not-a-uuid/{staged_files[0]['file_key']}")
+    ).status_code == 400
+    assert (
+        await client.get(f"/api/life/upload/{raw_token}/staging/{staging_id}/unknown_key")
+    ).status_code == 404
 
     # Security 1: staging_id path traversal -> 400
     r_trav = await client.post(
@@ -622,6 +644,30 @@ async def test_upload_routes_burst_confirm_security_and_double_submit(
     # Second submit after apply -> 404 (atomic claim prevents double-apply)
     r_dup = await client.post(f"/api/life/upload/{raw_token}/confirm", json=payload)
     assert r_dup.status_code == 404
+    assert (await client.get(preview_url)).status_code == 404
+
+    # Uploading extra files (M > N) triggers confirmation with unmatched_files + all staged_files
+    r_extra = await client.post(
+        f"/api/life/upload/{raw_token}",
+        files=[
+            ("files[]", ("burst_a.heic", _save_jpeg_bytes(burst_a, quality=95), "image/jpeg")),
+            ("files[]", ("burst_b.heic", _save_jpeg_bytes(burst_b, quality=95), "image/jpeg")),
+            (
+                "files[]",
+                (
+                    "extra_unused.jpg",
+                    _save_jpeg_bytes(_draw_distinct_image(3, (900, 900)), quality=95),
+                    "image/jpeg",
+                ),
+            ),
+        ],
+    )
+    assert r_extra.status_code == 200
+    extra_data = r_extra.json()
+    assert extra_data["status"] == "needs_confirmation"
+    assert len(extra_data["proposed"]) == 2
+    assert len(extra_data["unmatched_files"]) == 1
+    assert len(extra_data["staged_files"]) == 3
 
     sse_event = queue.get_nowait()
     assert sse_event.event == "post.updated"

@@ -18,7 +18,7 @@ from typing import Annotated, Any
 from urllib.parse import quote as url_quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,7 @@ from app.media.matcher import (
 from app.media.optimize import (
     MAX_UPLOAD_BYTES,
     InvalidImageError,
+    generate_preview_thumbnail,
     process_original_upgrade,
     sanitize_original_filename,
     validate_image_file,
@@ -52,6 +53,7 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_SAFE_FILE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _STAGING_TTL_HOURS = 24
 MAX_BATCH_BYTES = 200 * 1024 * 1024  # 200 MiB total per upload batch
 _STREAM_CHUNK_BYTES = 1024 * 1024  # 1 MiB streaming chunk
@@ -394,7 +396,7 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
   <title>{escaped_title}</title>
   <style>
     :root {{ color-scheme: light dark; font-family: system-ui, -apple-system, sans-serif; }}
-    body {{ max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }}
+    body {{ max-width: 980px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }}
     h1 {{ font-size: 1.4rem; margin-bottom: 0.25rem; }}
     .excerpt {{ opacity: 0.8; margin-top: 0; margin-bottom: 1.5rem; }}
     .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }}
@@ -403,9 +405,11 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
     .meta {{ padding: 0.5rem 0.75rem; font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.2rem; }}
     .badge {{ display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.75rem; background: rgba(128,128,128,0.2); width: fit-content; }}
     .badge.ok {{ background: rgba(22,163,74,0.2); color: #16a34a; }}
+    .badge.warn {{ background: rgba(217,119,6,0.2); color: #d97706; }}
+    .badge.manual {{ background: rgba(37,99,235,0.18); color: #3b82f6; }}
     .dropzone {{ border: 2px dashed rgba(128,128,128,0.5); border-radius: 12px; padding: 2.25rem 1rem; text-align: center; cursor: pointer; transition: border-color 0.15s, background 0.15s; }}
     .dropzone.dragover {{ border-color: #2563eb; background: rgba(37,99,235,0.08); }}
-    .btn {{ background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 0.6rem 1.2rem; font-size: 0.95rem; cursor: pointer; }}
+    .btn {{ background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 0.65rem 1.25rem; font-size: 0.95rem; cursor: pointer; font-weight: 500; }}
     .btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
     .progress-wrap {{ margin-top: 1rem; display: none; }}
     progress {{ width: 100%; height: 12px; }}
@@ -413,10 +417,36 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
     .status.ok {{ display: block; background: rgba(22,163,74,0.15); }}
     .status.err {{ display: block; background: rgba(220,38,38,0.15); }}
     .status.warn {{ display: block; background: rgba(217,119,6,0.15); }}
-    .confirm-box {{ margin-top: 1.25rem; display: none; border: 1px solid rgba(128,128,128,0.3); border-radius: 10px; padding: 1rem; }}
-    table {{ width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }}
-    th, td {{ text-align: left; padding: 0.5rem; border-bottom: 1px solid rgba(128,128,128,0.2); }}
-    select {{ padding: 0.35rem 0.5rem; border-radius: 6px; }}
+    .confirm-box {{ margin-top: 1.25rem; display: none; border: 1px solid rgba(128,128,128,0.3); border-radius: 12px; padding: 1.15rem; }}
+    .confirm-box h3 {{ margin: 0 0 0.35rem; }}
+    .confirm-lead {{ font-size: 0.92rem; opacity: 0.85; margin: 0 0 1rem; }}
+    .compare-list {{ display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 1rem; }}
+    .compare-card {{ display: grid; grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr); gap: 0.75rem; align-items: stretch; border: 1px solid rgba(128,128,128,0.28); border-radius: 10px; padding: 0.75rem; background: rgba(128,128,128,0.04); }}
+    .compare-card.skipped {{ opacity: 0.52; }}
+    .compare-side {{ display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }}
+    .side-label {{ font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.65; font-weight: 600; }}
+    .thumb-frame {{ width: 100%; height: 190px; border-radius: 8px; overflow: hidden; background: rgba(128,128,128,0.12); display: flex; align-items: center; justify-content: center; border: 1px solid rgba(128,128,128,0.18); }}
+    .thumb-frame img {{ max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }}
+    .side-meta {{ font-size: 0.82rem; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .compare-center {{ display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem; text-align: center; padding: 0.25rem; }}
+    .compare-arrow {{ font-size: 1.35rem; opacity: 0.6; line-height: 1; }}
+    .score-line {{ font-size: 0.75rem; opacity: 0.72; }}
+    .reason-line {{ font-size: 0.74rem; color: #d97706; line-height: 1.25; }}
+    .apply-toggle {{ display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; cursor: pointer; margin-top: 0.25rem; }}
+    select {{ width: 100%; padding: 0.4rem 0.5rem; border-radius: 6px; font-size: 0.85rem; }}
+    .unmatched-section {{ margin: 1rem 0; padding: 0.85rem; border-radius: 10px; border: 1px dashed rgba(217,119,6,0.45); background: rgba(217,119,6,0.06); }}
+    .unmatched-section h4 {{ margin: 0 0 0.25rem; font-size: 0.95rem; }}
+    .unmatched-note {{ margin: 0 0 0.75rem; font-size: 0.82rem; opacity: 0.8; }}
+    .unmatched-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; }}
+    .unmatched-card {{ border: 1px solid rgba(128,128,128,0.28); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }}
+    .unmatched-card img {{ width: 100%; height: 120px; object-fit: contain; background: rgba(128,128,128,0.1); }}
+    .unmatched-meta {{ padding: 0.4rem 0.55rem; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .confirm-actions {{ display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }}
+    @media (max-width: 680px) {{
+      .compare-card {{ grid-template-columns: 1fr; }}
+      .compare-center {{ flex-direction: row; flex-wrap: wrap; justify-content: space-between; border-top: 1px solid rgba(128,128,128,0.18); border-bottom: 1px solid rgba(128,128,128,0.18); padding: 0.45rem 0; }}
+      .compare-arrow {{ display: none; }}
+    }}
   </style>
 </head>
 <body>
@@ -442,14 +472,17 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
 
   <div class="confirm-box" id="confirm-box">
     <h3>Confirm Photo Matching</h3>
-    <p style="font-size:0.9rem;opacity:0.85;">Some uploaded photos looked similar (e.g. burst shots). Please verify each assignment before applying:</p>
-    <table>
-      <thead>
-        <tr><th>Uploaded File</th><th>Match Score</th><th>Target Post Photo</th></tr>
-      </thead>
-      <tbody id="confirm-tbody"></tbody>
-    </table>
-    <button class="btn" id="confirm-btn" type="button">Apply Confirmed Mapping</button>
+    <p class="confirm-lead" id="confirm-reason">Review each uploaded original side-by-side against its matched post photo before applying:</p>
+    <div class="compare-list" id="confirm-list"></div>
+    <div class="unmatched-section" id="unmatched-section" style="display:none;">
+      <h4 id="unmatched-title">Unassigned Uploaded Files</h4>
+      <p class="unmatched-note">These files will not be applied unless you select one of them in a pair above.</p>
+      <div class="unmatched-grid" id="unmatched-grid"></div>
+    </div>
+    <div class="confirm-actions">
+      <span id="confirm-summary" style="font-size:0.85rem;opacity:0.8;"></span>
+      <button class="btn" id="confirm-btn" type="button">Apply Confirmed Mapping</button>
+    </div>
   </div>
 
   <script type="application/json" id="upload-config">{config_json}</script>
@@ -463,10 +496,19 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
       const progressLabel = document.getElementById("progress-label");
       const statusBox = document.getElementById("status-box");
       const confirmBox = document.getElementById("confirm-box");
-      const confirmTbody = document.getElementById("confirm-tbody");
+      const confirmReason = document.getElementById("confirm-reason");
+      const confirmList = document.getElementById("confirm-list");
+      const unmatchedSection = document.getElementById("unmatched-section");
+      const unmatchedTitle = document.getElementById("unmatched-title");
+      const unmatchedGrid = document.getElementById("unmatched-grid");
+      const confirmSummary = document.getElementById("confirm-summary");
       const confirmBtn = document.getElementById("confirm-btn");
 
       let activeStagingId = null;
+      let stagedFiles = [];
+      let stagedByKey = new Map();
+      let assignments = [];
+      const imagesById = new Map(cfg.images.map(function (img) {{ return [Number(img.id), img]; }}));
 
       function formatErrorDetail(data, fallback) {{
         if (!data || !data.detail) return fallback;
@@ -483,9 +525,45 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
         return String(data.detail);
       }}
 
+      function formatBytes(bytes) {{
+        if (typeof bytes !== "number" || bytes < 0) return "";
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+        return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+      }}
+
+      function formatFileMeta(sf) {{
+        const parts = [];
+        if (sf && sf.width && sf.height) parts.push(sf.width + "×" + sf.height);
+        if (sf && typeof sf.size === "number") parts.push(formatBytes(sf.size));
+        return parts.join(" · ");
+      }}
+
       function setStatus(kind, message) {{
         statusBox.className = "status " + kind;
         statusBox.textContent = message;
+      }}
+
+      function updatePostCards(appliedMatches) {{
+        if (!Array.isArray(appliedMatches)) return;
+        for (const item of appliedMatches) {{
+          const card = document.querySelector('#post-thumbs .card[data-image-id="' + String(item.image_id) + '"]');
+          if (!card) continue;
+          const imgEl = card.querySelector("img");
+          if (imgEl && item.thumb_url) {{
+            const sep = item.thumb_url.includes("?") ? "&" : "?";
+            imgEl.src = item.thumb_url + sep + "v=" + Date.now();
+          }}
+          const dimsEl = card.querySelector(".meta span");
+          if (dimsEl && item.width && item.height) {{
+            dimsEl.textContent = item.width + "×" + item.height;
+          }}
+          const badgeEl = card.querySelector(".meta .badge");
+          if (badgeEl) {{
+            badgeEl.className = "badge ok";
+            badgeEl.textContent = "Original uploaded";
+          }}
+        }}
       }}
 
       function uploadFiles(fileList) {{
@@ -515,11 +593,18 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
           try {{ data = JSON.parse(xhr.responseText); }} catch (_) {{}}
           if (xhr.status >= 200 && xhr.status < 300 && data) {{
             if (data.status === "applied") {{
+              updatePostCards(data.matches);
               setStatus("ok", "Applied " + data.matches.length + " original photo(s) successfully!");
             }} else if (data.status === "needs_confirmation") {{
               activeStagingId = data.staging_id;
-              renderConfirmation(data.proposed || []);
-              setStatus("warn", "Ambiguous match detected. Please review and confirm below.");
+              renderConfirmation(data);
+              const extraCount = Array.isArray(data.unmatched_files) ? data.unmatched_files.length : 0;
+              const lowConfCount = (data.proposed || []).filter(function (p) {{ return p.confident === false; }}).length;
+              if (extraCount > 0 && lowConfCount === 0) {{
+                setStatus("warn", extraCount + " extra uploaded file(s) did not have a matching post photo slot. Please verify below before applying.");
+              }} else {{
+                setStatus("warn", "Please review the side-by-side photo matches below and confirm.");
+              }}
             }}
           }} else {{
             setStatus("err", formatErrorDetail(data, "Upload failed (HTTP " + xhr.status + ")"));
@@ -532,43 +617,263 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
         xhr.send(form);
       }}
 
-      function renderConfirmation(proposed) {{
-        confirmTbody.textContent = "";
-        for (const item of proposed) {{
-          const tr = document.createElement("tr");
+      function renderConfirmation(data) {{
+        const proposed = data.proposed || [];
+        stagedFiles = Array.isArray(data.staged_files) && data.staged_files.length > 0
+          ? data.staged_files
+          : proposed.map(function (p) {{
+              return {{ file_key: p.file_key, filename: p.filename || p.file_key, preview_url: "" }};
+            }});
+        stagedByKey = new Map(stagedFiles.map(function (sf) {{ return [sf.file_key, sf]; }}));
+        assignments = proposed.map(function (item) {{
+          return {{
+            file_key: item.file_key,
+            image_id: Number(item.image_id),
+            include: true,
+            manual: false,
+            distance: item.distance,
+            margin: item.margin,
+            confident: item.confident !== false,
+            reason: item.reason || null,
+          }};
+        }});
 
-          const tdFile = document.createElement("td");
-          tdFile.textContent = item.filename || item.file_key;
-          tr.appendChild(tdFile);
+        const extraCount = Array.isArray(data.unmatched_files) ? data.unmatched_files.length : 0;
+        const lowConfCount = assignments.filter(function (a) {{ return !a.confident; }}).length;
+        if (lowConfCount > 0 && extraCount > 0) {{
+          confirmReason.textContent = lowConfCount + " match(es) had low confidence and " + extraCount + " extra uploaded file(s) were left unassigned. Compare side-by-side before applying:";
+        }} else if (extraCount > 0) {{
+          confirmReason.textContent = "All " + assignments.length + " proposed matches look confident, with " + extraCount + " extra uploaded file(s) skipped unless swapped in. Compare side-by-side below:";
+        }} else {{
+          confirmReason.textContent = "Some uploaded photos looked similar (e.g. burst shots). Compare each uploaded original side-by-side against its matched post photo:";
+        }}
 
-          const tdScore = document.createElement("td");
-          const scoreText = "dist=" + item.distance + (item.margin !== null ? (", margin=" + item.margin) : "");
-          tdScore.textContent = scoreText;
-          tr.appendChild(tdScore);
+        redrawConfirmationRows();
+        confirmBox.style.display = "block";
+      }}
 
-          const tdSelect = document.createElement("td");
-          const select = document.createElement("select");
-          select.dataset.fileKey = item.file_key;
+      function redrawConfirmationRows() {{
+        confirmList.textContent = "";
+
+        assignments.forEach(function (row, idx) {{
+          const sf = stagedByKey.get(row.file_key) || {{ file_key: row.file_key, filename: row.file_key, preview_url: "" }};
+          const tgt = imagesById.get(row.image_id) || cfg.images[0];
+
+          const card = document.createElement("div");
+          card.className = "compare-card" + (row.include ? "" : " skipped");
+
+          // Left: Uploaded Original
+          const left = document.createElement("div");
+          left.className = "compare-side";
+
+          const leftLbl = document.createElement("div");
+          leftLbl.className = "side-label";
+          leftLbl.textContent = "Uploaded Original";
+          left.appendChild(leftLbl);
+
+          const leftFrame = document.createElement("div");
+          leftFrame.className = "thumb-frame";
+          if (sf.preview_url) {{
+            const leftImg = document.createElement("img");
+            leftImg.src = sf.preview_url;
+            leftImg.alt = sf.filename || sf.file_key;
+            leftImg.loading = "lazy";
+            leftFrame.appendChild(leftImg);
+          }}
+          left.appendChild(leftFrame);
+
+          if (stagedFiles.length > 1) {{
+            const fileSel = document.createElement("select");
+            fileSel.setAttribute("aria-label", "Select uploaded file");
+            for (const candidateFile of stagedFiles) {{
+              const opt = document.createElement("option");
+              opt.value = candidateFile.file_key;
+              const dims = candidateFile.width && candidateFile.height ? (" (" + candidateFile.width + "×" + candidateFile.height + ")") : "";
+              opt.textContent = (candidateFile.filename || candidateFile.file_key) + dims;
+              if (candidateFile.file_key === row.file_key) opt.selected = true;
+              fileSel.appendChild(opt);
+            }}
+            fileSel.addEventListener("change", function () {{
+              const prevKey = row.file_key;
+              const nextKey = fileSel.value;
+              if (nextKey === prevKey) return;
+              const other = assignments.find(function (a, j) {{ return j !== idx && a.file_key === nextKey; }});
+              row.file_key = nextKey;
+              row.manual = true;
+              if (other) {{
+                other.file_key = prevKey;
+                other.manual = true;
+              }}
+              redrawConfirmationRows();
+            }});
+            left.appendChild(fileSel);
+          }} else {{
+            const fileTitle = document.createElement("div");
+            fileTitle.style.fontWeight = "600";
+            fileTitle.style.fontSize = "0.88rem";
+            fileTitle.textContent = sf.filename || sf.file_key;
+            left.appendChild(fileTitle);
+          }}
+
+          const leftMeta = document.createElement("div");
+          leftMeta.className = "side-meta";
+          leftMeta.textContent = formatFileMeta(sf) || sf.filename || "";
+          left.appendChild(leftMeta);
+
+          // Center: Match badge, score, Apply toggle
+          const center = document.createElement("div");
+          center.className = "compare-center";
+
+          const badge = document.createElement("span");
+          if (row.manual) {{
+            badge.className = "badge manual";
+            badge.textContent = "Manual choice";
+          }} else if (row.confident) {{
+            badge.className = "badge ok";
+            badge.textContent = "Confident match";
+          }} else {{
+            badge.className = "badge warn";
+            badge.textContent = "Needs review";
+          }}
+          center.appendChild(badge);
+
+          const arrow = document.createElement("div");
+          arrow.className = "compare-arrow";
+          arrow.textContent = "→";
+          center.appendChild(arrow);
+
+          if (!row.manual && row.distance !== null && row.distance !== undefined) {{
+            const scoreEl = document.createElement("div");
+            scoreEl.className = "score-line";
+            scoreEl.textContent = "dist=" + row.distance + (row.margin !== null && row.margin !== undefined ? (" · margin=" + row.margin) : "");
+            center.appendChild(scoreEl);
+          }}
+
+          if (!row.manual && !row.confident && row.reason) {{
+            const reasonEl = document.createElement("div");
+            reasonEl.className = "reason-line";
+            reasonEl.textContent = row.reason;
+            center.appendChild(reasonEl);
+          }}
+
+          const toggleLbl = document.createElement("label");
+          toggleLbl.className = "apply-toggle";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = row.include;
+          cb.addEventListener("change", function () {{
+            row.include = cb.checked;
+            redrawConfirmationRows();
+          }});
+          toggleLbl.appendChild(cb);
+          toggleLbl.appendChild(document.createTextNode("Apply"));
+          center.appendChild(toggleLbl);
+
+          // Right: Target Post Photo
+          const right = document.createElement("div");
+          right.className = "compare-side";
+
+          const rightLbl = document.createElement("div");
+          rightLbl.className = "side-label";
+          rightLbl.textContent = "Post Photo #" + ((tgt ? tgt.sort_order : 0) + 1);
+          right.appendChild(rightLbl);
+
+          const rightFrame = document.createElement("div");
+          rightFrame.className = "thumb-frame";
+          if (tgt && (tgt.thumb || tgt.url)) {{
+            const rightImg = document.createElement("img");
+            rightImg.src = tgt.thumb || tgt.url;
+            rightImg.alt = "Photo #" + (tgt.sort_order + 1);
+            rightImg.loading = "lazy";
+            rightFrame.appendChild(rightImg);
+          }}
+          right.appendChild(rightFrame);
+
+          const targetSel = document.createElement("select");
+          targetSel.dataset.fileKey = row.file_key;
+          targetSel.setAttribute("aria-label", "Select target post photo");
           for (const img of cfg.images) {{
             const opt = document.createElement("option");
             opt.value = String(img.id);
-            opt.textContent = "Photo #" + (img.sort_order + 1) + " (" + img.width + "x" + img.height + ")";
-            if (img.id === item.image_id) opt.selected = true;
-            select.appendChild(opt);
+            opt.textContent = "Photo #" + (img.sort_order + 1) + " (" + img.width + "×" + img.height + ")" + (img.has_original ? " · Already upgraded" : "");
+            if (Number(img.id) === row.image_id) opt.selected = true;
+            targetSel.appendChild(opt);
           }}
-          tdSelect.appendChild(select);
-          tr.appendChild(tdSelect);
-          confirmTbody.appendChild(tr);
+          targetSel.addEventListener("change", function () {{
+            const prevImgId = row.image_id;
+            const nextImgId = Number(targetSel.value);
+            if (nextImgId === prevImgId) return;
+            const other = assignments.find(function (a, j) {{ return j !== idx && a.image_id === nextImgId; }});
+            row.image_id = nextImgId;
+            row.manual = true;
+            if (other) {{
+              other.image_id = prevImgId;
+              other.manual = true;
+            }}
+            redrawConfirmationRows();
+          }});
+          right.appendChild(targetSel);
+
+          const rightMeta = document.createElement("div");
+          rightMeta.className = "side-meta";
+          if (tgt) {{
+            rightMeta.textContent = tgt.width + "×" + tgt.height + (tgt.has_original ? " · Original uploaded" : " · Compressed");
+          }}
+          right.appendChild(rightMeta);
+
+          card.appendChild(left);
+          card.appendChild(center);
+          card.appendChild(right);
+          confirmList.appendChild(card);
+        }});
+
+        // Show any uploaded files currently not assigned to an active row
+        const usedKeys = new Set(assignments.filter(function (a) {{ return a.include; }}).map(function (a) {{ return a.file_key; }}));
+        const unused = stagedFiles.filter(function (sf) {{ return !usedKeys.has(sf.file_key); }});
+        unmatchedGrid.textContent = "";
+        if (unused.length > 0) {{
+          unmatchedTitle.textContent = "Unassigned / Extra Uploaded Files (" + unused.length + ")";
+          for (const sf of unused) {{
+            const uCard = document.createElement("div");
+            uCard.className = "unmatched-card";
+            if (sf.preview_url) {{
+              const uImg = document.createElement("img");
+              uImg.src = sf.preview_url;
+              uImg.alt = sf.filename || sf.file_key;
+              uImg.loading = "lazy";
+              uCard.appendChild(uImg);
+            }}
+            const uName = document.createElement("div");
+            uName.className = "unmatched-meta";
+            uName.title = sf.filename || sf.file_key;
+            uName.textContent = sf.filename || sf.file_key;
+            uCard.appendChild(uName);
+
+            const uSub = document.createElement("div");
+            uSub.className = "unmatched-meta";
+            uSub.style.opacity = "0.7";
+            uSub.textContent = formatFileMeta(sf);
+            uCard.appendChild(uSub);
+            unmatchedGrid.appendChild(uCard);
+          }}
+          unmatchedSection.style.display = "block";
+        }} else {{
+          unmatchedSection.style.display = "none";
         }}
-        confirmBox.style.display = "block";
+
+        const activeCount = assignments.filter(function (a) {{ return a.include; }}).length;
+        confirmSummary.textContent = activeCount + " of " + assignments.length + " pair(s) selected to apply";
+        confirmBtn.disabled = activeCount === 0;
       }}
 
       confirmBtn.addEventListener("click", async function () {{
         if (!activeStagingId) return;
-        const selects = confirmTbody.querySelectorAll("select");
-        const matches = [];
-        for (const sel of selects) {{
-          matches.push({{ file_key: sel.dataset.fileKey, image_id: Number(sel.value) }});
+        const matches = assignments
+          .filter(function (a) {{ return a.include; }})
+          .map(function (a) {{ return {{ file_key: a.file_key, image_id: a.image_id }}; }});
+        if (matches.length === 0) {{
+          setStatus("warn", "Select at least one photo pair to apply.");
+          return;
         }}
         confirmBtn.disabled = true;
         try {{
@@ -581,6 +886,7 @@ def _render_upload_page(post: Post, token: str, settings: Settings) -> str:
           if (resp.ok) {{
             confirmBox.style.display = "none";
             activeStagingId = null;
+            updatePostCards(data.matches);
             setStatus("ok", "Confirmed and applied " + data.matches.length + " original photo(s)!");
           }} else {{
             setStatus("err", formatErrorDetail(data, "Confirmation failed (HTTP " + resp.status + ")"));
@@ -717,6 +1023,8 @@ async def upload_original_photos(
                 "filename": safe_filename,
                 "stored_name": stored_name,
                 "size": written,
+                "width": cand.width,
+                "height": cand.height,
             }
 
         targets = build_target_post_images(post)
@@ -771,12 +1079,26 @@ async def upload_original_photos(
         manifest_bytes = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
         await asyncio.to_thread((staging_dir / "manifest.json").write_bytes, manifest_bytes)
         keep_staging = True
+        prefix = settings.API_PREFIX.rstrip("/")
+        encoded_token = url_quote(token, safe="")
+        staged_files = [
+            {
+                "file_key": fk,
+                "filename": finfo["filename"],
+                "size": finfo["size"],
+                "width": finfo["width"],
+                "height": finfo["height"],
+                "preview_url": f"{prefix}/upload/{encoded_token}/staging/{staging_id}/{url_quote(fk, safe='')}",
+            }
+            for fk, finfo in manifest_files.items()
+        ]
         return {
             "status": "needs_confirmation",
             "post_id": post_id,
             "staging_id": staging_id,
             "proposed": [pm.to_dict() for pm in match_result.matches],
             "unmatched_files": match_result.unmatched_files,
+            "staged_files": staged_files,
         }
 
     except InvalidImageError as exc:
@@ -789,6 +1111,60 @@ async def upload_original_photos(
                 pass
         if not keep_staging:
             await _rmtree_async(staging_dir)
+
+
+@router.get("/upload/{token}/staging/{staging_id}/{file_key}")
+async def preview_staged_photo(
+    token: str,
+    staging_id: str,
+    file_key: str,
+    session: DbSessionDep,
+    settings: SettingsDep,
+) -> FileResponse:
+    """Serve a WebP thumbnail preview for a staged original upload during confirmation."""
+    if not _SAFE_FILE_KEY_RE.fullmatch(file_key):
+        raise HTTPException(status_code=400, detail="Invalid file_key")
+
+    token_row, post = await _get_valid_token_and_post(session, token)
+    staging_dir = _resolve_staging_dir(settings, staging_id)
+    manifest_path = staging_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise HTTPException(status_code=404, detail="Staged upload not found or already applied")
+
+    try:
+        raw_manifest = await asyncio.to_thread(manifest_path.read_text, "utf-8")
+        manifest = json.loads(raw_manifest)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Corrupted staging manifest") from exc
+
+    if manifest.get("post_id") != post.id or manifest.get("token_hash") != token_row.token_hash:
+        raise HTTPException(status_code=403, detail="Staging batch does not match upload token")
+
+    manifest_files: dict[str, dict[str, Any]] = manifest.get("files") or {}
+    finfo = manifest_files.get(file_key)
+    if not finfo:
+        raise HTTPException(status_code=404, detail="Staged file not found")
+
+    staging_resolved = staging_dir.resolve()
+    staged_file = (staging_resolved / Path(str(finfo["stored_name"])).name).resolve()
+    if not staged_file.is_relative_to(staging_resolved) or not staged_file.is_file():
+        raise HTTPException(status_code=404, detail="Staged file missing")
+
+    preview_path = (staging_resolved / f"{file_key}.preview.webp").resolve()
+    if not preview_path.is_relative_to(staging_resolved):
+        raise HTTPException(status_code=400, detail="Invalid preview path")
+
+    if not preview_path.is_file():
+        await asyncio.to_thread(generate_preview_thumbnail, staged_file, preview_path)
+
+    return FileResponse(
+        path=preview_path,
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/upload/{token}/confirm")

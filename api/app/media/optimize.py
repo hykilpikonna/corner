@@ -294,6 +294,43 @@ def strip_gps_from_image_bytes(
         raise InvalidImageError(f"Unsupported image format: {fmt}")
 
 
+def _prepare_oriented_image(raw_im: Image.Image) -> tuple[Image.Image, bytes | None]:
+    """Apply EXIF orientation and normalize mode for lossless/WebP derivative saving."""
+    icc_profile = raw_im.info.get("icc_profile")
+    oriented = ImageOps.exif_transpose(raw_im)
+    if oriented.mode not in ("RGB", "RGBA"):
+        oriented = oriented.convert(
+            "RGBA" if ("A" in oriented.mode or oriented.mode == "P") else "RGB"
+        )
+    return oriented, icc_profile
+
+
+def generate_preview_thumbnail(
+    source_path: Path,
+    preview_path: Path,
+    *,
+    max_size: tuple[int, int] = (480, 480),
+    quality: int = 80,
+) -> Path:
+    """Render an EXIF-oriented WebP preview thumbnail atomically for confirmation UI."""
+    with Image.open(source_path) as raw_im:
+        oriented, icc_profile = _prepare_oriented_image(raw_im)
+        preview_im = oriented.copy()
+        preview_im.thumbnail(max_size, Image.Resampling.LANCZOS)
+        extra_kwargs: dict[str, Any] = {}
+        if icc_profile:
+            extra_kwargs["icc_profile"] = icc_profile
+        _atomic_save_pil_image(
+            preview_im,
+            preview_path,
+            "WEBP",
+            quality=quality,
+            method=4,
+            **extra_kwargs,
+        )
+    return preview_path
+
+
 def generate_display_and_thumb(
     source_path: Path,
     display_path: Path,
@@ -312,12 +349,7 @@ def generate_display_and_thumb(
         (display_width, display_height, display_size_bytes)
     """
     with Image.open(source_path) as raw_im:
-        icc_profile = raw_im.info.get("icc_profile")
-        oriented = ImageOps.exif_transpose(raw_im)
-        if oriented.mode not in ("RGB", "RGBA"):
-            oriented = oriented.convert(
-                "RGBA" if ("A" in oriented.mode or oriented.mode == "P") else "RGB"
-            )
+        oriented, icc_profile = _prepare_oriented_image(raw_im)
 
         extra_kwargs: dict[str, Any] = {}
         if icc_profile:
