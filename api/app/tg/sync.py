@@ -563,6 +563,45 @@ class PeriodicReconciler:
                             exc_info=True,
                         )
 
+                # Reconcile WebPage link previews on non-photo posts (additions, edits, or removals)
+                existing_files_list = (
+                    [dict(f) for f in existing_post.files if isinstance(f, dict)]
+                    if isinstance(existing_post.files, list)
+                    else []
+                )
+                has_existing_web_page = any(
+                    f.get("media_type") == "web_page" for f in existing_files_list
+                )
+                only_existing_web_page = bool(existing_files_list) and all(
+                    f.get("media_type") == "web_page" for f in existing_files_list
+                )
+                if (
+                    self.telegram_service is not None
+                    and not existing_post.images
+                    and (getattr(primary_msg, "web_page", None) is not None or has_existing_web_page)
+                ):
+                    epoch_media_dir = self.settings.media_dir / "epochs" / str(channel_id) / "media"
+                    url_prefix = f"epochs/{channel_id}"
+                    wp_file = await self.telegram_service._extract_fallback_web_page(
+                        primary_msg,
+                        msg_id=int(primary_msg.id),
+                        media_dir=epoch_media_dir,
+                        url_prefix=url_prefix,
+                    )
+                    if wp_file is not None and (not existing_files_list or only_existing_web_page):
+                        if existing_files_list != [wp_file]:
+                            existing_post.files = [wp_file]
+                            changed = True
+                        desired_above = bool(
+                            getattr(primary_msg, "show_caption_above_media", False)
+                        )
+                        if existing_post.show_caption_above_media != desired_above:
+                            existing_post.show_caption_above_media = desired_above
+                            changed = True
+                    elif wp_file is None and only_existing_web_page:
+                        existing_post.files = None
+                        changed = True
+
                 if changed:
                     updated_post_ids.add(existing_post.id)
                     exports_dirty = True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import inspect
 import json
@@ -280,6 +281,58 @@ def _create_webp_thumb_sync(
     except Exception:
         tmp_path.unlink(missing_ok=True)
         return None
+
+
+def _is_safe_http_url(raw_url: Any) -> str | None:
+    """Return stripped HTTP(S) URL when valid and safe, else None."""
+    if not isinstance(raw_url, str):
+        return None
+    stripped = raw_url.strip()
+    if not stripped or stripped.startswith("//"):
+        return None
+    parsed = urlparse(stripped)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return None
+    return stripped
+
+
+def _is_inactive_web_page(msg: Any, wp: Any) -> bool:
+    """Return True when Telegram link preview is absent, disabled, empty, or pending."""
+    if wp is None:
+        return True
+    lpo = getattr(msg, "link_preview_options", None)
+    if lpo is not None and bool(getattr(lpo, "is_disabled", False)):
+        return True
+    raw_outer = getattr(wp, "raw", None)
+    raw_wp = getattr(raw_outer, "webpage", raw_outer)
+    if raw_wp is not None:
+        if type(raw_wp).__name__ in ("WebPageEmpty", "WebPagePending"):
+            return True
+        try:
+            from pyrogram import raw as pyro_raw
+
+            if isinstance(raw_wp, (pyro_raw.types.WebPageEmpty, pyro_raw.types.WebPagePending)):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _pick_photo_file_id(media_obj: Any) -> str | None:
+    """Extract best downloadable file_id from a Pyrogram media or Photo object."""
+    fid = getattr(media_obj, "file_id", None)
+    if fid:
+        return str(fid)
+    thumbs = getattr(media_obj, "thumbs", None) or getattr(media_obj, "thumb", None)
+    if not thumbs:
+        return None
+    thumb_obj = (
+        max(thumbs, key=lambda t: int(getattr(t, "file_size", 0) or 0))
+        if isinstance(thumbs, (list, tuple))
+        else thumbs
+    )
+    thumb_fid = getattr(thumb_obj, "file_id", None)
+    return str(thumb_fid) if thumb_fid else None
 
 
 def _extract_poll_dict(msg: Any) -> dict[str, Any] | None:
@@ -1246,6 +1299,44 @@ class TelegramService:
                 return guessed
         return default_ext
 
+    async def _download_target_to_webp(
+        self,
+        file_id: str | None,
+        *,
+        raw_dest_name: str,
+        msg_id: int,
+        media_dir: Path,
+        url_prefix: str,
+    ) -> tuple[str | None, int | None, int | None]:
+        """Download a Telegram file_id to WebP thumbnail and return `(rel_url, width, height)`."""
+        if not file_id:
+            return None, None, None
+        raw_thumb_dest = media_dir / raw_dest_name
+        webp_existing = media_dir / f"{raw_thumb_dest.stem}_thumb.webp"
+        if webp_existing.is_file() and webp_existing.stat().st_size > 0:
+            w, h = await asyncio.to_thread(_read_image_size_sync, webp_existing)
+            return f"{url_prefix}/media/{webp_existing.name}", w or None, h or None
+        if self.client is None or not hasattr(self.client, "download_media"):
+            return None, None, None
+        tmp_thumb = media_dir / f".dl_{msg_id}_thumb_{uuid.uuid4().hex[:8]}.jpg"
+        try:
+            dl = await self.client.download_media(file_id, file_name=str(tmp_thumb))
+            if not dl:
+                return None, None, None
+            dl_path = Path(str(dl))
+            if not dl_path.is_file():
+                return None, None, None
+            os.replace(dl_path, raw_thumb_dest)
+            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, raw_thumb_dest)
+            target_p = webp_p if (webp_p is not None and webp_p.is_file()) else raw_thumb_dest
+            w, h = await asyncio.to_thread(_read_image_size_sync, target_p)
+            return f"{url_prefix}/media/{target_p.name}", w or None, h or None
+        except Exception:
+            logger.debug("Could not download thumbnail for msg %s", msg_id, exc_info=True)
+            return None, None, None
+        finally:
+            tmp_thumb.unlink(missing_ok=True)
+
     async def _download_fallback_thumb(
         self,
         media_obj: Any,
@@ -1254,8 +1345,6 @@ class TelegramService:
         media_dir: Path,
         url_prefix: str,
     ) -> str | None:
-        if self.client is None or not hasattr(self.client, "download_media"):
-            return None
         thumbs = getattr(media_obj, "thumbs", None) or getattr(media_obj, "thumb", None)
         if not thumbs:
             return None
@@ -1265,30 +1354,105 @@ class TelegramService:
             else thumbs
         )
         file_id = getattr(thumb_obj, "file_id", None)
-        if not file_id:
+        rel_url, _, _ = await self._download_target_to_webp(
+            str(file_id) if file_id else None,
+            raw_dest_name=f"{msg_id}_thumb_raw.jpg",
+            msg_id=msg_id,
+            media_dir=media_dir,
+            url_prefix=url_prefix,
+        )
+        return rel_url
+
+    async def _extract_fallback_web_page(
+        self,
+        msg: Any,
+        *,
+        msg_id: int,
+        media_dir: Path,
+        url_prefix: str,
+    ) -> dict[str, Any] | None:
+        """Extract an active Telegram WebPage link preview into `files` shape."""
+        wp = getattr(msg, "web_page", None)
+        if _is_inactive_web_page(msg, wp):
             return None
-        raw_thumb_dest = media_dir / f"{msg_id}_thumb_raw.jpg"
-        webp_existing = media_dir / f"{msg_id}_thumb_raw_thumb.webp"
-        if webp_existing.is_file() and webp_existing.stat().st_size > 0:
-            return f"{url_prefix}/media/{webp_existing.name}"
-        tmp_thumb = media_dir / f".dl_{msg_id}_thumb_{uuid.uuid4().hex[:8]}.jpg"
-        try:
-            dl = await self.client.download_media(file_id, file_name=str(tmp_thumb))
-            if not dl:
-                return None
-            dl_path = Path(str(dl))
-            if not dl_path.is_file():
-                return None
-            os.replace(dl_path, raw_thumb_dest)
-            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, raw_thumb_dest)
-            if webp_p is not None and webp_p.is_file():
-                return f"{url_prefix}/media/{webp_p.name}"
-            return f"{url_prefix}/media/{raw_thumb_dest.name}"
-        except Exception:
-            logger.debug("Could not download thumbnail for msg %s", msg_id, exc_info=True)
+        safe_url = _is_safe_http_url(getattr(wp, "url", None))
+        if not safe_url:
             return None
-        finally:
-            tmp_thumb.unlink(missing_ok=True)
+
+        lpo = getattr(msg, "link_preview_options", None)
+        wp_photo = getattr(wp, "photo", None)
+        rel_thumb: str | None = None
+        thumb_w: int | None = None
+        thumb_h: int | None = None
+        if wp_photo is not None:
+            photo_fid = _pick_photo_file_id(wp_photo)
+            key_src = str(
+                getattr(wp_photo, "file_unique_id", None)
+                or getattr(wp, "id", None)
+                or safe_url
+            )
+            photo_hash = hashlib.sha1(key_src.encode("utf-8")).hexdigest()[:10]
+            media_dir.mkdir(parents=True, exist_ok=True)
+            rel_thumb, dl_w, dl_h = await self._download_target_to_webp(
+                photo_fid,
+                raw_dest_name=f"{msg_id}_wp_{photo_hash}.jpg",
+                msg_id=msg_id,
+                media_dir=media_dir,
+                url_prefix=url_prefix,
+            )
+            thumb_w = dl_w or (int(getattr(wp_photo, "width", 0) or 0) or None)
+            thumb_h = dl_h or (int(getattr(wp_photo, "height", 0) or 0) or None)
+
+        site_name = (getattr(wp, "site_name", None) or "").strip() or None
+        title = (getattr(wp, "title", None) or "").strip() or None
+        description = (getattr(wp, "description", None) or "").strip() or None
+        display_url = (getattr(wp, "display_url", None) or "").strip() or None
+        author = (getattr(wp, "author", None) or "").strip() or None
+        wp_type = (getattr(wp, "type", None) or "").strip() or None
+
+        if not any((site_name, title, description, rel_thumb)):
+            return None
+
+        out: dict[str, Any] = {
+            "tg_msg_id": msg_id,
+            "media_type": "web_page",
+            "url": safe_url,
+        }
+        if display_url:
+            out["display_url"] = display_url
+        if site_name:
+            out["site_name"] = site_name
+        if title:
+            out["title"] = title
+        if description:
+            out["description"] = description
+        if author:
+            out["author"] = author
+        if wp_type:
+            out["web_page_type"] = wp_type
+        if rel_thumb:
+            out["thumb"] = rel_thumb
+        if thumb_w:
+            out["width"] = thumb_w
+        if thumb_h:
+            out["height"] = thumb_h
+
+        has_large_media = bool(getattr(wp, "has_large_media", False))
+        prefer_large_media = bool(
+            getattr(wp, "prefer_large_media", False)
+            or getattr(lpo, "prefer_large_media", False)
+        )
+        prefer_small_media = bool(
+            getattr(wp, "prefer_small_media", False)
+            or getattr(lpo, "prefer_small_media", False)
+        )
+        if has_large_media:
+            out["has_large_media"] = True
+        if prefer_large_media:
+            out["prefer_large_media"] = True
+        if prefer_small_media:
+            out["prefer_small_media"] = True
+        return out
 
     async def _extract_fallback_file_attachment(
         self,
@@ -1398,7 +1562,12 @@ class TelegramService:
                 "first_name": getattr(contact, "first_name", "") or "",
                 "last_name": getattr(contact, "last_name", None),
             }
-        return None
+        return await self._extract_fallback_web_page(
+            msg,
+            msg_id=msg_id,
+            media_dir=media_dir,
+            url_prefix=url_prefix,
+        )
 
     async def _fallback_process_messages(
         self,
@@ -1981,8 +2150,26 @@ class TelegramService:
                             linked_disc_root_id = int(cached_root)
                             break
 
+                existing_only_web_page = (
+                    existing is not None
+                    and isinstance(existing.files, list)
+                    and bool(existing.files)
+                    and all(
+                        isinstance(f, dict) and f.get("media_type") == "web_page"
+                        for f in existing.files
+                    )
+                )
                 files_payload: list[dict[str, Any]] | None
-                if existing is not None and isinstance(existing.files, list) and (
+                if (
+                    is_edit
+                    and not merged_split_album
+                    and existing is not None
+                    and existing.tg_media_group_id is None
+                    and not other_files
+                    and existing_only_web_page
+                ):
+                    files_payload = None
+                elif existing is not None and isinstance(existing.files, list) and (
                     merged_split_album
                     or (
                         is_edit

@@ -2177,3 +2177,232 @@ async def test_custom_emoji_meta_unicode_alt(tmp_path: Path, tg_settings: Settin
     assert by_id["5555555555555555"]["alt"] == "🔥"
     assert by_id["6666666666666666"]["alt"] == "❤️"
 
+
+@pytest.mark.asyncio
+async def test_web_page_link_preview_extraction_and_disabled_guard(
+    tg_settings: Settings,
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Only active Telegram WebPage previews are extracted; disabled/empty/unsafe ones are omitted."""
+    from io import BytesIO
+
+    from PIL import Image
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.db.models import Poll, Post
+    from app.db.repo import serialize_post
+
+    client = FakeTgClient(bot_id=999000)
+
+    async def _dl(target: Any, *, file_name: str) -> str:
+        buf = BytesIO()
+        Image.new("RGB", (64, 36), (220, 80, 60)).save(buf, format="JPEG")
+        Path(file_name).write_bytes(buf.getvalue())
+        return file_name
+
+    client.download_media = _dl  # type: ignore[method-assign]
+    service = TelegramService(settings=tg_settings, session_factory=db_factory, client=client)
+
+    try:
+        async with db_factory() as session:
+            channel = await ensure_channel(
+                session,
+                tg_chat_id=tg_settings.TG_CHANNEL_ID,
+                tg_discussion_chat_id=tg_settings.TG_DISCUSSION_CHAT_ID,
+                status="active",
+            )
+            await session.commit()
+            channel_id = channel.id
+
+        active_large_msg = SimpleNamespace(
+            id=29,
+            date=datetime(2026, 11, 24, 10, 0, tzinfo=UTC),
+            edit_date=None,
+            text="Check this video https://www.youtube.com/watch?v=M8-vje-bq9c",
+            entities=[],
+            caption=None,
+            caption_entities=None,
+            photo=None,
+            media_group_id=None,
+            show_caption_above_media=False,
+            link_preview_options=SimpleNamespace(is_disabled=False, prefer_large_media=True),
+            web_page=SimpleNamespace(
+                id=123456,
+                url="https://www.youtube.com/watch?v=M8-vje-bq9c",
+                display_url="youtube.com/watch?v=M8-vje-bq9c",
+                type="video",
+                site_name="YouTube",
+                title="Cute Demo Video",
+                description="A longer description for testing link preview rendering.",
+                author=None,
+                has_large_media=True,
+                prefer_large_media=True,
+                prefer_small_media=False,
+                photo=SimpleNamespace(
+                    file_id="wp_photo_29",
+                    file_unique_id="wp_uid_29",
+                    width=1280,
+                    height=720,
+                    thumbs=[],
+                ),
+                raw=None,
+            ),
+        )
+        disabled_msg = SimpleNamespace(
+            id=28,
+            date=datetime(2026, 11, 24, 9, 0, tzinfo=UTC),
+            edit_date=None,
+            text="Disabled preview https://hydev.org/lol/nenrei.html",
+            entities=[],
+            caption=None,
+            caption_entities=None,
+            photo=None,
+            media_group_id=None,
+            show_caption_above_media=False,
+            link_preview_options=SimpleNamespace(is_disabled=True),
+            web_page=SimpleNamespace(
+                id=999,
+                url="https://hydev.org/lol/nenrei.html",
+                site_name="hydev",
+                title="Should Be Ignored",
+                photo=None,
+                raw=None,
+            ),
+        )
+        empty_raw_cls = type("WebPageEmpty", (), {})
+        empty_msg = SimpleNamespace(
+            id=30,
+            date=datetime(2026, 11, 24, 11, 0, tzinfo=UTC),
+            edit_date=None,
+            text="No preview yet https://example.com",
+            entities=[],
+            caption=None,
+            caption_entities=None,
+            photo=None,
+            media_group_id=None,
+            show_caption_above_media=False,
+            link_preview_options=SimpleNamespace(is_disabled=False),
+            web_page=SimpleNamespace(
+                id=0,
+                url="https://example.com",
+                site_name="Example",
+                title="Empty",
+                photo=None,
+                raw=SimpleNamespace(webpage=empty_raw_cls()),
+            ),
+        )
+        unsafe_url_msg = SimpleNamespace(
+            id=31,
+            date=datetime(2026, 11, 24, 12, 0, tzinfo=UTC),
+            edit_date=None,
+            text="Bad link",
+            entities=[],
+            caption=None,
+            caption_entities=None,
+            photo=None,
+            media_group_id=None,
+            show_caption_above_media=False,
+            link_preview_options=None,
+            web_page=SimpleNamespace(
+                id=1,
+                url="javascript:alert(1)",
+                site_name="XSS",
+                title="Bad",
+                photo=None,
+                raw=None,
+            ),
+        )
+
+        ingested = await service._ingest_channel_messages(
+            [disabled_msg, active_large_msg, empty_msg, unsafe_url_msg],
+            is_edit=False,
+            trigger_prompt=False,
+        )
+        by_tg = {p.tg_msg_id: p for p in ingested}
+        assert by_tg[28].files is None
+        assert by_tg[30].files is None
+        assert by_tg[31].files is None
+
+        wp_files = by_tg[29].files
+        assert wp_files is not None and len(wp_files) == 1
+        wp = wp_files[0]
+        assert wp["media_type"] == "web_page"
+        assert wp["url"] == "https://www.youtube.com/watch?v=M8-vje-bq9c"
+        assert wp["site_name"] == "YouTube"
+        assert wp["title"] == "Cute Demo Video"
+        assert wp["prefer_large_media"] is True
+        assert wp["has_large_media"] is True
+        assert wp["thumb"].endswith("_thumb.webp")
+        thumb_rel = wp["thumb"].removeprefix(f"epochs/{channel_id}/media/")
+        assert (tg_settings.media_dir / "epochs" / str(channel_id) / "media" / thumb_rel).is_file()
+
+        async with db_factory() as session:
+            db_post = (
+                await session.execute(
+                    select(Post)
+                    .options(
+                        selectinload(Post.images),
+                        selectinload(Post.tg_reactions),
+                        selectinload(Post.web_reactions),
+                        selectinload(Post.poll).selectinload(Poll.options),
+                        selectinload(Post.poll).selectinload(Poll.web_votes),
+                    )
+                    .where(Post.tg_msg_id == 29)
+                )
+            ).scalar_one()
+            dto = serialize_post(db_post, api_prefix="/api/life")
+            assert dto["files"][0]["url"] == "https://www.youtube.com/watch?v=M8-vje-bq9c"
+            assert dto["files"][0]["thumb"].startswith(f"/api/life/media/epochs/{channel_id}/media/")
+
+        # Editing msg 29 to disable link preview clears web_page cleanly
+        edited_disabled = SimpleNamespace(
+            **{
+                **active_large_msg.__dict__,
+                "edit_date": datetime(2026, 11, 24, 12, 30, tzinfo=UTC),
+                "link_preview_options": SimpleNamespace(is_disabled=True),
+                "web_page": None,
+            }
+        )
+        await service._ingest_channel_messages([edited_disabled], is_edit=True, trigger_prompt=False)
+        async with db_factory() as session:
+            refreshed = (
+                await session.execute(select(Post).where(Post.tg_msg_id == 29))
+            ).scalar_one()
+            assert refreshed.files is None
+
+        # PeriodicReconciler backfills web_page onto existing preview-less post #29 cleanly
+        client.chat_map[tg_settings.TG_CHANNEL_ID] = SimpleNamespace(
+            id=tg_settings.TG_CHANNEL_ID,
+            title="Test Channel",
+            is_banned=False,
+            is_restricted=False,
+            is_deactivated=False,
+        )
+        client.messages_by_chat[tg_settings.TG_CHANNEL_ID] = {
+            28: disabled_msg,
+            29: active_large_msg,
+            30: empty_msg,
+            31: unsafe_url_msg,
+        }
+        reconciler = PeriodicReconciler(
+            session_factory=db_factory,
+            settings=tg_settings,
+            client=client,
+            telegram_service=service,
+        )
+        await reconciler.reconcile_once()
+        async with db_factory() as session:
+            backfilled_29 = (
+                await session.execute(select(Post).where(Post.tg_msg_id == 29))
+            ).scalar_one()
+            still_disabled_28 = (
+                await session.execute(select(Post).where(Post.tg_msg_id == 28))
+            ).scalar_one()
+            assert backfilled_29.files is not None and len(backfilled_29.files) == 1
+            assert backfilled_29.files[0]["media_type"] == "web_page"
+            assert still_disabled_28.files is None
+    finally:
+        await service.stop()
+
+
