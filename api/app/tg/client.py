@@ -41,6 +41,7 @@ from app.db.models import (
     UserIdentity,
 )
 from app.db.repo import (
+    build_reply_snapshot,
     compute_merged_comment_reactions,
     compute_merged_poll,
     compute_merged_reactions,
@@ -2106,6 +2107,15 @@ class TelegramService:
                     )
                     if target_parent is not None:
                         reply_to_post_id = target_parent.id
+                        fallback_snap = build_reply_snapshot(target_parent)
+                        if not isinstance(reply_snapshot, dict):
+                            reply_snapshot = fallback_snap
+                        else:
+                            reply_snapshot = dict(reply_snapshot)
+                            if not reply_snapshot.get("text") and fallback_snap.get("text"):
+                                reply_snapshot["text"] = fallback_snap["text"]
+                            if not reply_snapshot.get("thumb") and fallback_snap.get("thumb"):
+                                reply_snapshot["thumb"] = fallback_snap["thumb"]
 
                 post_date = raw_post.get("date")
                 if isinstance(post_date, str):

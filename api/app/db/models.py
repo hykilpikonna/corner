@@ -119,6 +119,12 @@ class Post(Base):
     comments: Mapped[list[Comment]] = relationship(
         back_populates="post", cascade="all, delete-orphan"
     )
+    reply_to_post: Mapped[Post | None] = relationship(
+        "Post",
+        remote_side=[id],
+        foreign_keys=[reply_to_post_id],
+        uselist=False,
+    )
 
 
 class PostImage(Base):

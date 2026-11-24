@@ -7,6 +7,7 @@ from typing import Any
 
 import nh3
 from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -257,7 +258,67 @@ def _post_load_options():
         selectinload(Post.web_reactions),
         selectinload(Post.poll).selectinload(Poll.options),
         selectinload(Post.poll).selectinload(Poll.web_votes),
+        selectinload(Post.reply_to_post).selectinload(Post.images),
+        selectinload(Post.reply_to_post).selectinload(Post.poll),
     )
+
+
+_REPLY_MEDIA_LABELS: dict[str, str] = {
+    "animation": "GIF",
+    "video_file": "Video",
+    "audio_file": "Audio",
+    "voice_message": "Voice message",
+    "sticker": "Sticker",
+    "location": "Location",
+    "contact": "Contact",
+    "dice": "Dice",
+    "giveaway": "Giveaway",
+    "giveaway_winners": "Giveaway Winners",
+    "story": "Story",
+    "web_page": "Link",
+}
+
+
+def build_reply_snapshot(parent: Post) -> dict[str, Any]:
+    """Derive `{id, text, thumb}` preview metadata from an in-channel target Post."""
+    out: dict[str, Any] = {"id": parent.id}
+    state = sa_inspect(parent)
+
+    thumb: str | None = None
+    if "images" not in state.unloaded and parent.images:
+        sorted_imgs = sorted(parent.images, key=lambda i: i.sort_order)
+        thumb = sorted_imgs[0].thumb_url or sorted_imgs[0].url
+    elif parent.files:
+        for f in parent.files:
+            if isinstance(f, dict) and f.get("thumb"):
+                thumb = str(f["thumb"])
+                break
+    if thumb:
+        out["thumb"] = thumb
+
+    if parent.text_html:
+        out["text"] = parent.text_html
+    elif "images" not in state.unloaded and parent.images:
+        out["text"] = "Photo"
+    elif parent.files:
+        for f in parent.files:
+            if not isinstance(f, dict):
+                continue
+            mtype = str(f.get("media_type") or "")
+            if mtype == "sticker" and f.get("sticker_emoji"):
+                out["text"] = f"{f['sticker_emoji']} Sticker"
+            elif mtype == "audio_file" and (f.get("performer") or f.get("title")):
+                parts = [str(x) for x in (f.get("performer"), f.get("title")) if x]
+                out["text"] = " - ".join(parts)
+            elif mtype == "web_page" and f.get("title"):
+                out["text"] = str(f["title"])
+            else:
+                out["text"] = _REPLY_MEDIA_LABELS.get(mtype, str(f.get("original_name") or "File"))
+            break
+    elif "poll" not in state.unloaded and parent.poll is not None and parent.poll.question:
+        out["text"] = f"Poll: {parent.poll.question}"
+
+    return out
 
 
 async def sync_channel_id_sequence(session: AsyncSession) -> None:
@@ -983,10 +1044,21 @@ def serialize_post(post: Post, *, api_prefix: str = "/api/life") -> dict[str, An
     if post.author:
         out["author"] = post.author
 
-    if post.reply_snapshot:
-        reply_obj = dict(post.reply_snapshot)
+    if post.reply_snapshot or post.reply_to_post_id is not None:
+        reply_obj = dict(post.reply_snapshot) if post.reply_snapshot else {}
         if "id" not in reply_obj and post.reply_to_post_id is not None:
             reply_obj["id"] = post.reply_to_post_id
+        post_state = sa_inspect(post)
+        if (
+            "reply_to_post" not in post_state.unloaded
+            and post.reply_to_post is not None
+            and (not reply_obj.get("text") or not reply_obj.get("thumb"))
+        ):
+            fallback = build_reply_snapshot(post.reply_to_post)
+            if not reply_obj.get("text") and fallback.get("text"):
+                reply_obj["text"] = fallback["text"]
+            if not reply_obj.get("thumb") and fallback.get("thumb"):
+                reply_obj["thumb"] = fallback["thumb"]
         if reply_obj.get("thumb"):
             resolved_thumb = resolve_media_url(str(reply_obj["thumb"]), api_prefix)
             if resolved_thumb:
@@ -994,8 +1066,6 @@ def serialize_post(post: Post, *, api_prefix: str = "/api/life") -> dict[str, An
             else:
                 reply_obj.pop("thumb", None)
         out["reply"] = reply_obj
-    elif post.reply_to_post_id is not None:
-        out["reply"] = {"id": post.reply_to_post_id}
 
     if post.images:
         serialized_images: list[dict[str, Any]] = []

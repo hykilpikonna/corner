@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import Settings
 from app.db.models import WebPollVote, WebReaction
 from app.db.repo import (
     compute_merged_poll,
@@ -289,3 +290,103 @@ def test_url_resolution_blocks_disallowed_schemes() -> None:
         resolve_absolute_media_url("./epochs/1/media/photo.jpg", base_url="https://aza.moe")
         == "https://aza.moe/api/life/media/epochs/1/media/photo.jpg"
     )
+
+
+async def test_serialize_post_enriches_empty_reply_from_target_media(db_session: AsyncSession) -> None:
+    ch = await ensure_channel(db_session, tg_chat_id=-100999888, status="banned")
+    parent_gif = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=8741,
+        date=datetime(2026, 6, 24, 17, 26, tzinfo=UTC),
+        text_html=None,
+        files=[
+            {
+                "media_type": "animation",
+                "url": "epochs/1/media/8741.mp4",
+                "thumb": "epochs/1/media/8741.mp4_thumb_thumb.webp",
+                "mime_type": "video/mp4",
+            }
+        ],
+    )
+    child = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=8742,
+        date=datetime(2026, 6, 24, 17, 56, tzinfo=UTC),
+        text_html="Reply to GIF",
+        reply_to_post_id=parent_gif.id,
+        reply_snapshot={"id": parent_gif.id},
+    )
+    await db_session.commit()
+
+    loaded = await get_post_by_id(db_session, child.id)
+    assert loaded is not None
+    dto = serialize_post(loaded, api_prefix="/api/life")
+    assert dto["reply"]["id"] == parent_gif.id
+    assert dto["reply"]["text"] == "GIF"
+    assert dto["reply"]["thumb"] == "/api/life/media/epochs/1/media/8741.mp4_thumb_thumb.webp"
+
+
+async def test_enrich_incomplete_web_pages_backfills_only_existing_web_page_entries(
+    test_settings: Settings, db_session: AsyncSession
+) -> None:
+    from io import BytesIO
+
+    import httpx
+    from PIL import Image
+
+    from app.cli import enrich_incomplete_web_pages
+
+    ch = await ensure_channel(db_session, tg_chat_id=-100777666, status="banned")
+    with_wp = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=9501,
+        date=datetime(2026, 10, 25, 14, 14, tzinfo=UTC),
+        text_html='<a href="https://youtu.be/BLgNIDmk8KI">link</a>',
+        files=[{"media_type": "web_page", "url": "https://youtu.be/BLgNIDmk8KI", "prefer_large_media": True}],
+    )
+    without_wp = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=9025,
+        date=datetime(2026, 8, 1, 4, 56, tzinfo=UTC),
+        text_html='<a href="https://youtu.be/eTfEPt96JSM">disabled</a>',
+        files=None,
+    )
+    await db_session.commit()
+
+    buf = BytesIO()
+    Image.new("RGB", (120, 90), (40, 120, 200)).save(buf, format="JPEG")
+    img_bytes = buf.getvalue()
+
+    def _handler(req: httpx.Request) -> httpx.Response:
+        if "oembed" in str(req.url):
+            return httpx.Response(
+                200,
+                json={
+                    "title": "Test Video Title",
+                    "author_name": "Test Author",
+                    "provider_name": "YouTube",
+                    "thumbnail_url": "https://i.ytimg.com/vi/BLgNIDmk8KI/hqdefault.jpg",
+                },
+            )
+        return httpx.Response(200, content=img_bytes)
+
+    summary = await enrich_incomplete_web_pages(
+        db_session,
+        test_settings,
+        channel_id=ch.id,
+        transport=httpx.MockTransport(_handler),
+    )
+    assert summary == {"updated_posts": 1, "enriched_items": 1}
+
+    reloaded_wp = await get_post_by_id(db_session, with_wp.id)
+    reloaded_no = await get_post_by_id(db_session, without_wp.id)
+    assert reloaded_wp is not None and reloaded_wp.files is not None
+    assert reloaded_wp.files[0]["title"] == "Test Video Title"
+    assert reloaded_wp.files[0]["site_name"] == "YouTube"
+    assert reloaded_wp.files[0]["author"] == "Test Author"
+    assert reloaded_wp.files[0]["thumb"].endswith("_thumb.webp")
+    assert reloaded_no is not None and reloaded_no.files is None
