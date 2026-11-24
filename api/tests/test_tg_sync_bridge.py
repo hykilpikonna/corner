@@ -2372,23 +2372,31 @@ async def test_web_page_link_preview_extraction_and_disabled_guard(
             assert refreshed.files is None
 
         # PeriodicReconciler backfills web_page onto existing preview-less post #29 cleanly
-        client.chat_map[tg_settings.TG_CHANNEL_ID] = SimpleNamespace(
+        # using reconciler's own client (so file_reference matches the fetching client)
+        reconcile_client = FakeTgClient(bot_id=888000, bot_username="reader_user")
+        reconcile_client.download_media = _dl  # type: ignore[method-assign]
+        reconcile_client.chat_map[tg_settings.TG_CHANNEL_ID] = SimpleNamespace(
             id=tg_settings.TG_CHANNEL_ID,
             title="Test Channel",
             is_banned=False,
             is_restricted=False,
             is_deactivated=False,
         )
-        client.messages_by_chat[tg_settings.TG_CHANNEL_ID] = {
+        reconcile_client.messages_by_chat[tg_settings.TG_CHANNEL_ID] = {
             28: disabled_msg,
             29: active_large_msg,
             30: empty_msg,
             31: unsafe_url_msg,
         }
+
+        async def _fail_bot_dl(*args: Any, **kwargs: Any) -> str:
+            raise AssertionError("Reconciler must use fetching client to download wp thumbnail")
+
+        client.download_media = _fail_bot_dl  # type: ignore[method-assign]
         reconciler = PeriodicReconciler(
             session_factory=db_factory,
             settings=tg_settings,
-            client=client,
+            client=reconcile_client,
             telegram_service=service,
         )
         await reconciler.reconcile_once()
@@ -2401,6 +2409,7 @@ async def test_web_page_link_preview_extraction_and_disabled_guard(
             ).scalar_one()
             assert backfilled_29.files is not None and len(backfilled_29.files) == 1
             assert backfilled_29.files[0]["media_type"] == "web_page"
+            assert backfilled_29.files[0]["thumb"].endswith("_thumb.webp")
             assert still_disabled_28.files is None
     finally:
         await service.stop()

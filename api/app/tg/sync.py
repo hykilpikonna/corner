@@ -587,6 +587,7 @@ class PeriodicReconciler:
                         msg_id=int(primary_msg.id),
                         media_dir=epoch_media_dir,
                         url_prefix=url_prefix,
+                        download_client=tg_client,
                     )
                     if wp_file is not None and (not existing_files_list or only_existing_web_page):
                         if existing_files_list != [wp_file]:

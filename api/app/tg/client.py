@@ -1307,6 +1307,8 @@ class TelegramService:
         msg_id: int,
         media_dir: Path,
         url_prefix: str,
+        download_client: Any | None = None,
+        warn_on_error: bool = False,
     ) -> tuple[str | None, int | None, int | None]:
         """Download a Telegram file_id to WebP thumbnail and return `(rel_url, width, height)`."""
         if not file_id:
@@ -1316,11 +1318,12 @@ class TelegramService:
         if webp_existing.is_file() and webp_existing.stat().st_size > 0:
             w, h = await asyncio.to_thread(_read_image_size_sync, webp_existing)
             return f"{url_prefix}/media/{webp_existing.name}", w or None, h or None
-        if self.client is None or not hasattr(self.client, "download_media"):
+        dl_client = download_client if download_client is not None else self.client
+        if dl_client is None or not hasattr(dl_client, "download_media"):
             return None, None, None
         tmp_thumb = media_dir / f".dl_{msg_id}_thumb_{uuid.uuid4().hex[:8]}.jpg"
         try:
-            dl = await self.client.download_media(file_id, file_name=str(tmp_thumb))
+            dl = await dl_client.download_media(file_id, file_name=str(tmp_thumb))
             if not dl:
                 return None, None, None
             dl_path = Path(str(dl))
@@ -1332,7 +1335,8 @@ class TelegramService:
             w, h = await asyncio.to_thread(_read_image_size_sync, target_p)
             return f"{url_prefix}/media/{target_p.name}", w or None, h or None
         except Exception:
-            logger.debug("Could not download thumbnail for msg %s", msg_id, exc_info=True)
+            log_fn = logger.warning if warn_on_error else logger.debug
+            log_fn("Could not download thumbnail for msg %s", msg_id, exc_info=True)
             return None, None, None
         finally:
             tmp_thumb.unlink(missing_ok=True)
@@ -1370,6 +1374,7 @@ class TelegramService:
         msg_id: int,
         media_dir: Path,
         url_prefix: str,
+        download_client: Any | None = None,
     ) -> dict[str, Any] | None:
         """Extract an active Telegram WebPage link preview into `files` shape."""
         wp = getattr(msg, "web_page", None)
@@ -1399,6 +1404,8 @@ class TelegramService:
                 msg_id=msg_id,
                 media_dir=media_dir,
                 url_prefix=url_prefix,
+                download_client=download_client,
+                warn_on_error=True,
             )
             thumb_w = dl_w or (int(getattr(wp_photo, "width", 0) or 0) or None)
             thumb_h = dl_h or (int(getattr(wp_photo, "height", 0) or 0) or None)
