@@ -21,6 +21,7 @@ import nh3
 from dateutil import parser as date_parser
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
 from app.db.models import Channel, Comment, CommentTgReaction, Post
@@ -1485,6 +1486,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Backfill missing title/site/thumbnail metadata on existing web_page files",
     )
     p_enrich.add_argument("--channel-id", type=int, default=None)
+    p_enrich.add_argument(
+        "--backfill-short-links",
+        action="store_true",
+        help="Also generate web_page previews for archived short posts with explicit URLs",
+    )
+    p_enrich.add_argument("--max-text-len", type=int, default=200)
     return parser
 
 
@@ -1694,27 +1701,187 @@ async def backfill_comment_avatars(
     }
 
 
+_ANCHOR_HREF_RE = re.compile(
+    r'<a\b[^>]*href=["\'](https?://[^"\']+)["\'][^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+_META_TAG_RE = re.compile(r"<meta\b([^>]+)>", re.IGNORECASE)
+_META_ATTR_RE = re.compile(
+    r'([a-zA-Z_:.-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))'
+)
+_HTML_TITLE_RE = re.compile(r"<title\b[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _parse_html_meta(html_text: str) -> dict[str, str]:
+    """Extract OpenGraph / Twitter meta tags and <title> regardless of attribute order."""
+    out: dict[str, str] = {}
+    snippet = html_text[:250_000]
+    for match in _META_TAG_RE.finditer(snippet):
+        attrs: dict[str, str] = {}
+        for am in _META_ATTR_RE.finditer(match.group(1)):
+            key = am.group(1).lower()
+            val = am.group(2) if am.group(2) is not None else (
+                am.group(3) if am.group(3) is not None else (am.group(4) or "")
+            )
+            attrs[key] = html.unescape(val).strip()
+        meta_key = (attrs.get("property") or attrs.get("name") or "").lower()
+        meta_val = attrs.get("content") or ""
+        if meta_key and meta_val and meta_key not in out:
+            out[meta_key] = meta_val
+    if "title" not in out:
+        tm = _HTML_TITLE_RE.search(snippet)
+        if tm:
+            t = html.unescape(_HTML_TAG_RE.sub("", tm.group(1))).strip()
+            if t:
+                out["title"] = t
+    return out
+
+
+def _extract_explicit_short_link(
+    text_html: str | None, *, max_plain_len: int = 200
+) -> str | None:
+    """Return the first explicit non-Telegram URL if the stripped text is within `max_plain_len`."""
+    if not text_html:
+        return None
+    plain = html.unescape(_HTML_TAG_RE.sub("", re.sub(r"<br\s*/?>", "\n", text_html, flags=re.I)))
+    plain = " ".join(plain.split()).strip()
+    if not plain or len(plain) > max_plain_len:
+        return None
+    for href_raw, inner_raw in _ANCHOR_HREF_RE.findall(text_html):
+        href = html.unescape(href_raw).strip()
+        if href.lower().startswith(("https://t.me/", "http://t.me/")):
+            continue
+        inner = html.unescape(_HTML_TAG_RE.sub("", inner_raw)).strip()
+        if inner == href or inner.startswith(("http://", "https://")):
+            return href
+    return None
+
+
+def _is_youtube_host(host: str) -> bool:
+    return host.lower() in ("youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com")
+
+
+def _default_display_url(parsed: Any) -> str:
+    host = parsed.netloc.lower().removeprefix("www.")
+    return f"{host}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
+
+
+async def _populate_web_page_item(
+    client: httpx.AsyncClient,
+    *,
+    post_id: int,
+    media_dir: Path,
+    url_prefix: str,
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    """Fetch public oEmbed/OpenGraph metadata and WebP thumbnail for a `web_page` dict."""
+    from app.tg.client import _create_webp_thumb_sync, _is_safe_http_url, _read_image_size_sync
+
+    safe_url = _is_safe_http_url(item.get("url"))
+    if not safe_url:
+        return item
+
+    updated_item = dict(item)
+    parsed = urlparse(safe_url)
+    host = parsed.netloc.lower()
+    thumb_src: str | None = None
+
+    try:
+        if _is_youtube_host(host):
+            oembed_url = f"https://www.youtube.com/oembed?url={quote(safe_url, safe='')}&format=json"
+            resp = await client.get(oembed_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not updated_item.get("title") and data.get("title"):
+                    updated_item["title"] = str(data["title"]).strip()
+                if not updated_item.get("site_name"):
+                    updated_item["site_name"] = str(data.get("provider_name") or "YouTube").strip()
+                if not updated_item.get("author") and data.get("author_name"):
+                    updated_item["author"] = str(data["author_name"]).strip()
+                thumb_src = _is_safe_http_url(data.get("thumbnail_url"))
+                if not updated_item.get("has_large_media") and not updated_item.get("prefer_small_media"):
+                    updated_item["has_large_media"] = True
+
+        # Fallback to HTML OpenGraph (both non-YouTube pages and YouTube playlists/channels)
+        if not updated_item.get("title") or not thumb_src:
+            resp = await client.get(safe_url)
+            if resp.status_code == 200 and "html" in resp.headers.get("content-type", "").lower():
+                found = _parse_html_meta(resp.text)
+                if not updated_item.get("title"):
+                    t = found.get("og:title") or found.get("twitter:title") or found.get("title")
+                    if t:
+                        updated_item["title"] = t
+                if not updated_item.get("site_name") and found.get("og:site_name"):
+                    updated_item["site_name"] = found["og:site_name"]
+                if not updated_item.get("description"):
+                    desc = found.get("og:description") or found.get("twitter:description") or found.get("description")
+                    if desc:
+                        updated_item["description"] = desc
+                if not thumb_src:
+                    raw_img = found.get("og:image") or found.get("twitter:image")
+                    if raw_img and raw_img.startswith("/"):
+                        raw_img = f"{parsed.scheme}://{parsed.netloc}{raw_img}"
+                    thumb_src = _is_safe_http_url(raw_img)
+
+        if not updated_item.get("display_url"):
+            updated_item["display_url"] = _default_display_url(parsed)
+        if not updated_item.get("site_name"):
+            updated_item["site_name"] = host.removeprefix("www.")
+
+        if thumb_src and not updated_item.get("thumb"):
+            img_resp = await client.get(thumb_src)
+            if img_resp.status_code == 200 and 0 < len(img_resp.content) <= 10 * 1024 * 1024:
+                media_dir.mkdir(parents=True, exist_ok=True)
+                url_hash = hashlib.sha1(safe_url.encode("utf-8")).hexdigest()[:10]
+                raw_dest = media_dir / f"{post_id}_wp_{url_hash}.jpg"
+                raw_dest.write_bytes(img_resp.content)
+                webp_p = await asyncio.to_thread(_create_webp_thumb_sync, raw_dest)
+                target_p = webp_p if (webp_p is not None and webp_p.is_file()) else raw_dest
+                w, h = await asyncio.to_thread(_read_image_size_sync, target_p)
+                if w and h:
+                    updated_item["thumb"] = f"{url_prefix}/media/{target_p.name}"
+                    updated_item["width"] = w
+                    updated_item["height"] = h
+                else:
+                    raw_dest.unlink(missing_ok=True)
+    except Exception:
+        logger.warning("Failed enriching web_page on post #%s (%s)", post_id, safe_url, exc_info=True)
+
+    return updated_item
+
+
 async def enrich_incomplete_web_pages(
     session: AsyncSession,
     settings: Settings,
     *,
     channel_id: int | None = None,
+    backfill_short_links: bool = False,
+    max_text_len: int = 200,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, int]:
-    """Enrich existing `media_type == 'web_page'` files that lack title/thumb metadata."""
-    from app.tg.client import _create_webp_thumb_sync, _is_safe_http_url, _read_image_size_sync
-
-    stmt = select(Post).where(Post.is_deleted.is_(False), Post.files.is_not(None))
+    """Enrich incomplete `web_page` files and optionally backfill short explicit-link archived posts."""
+    stmt = (
+        select(Post)
+        .options(selectinload(Post.images))
+        .where(Post.is_deleted.is_(False))
+        .order_by(Post.id.asc())
+    )
     if channel_id is not None:
         stmt = stmt.where(Post.channel_id == channel_id)
-    posts = list((await session.execute(stmt.order_by(Post.id.asc()))).scalars().all())
+    elif backfill_short_links:
+        # Restrict automatic link backfill to legacy/banned channels when no --channel-id is passed
+        stmt = stmt.join(Channel, Post.channel_id == Channel.id)
+    posts = list((await session.execute(stmt)).scalars().all())
+    banned_channel_ids = set(
+        (
+            await session.execute(select(Channel.id).where(Channel.status == "banned"))
+        ).scalars().all()
+    )
 
     updated_posts = 0
     enriched_items = 0
-    og_re = re.compile(
-        r'<meta\b[^>]+?(?:property|name)=["\'](?P<key>og:title|og:site_name|og:description|og:image|twitter:title|twitter:image)["\'][^>]+?content=["\'](?P<val>[^"\']+)["\']',
-        re.IGNORECASE,
-    )
+    backfilled_links = 0
 
     async with httpx.AsyncClient(
         timeout=15.0,
@@ -1723,94 +1890,65 @@ async def enrich_incomplete_web_pages(
         transport=transport,
     ) as client:
         for post in posts:
-            if not isinstance(post.files, list):
-                continue
-            new_files: list[dict[str, Any]] = []
-            post_changed = False
             media_dir = settings.media_dir / "epochs" / str(post.channel_id) / "media"
             url_prefix = f"epochs/{post.channel_id}"
 
-            for item in post.files:
-                if not isinstance(item, dict) or item.get("media_type") != "web_page":
-                    new_files.append(item)
+            if isinstance(post.files, list) and post.files:
+                new_files: list[dict[str, Any]] = []
+                post_changed = False
+                for item in post.files:
+                    if not isinstance(item, dict) or item.get("media_type") != "web_page":
+                        new_files.append(item)
+                        continue
+                    if item.get("title") and item.get("thumb"):
+                        new_files.append(item)
+                        continue
+                    updated_item = await _populate_web_page_item(
+                        client,
+                        post_id=post.id,
+                        media_dir=media_dir,
+                        url_prefix=url_prefix,
+                        item=item,
+                    )
+                    if updated_item != item:
+                        post_changed = True
+                        enriched_items += 1
+                    new_files.append(updated_item)
+                if post_changed:
+                    post.files = new_files
+                    updated_posts += 1
+                continue
+
+            if (
+                backfill_short_links
+                and not post.images
+                and not post.files
+                and (channel_id is not None or post.channel_id in banned_channel_ids)
+            ):
+                explicit_url = _extract_explicit_short_link(
+                    post.text_html, max_plain_len=max_text_len
+                )
+                if not explicit_url:
                     continue
-                if item.get("title") and item.get("thumb"):
-                    new_files.append(item)
-                    continue
-
-                safe_url = _is_safe_http_url(item.get("url"))
-                if not safe_url:
-                    new_files.append(item)
-                    continue
-
-                updated_item = dict(item)
-                parsed = urlparse(safe_url)
-                host = parsed.netloc.lower()
-                thumb_src: str | None = None
-
-                try:
-                    if host in ("youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com"):
-                        oembed_url = (
-                            f"https://www.youtube.com/oembed?url={quote(safe_url, safe='')}&format=json"
-                        )
-                        resp = await client.get(oembed_url)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            if not updated_item.get("title") and data.get("title"):
-                                updated_item["title"] = str(data["title"]).strip()
-                            if not updated_item.get("site_name"):
-                                updated_item["site_name"] = str(
-                                    data.get("provider_name") or "YouTube"
-                                ).strip()
-                            if not updated_item.get("author") and data.get("author_name"):
-                                updated_item["author"] = str(data["author_name"]).strip()
-                            if not updated_item.get("display_url"):
-                                updated_item["display_url"] = (
-                                    f"{host.removeprefix('www.')}{parsed.path}"
-                                    + (f"?{parsed.query}" if parsed.query else "")
-                                )
-                            thumb_src = _is_safe_http_url(data.get("thumbnail_url"))
-                    else:
-                        resp = await client.get(safe_url)
-                        if resp.status_code == 200 and "html" in resp.headers.get("content-type", "").lower():
-                            found = {m.group("key").lower(): html.unescape(m.group("val")).strip() for m in og_re.finditer(resp.text[:200_000])}
-                            if not updated_item.get("title"):
-                                updated_item["title"] = found.get("og:title") or found.get("twitter:title")
-                            if not updated_item.get("site_name") and found.get("og:site_name"):
-                                updated_item["site_name"] = found["og:site_name"]
-                            if not updated_item.get("description") and found.get("og:description"):
-                                updated_item["description"] = found["og:description"]
-                            thumb_src = _is_safe_http_url(found.get("og:image") or found.get("twitter:image"))
-
-                    if thumb_src and not updated_item.get("thumb"):
-                        img_resp = await client.get(thumb_src)
-                        if img_resp.status_code == 200 and 0 < len(img_resp.content) <= 10 * 1024 * 1024:
-                            media_dir.mkdir(parents=True, exist_ok=True)
-                            url_hash = hashlib.sha1(safe_url.encode("utf-8")).hexdigest()[:10]
-                            raw_dest = media_dir / f"{post.id}_wp_{url_hash}.jpg"
-                            raw_dest.write_bytes(img_resp.content)
-                            webp_p = await asyncio.to_thread(_create_webp_thumb_sync, raw_dest)
-                            target_p = webp_p if (webp_p is not None and webp_p.is_file()) else raw_dest
-                            w, h = await asyncio.to_thread(_read_image_size_sync, target_p)
-                            updated_item["thumb"] = f"{url_prefix}/media/{target_p.name}"
-                            if w and h:
-                                updated_item["width"] = w
-                                updated_item["height"] = h
-                except Exception:
-                    logger.warning("Failed enriching web_page on post #%s (%s)", post.id, safe_url, exc_info=True)
-
-                if updated_item != item:
-                    post_changed = True
-                    enriched_items += 1
-                new_files.append(updated_item)
-
-            if post_changed:
-                post.files = new_files
-                updated_posts += 1
+                populated = await _populate_web_page_item(
+                    client,
+                    post_id=post.id,
+                    media_dir=media_dir,
+                    url_prefix=url_prefix,
+                    item={"media_type": "web_page", "url": explicit_url},
+                )
+                if any(populated.get(k) for k in ("title", "description", "thumb")):
+                    post.files = [populated]
+                    updated_posts += 1
+                    backfilled_links += 1
 
     await session.commit()
     await generate_exports(session, settings)
-    return {"updated_posts": updated_posts, "enriched_items": enriched_items}
+    return {
+        "updated_posts": updated_posts,
+        "enriched_items": enriched_items,
+        "backfilled_links": backfilled_links,
+    }
 
 
 async def _login_tg_user(settings: Settings) -> None:
@@ -1869,7 +2007,11 @@ async def _run_cli(args: argparse.Namespace) -> None:
                 print(json.dumps(meta, indent=2))
             elif args.command == "enrich-webpages":
                 summary = await enrich_incomplete_web_pages(
-                    session, settings, channel_id=args.channel_id
+                    session,
+                    settings,
+                    channel_id=args.channel_id,
+                    backfill_short_links=args.backfill_short_links,
+                    max_text_len=args.max_text_len,
                 )
                 print(json.dumps(summary, indent=2))
             elif args.command == "backfill-avatars":

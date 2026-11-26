@@ -352,7 +352,23 @@ async def test_enrich_incomplete_web_pages_backfills_only_existing_web_page_entr
         channel=ch,
         tg_msg_id=9025,
         date=datetime(2026, 8, 1, 4, 56, tzinfo=UTC),
-        text_html='<a href="https://youtu.be/eTfEPt96JSM">disabled</a>',
+        text_html='#戴上耳机 <a href="https://youtu.be/eTfEPt96JSM">https://youtu.be/eTfEPt96JSM</a>',
+        files=None,
+    )
+    embedded_link = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=2938,
+        date=datetime(2026, 7, 1, 1, 0, tzinfo=UTC),
+        text_html='<a href="https://github.com/hykilpikonna/OpenHardware">源码在这里</a>',
+        files=None,
+    )
+    long_essay = await upsert_post(
+        db_session,
+        channel=ch,
+        tg_msg_id=138,
+        date=datetime(2026, 7, 2, 1, 0, tzinfo=UTC),
+        text_html=("A" * 240) + ' <a href="https://youtu.be/job52mBUvjc">https://youtu.be/job52mBUvjc</a>',
         files=None,
     )
     await db_session.commit()
@@ -380,7 +396,7 @@ async def test_enrich_incomplete_web_pages_backfills_only_existing_web_page_entr
         channel_id=ch.id,
         transport=httpx.MockTransport(_handler),
     )
-    assert summary == {"updated_posts": 1, "enriched_items": 1}
+    assert summary == {"updated_posts": 1, "enriched_items": 1, "backfilled_links": 0}
 
     reloaded_wp = await get_post_by_id(db_session, with_wp.id)
     reloaded_no = await get_post_by_id(db_session, without_wp.id)
@@ -390,3 +406,22 @@ async def test_enrich_incomplete_web_pages_backfills_only_existing_web_page_entr
     assert reloaded_wp.files[0]["author"] == "Test Author"
     assert reloaded_wp.files[0]["thumb"].endswith("_thumb.webp")
     assert reloaded_no is not None and reloaded_no.files is None
+
+    summary2 = await enrich_incomplete_web_pages(
+        db_session,
+        test_settings,
+        channel_id=ch.id,
+        backfill_short_links=True,
+        max_text_len=200,
+        transport=httpx.MockTransport(_handler),
+    )
+    assert summary2 == {"updated_posts": 1, "enriched_items": 0, "backfilled_links": 1}
+
+    reloaded_backfilled = await get_post_by_id(db_session, without_wp.id)
+    reloaded_embedded = await get_post_by_id(db_session, embedded_link.id)
+    reloaded_long = await get_post_by_id(db_session, long_essay.id)
+    assert reloaded_backfilled is not None and reloaded_backfilled.files is not None
+    assert reloaded_backfilled.files[0]["media_type"] == "web_page"
+    assert reloaded_backfilled.files[0]["title"] == "Test Video Title"
+    assert reloaded_embedded is not None and reloaded_embedded.files is None
+    assert reloaded_long is not None and reloaded_long.files is None
